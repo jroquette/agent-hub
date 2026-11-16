@@ -1,0 +1,8 @@
+# Three reviews ask for rework: the group fails max_iterations and ship never runs.
+workflow: rework
+stubs:
+  rounds__draft: {text: draft}
+  rounds__review: {output: {decision: rework}}
+expect: {status: failed}
+failed: [rounds]
+reached: [rounds, rounds__draft, rounds__review]

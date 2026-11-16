@@ -1,0 +1,272 @@
+#!/usr/bin/env python3
+"""Retro metrics over a window (stdlib + gh CLI).
+
+  - merged PRs per repo and cycle time (opened → merged, median);
+  - agent-runner PRs merged without human edits (no commits after the PR was opened);
+  - PR follow-up: the PRs the review records name that stayed more than 1 hour with red CI or a merge conflict
+    and no new push (gh api, REST);
+  - agent runs by outcome (PR, failure stage, no changes, blocked), cost per issue (.agent-runs/*.jsonl);
+  - CI health: workflow runs on each repo's default branch, and how many failed;
+  - memory: learning proposals waiting in brain/_inbox (and how many are older than 2 days) vs learnings
+    merged into brain/learnings.
+
+Usage: scripts/retro_metrics.py [--days 14]
+"""
+
+from __future__ import annotations
+
+import argparse
+import collections
+import datetime as dt
+import json
+import re
+import statistics
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from mine_transcripts import find_hub_json, reader  # noqa: E402
+
+HUB = Path(__file__).resolve().parents[1]
+if (HUB / ".git").is_file():
+    common = subprocess.run(["git", "-C", str(HUB), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                            capture_output=True, text=True).stdout.strip()
+    HUB = Path(common).parent if common else HUB
+CFG = reader.load_hub_file(find_hub_json())
+GH_REPOS = [r.github for r in CFG.repos] + [CFG.project.hub_repo]  # owner/name, as gh -R wants
+if not all(GH_REPOS):  # an empty -R makes gh use the cwd repo
+    sys.exit("hub.json: project.hub_repo and every repos[].github are required")
+# (owner/name, branch) whose CI is read: each repo on its own default branch, the hub repo on the project's.
+CI_REPOS = [(r.github, r.default_branch) for r in CFG.repos] + [(CFG.project.hub_repo, CFG.project.default_branch)]
+INBOX_OLD_DAYS = 2  # an inbox note dated before today minus this many days counts as old
+# PR follow-up: the review records name the agent PRs (`pr: <repo>#<n>` or `prs: [...]`), keyed by repos[].dir or hub.
+PR_REPOS = dict({r.dir: r.github for r in CFG.repos}, hub=CFG.project.hub_repo)
+SLOW_H = 1  # a PR red or in conflict for more than this many hours, with no new push, counts as slow
+FOLLOW_UP_HEADS = 10  # the last heads of a PR whose check runs are read
+REVIEW_LOOKBACK_DAYS = 7  # a record reviewed before since minus this many days is not read
+FOLLOW_UP_PRS = 30  # PRs checked per run, the highest numbers first
+FOLLOW_UP_READS = 150  # gh api reads per run
+PAGE = 100  # per_page of each list read; only the first page is read, so a full commits page is unchecked
+RED = ("failure", "timed_out")
+FOLLOW_UP_NOTE = ("agent PRs are the ones a review record names (PRs from /change, /refactor, /upgrade, /release and "
+                  "the hub's records PRs are not counted, nor are records whose pr is still <repo>#pending); "
+                  "the commit date stands in for the push time; a conflict "
+                  "counts only on an open PR, so one a merged PR had is not counted")
+
+
+def gh_json(args: list[str]) -> list[dict[str, object]]:
+    res = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=60)
+    if res.returncode != 0:
+        print(f"warning: gh {' '.join(args[:2])} failed: {res.stderr.strip()[:200]}", file=sys.stderr)
+        return []
+    try:
+        return json.loads(res.stdout or "[]")
+    except json.JSONDecodeError:
+        return []
+
+
+def ts(s: str) -> dt.datetime:
+    return dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
+
+
+def pr_metrics(since: dt.date) -> dict[str, dict[str, object]]:
+    out: dict[str, dict[str, object]] = {}
+    for repo in GH_REPOS:
+        prs = gh_json(["pr", "list", "-R", repo, "--state", "merged", "--limit", "40",  # commits x authors hits the GraphQL node cap above ~50
+                       "--search", f"merged:>={since.isoformat()}",
+                       "--json", "number,createdAt,mergedAt,body,commits"])
+        hours = [(ts(p["mergedAt"]) - ts(p["createdAt"])).total_seconds() / 3600 for p in prs]
+        agent = [p for p in prs if "Agent run `" in str(p.get("body", ""))]
+        untouched = [p for p in agent
+                     if all(ts(c["committedDate"]) <= ts(p["createdAt"]) for c in p.get("commits", []) if c.get("committedDate"))]
+        out[repo] = {"merged": len(prs), "median_cycle_h": round(statistics.median(hours), 1) if hours else None,
+                     "agent_prs": len(agent), "agent_merged_without_edits": len(untouched)}
+    return out
+
+
+def gh_get(path: str) -> object:
+    """One REST read, `gh api -X GET <path>`; None (and a warning) on a failed call or bad JSON."""
+    res = subprocess.run(["gh", "api", "-X", "GET", path], capture_output=True, text=True, timeout=60)
+    try:
+        if res.returncode == 0:
+            return json.loads(res.stdout)
+    except json.JSONDecodeError:
+        pass
+    print(f"warning: gh api GET {path} failed: {res.stderr.strip()[:200]}", file=sys.stderr)
+    return None
+
+
+def recorded_prs(since: dt.date) -> list[tuple[str, str, int]]:
+    """(``<repo>#<n>``, owner/name, n) for each PR the review records name, in record-path then listed order.
+
+    A record reviewed before ``since - REVIEW_LOOKBACK_DAYS`` is skipped, and so are ``pending`` and unknown repos."""
+    oldest = since - dt.timedelta(days=REVIEW_LOOKBACK_DAYS)
+    out: list[tuple[str, str, int]] = []
+    for f in sorted((HUB / "brain" / "features").glob("*/reviews/*.md")):
+        lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
+        if not lines or lines[0].strip() != "---":
+            continue
+        refs: list[str] = []
+        reviewed = None
+        for line in lines[1:]:
+            if line.strip() == "---":
+                break
+            m = re.match(r"(prs?|reviewed_at):\s*(.*?)\s*$", line)
+            if not m:
+                continue
+            if m.group(1) == "reviewed_at":
+                try:
+                    reviewed = dt.date.fromisoformat(m.group(2).strip("'\"")[:10])
+                except ValueError:
+                    reviewed = None
+            else:
+                refs += [r.strip().strip("'\"") for r in m.group(2).strip("[]").split(",")]
+        if reviewed is not None and reviewed < oldest:
+            continue
+        for ref in refs:
+            m = re.fullmatch(r"([\w.-]+)#(\d+)", ref)
+            if m and PR_REPOS.get(m.group(1)) and ref not in [o[0] for o in out]:
+                out.append((ref, PR_REPOS[m.group(1)], int(m.group(2))))
+    return out
+
+
+def follow_up_lapse(pull: dict, heads: list[tuple[dt.datetime, list[dict]]],
+                    now: dt.datetime, since: dt.date) -> tuple[str, float] | None:
+    """The first lapse longer than SLOW_H: ``("red_ci", hours)`` or ``("conflict", hours)``, else None.
+
+    ``heads`` are (committer date, check runs), oldest first; the commit date stands in for the push time.
+    A red stretch counts only when it ends on or after ``since``."""
+    for i, (_, runs) in enumerate(heads):
+        done = [ts(r["completed_at"]) for r in runs if r.get("conclusion") in RED and r.get("completed_at")]
+        if not done:
+            continue
+        end = heads[i + 1][0] if i + 1 < len(heads) else next(
+            (ts(str(pull[k])) for k in ("merged_at", "closed_at") if pull.get(k)), now)
+        hours = (end - min(done)).total_seconds() / 3600
+        if hours > SLOW_H and end.date() >= since:
+            return "red_ci", round(hours, 1)
+    if pull.get("state") == "open" and pull.get("mergeable_state") == "dirty":
+        newest = heads[-1][0] if heads else ts(str(pull["created_at"]))
+        hours = (now - newest).total_seconds() / 3600
+        if hours > SLOW_H:
+            return "conflict", round(hours, 1)
+    return None
+
+
+def pr_follow_up(since: dt.date) -> dict[str, object]:
+    now = dt.datetime.now(dt.timezone.utc)
+    prs = recorded_prs(since)
+    unchecked = 0
+    if len(prs) > FOLLOW_UP_PRS:
+        prs = sorted(prs, key=lambda p: -p[2])
+        unchecked, prs = len(prs) - FOLLOW_UP_PRS, prs[:FOLLOW_UP_PRS]
+    reads = [0]
+
+    def read(path: str) -> object:
+        if reads[0] >= FOLLOW_UP_READS:
+            return None
+        reads[0] += 1
+        return gh_get(path)
+
+    checked = 0
+    slow: list[dict[str, object]] = []
+    for ref, repo, n in prs:
+        pull = read(f"repos/{repo}/pulls/{n}")
+        if not isinstance(pull, dict):
+            unchecked += 1
+            continue
+        ended = pull.get("merged_at") or pull.get("closed_at")
+        if pull.get("state") != "open" and not (ended and ts(str(ended)).date() >= since):
+            continue  # closed before the window
+        commits = read(f"repos/{repo}/pulls/{n}/commits?per_page={PAGE}")
+        if not isinstance(commits, list) or len(commits) >= PAGE:  # a full page may not be all of them
+            unchecked += 1
+            continue
+        dated = sorted((ts(c["commit"]["committer"]["date"]), str(c["sha"])) for c in commits)
+        created = ts(str(pull["created_at"]))
+        first = max([i for i, (day, _) in enumerate(dated) if day <= created], default=0)
+        heads: list[tuple[dt.datetime, list[dict]]] = []
+        for day, sha in dated[first:][-FOLLOW_UP_HEADS:]:
+            runs = read(f"repos/{repo}/commits/{sha}/check-runs?per_page={PAGE}")
+            if not isinstance(runs, dict):
+                break
+            heads.append((day, list(runs.get("check_runs") or [])))
+        else:
+            checked += 1
+            lapse = follow_up_lapse(pull, heads, now, since)
+            if lapse:
+                slow.append({"pr": ref, "reason": lapse[0], "hours": lapse[1]})
+            continue
+        unchecked += 1
+    return {"limit_h": SLOW_H, "checked": checked, "slow": len(slow), "slow_prs": slow, "unchecked": unchecked,
+            "note": FOLLOW_UP_NOTE}
+
+
+def run_outcome(rec: dict[str, object]) -> str:
+    """``pr_opened``, ``failed:<stage>``, or a run that ended without a PR yet did not fail:
+    ``no_changes`` or ``blocked`` (newer records name their ``outcome``)."""
+    if rec.get("outcome") in ("no_changes", "blocked"):
+        return str(rec["outcome"])
+    return f"failed:{rec['failed_stage']}" if rec.get("failed_stage") else "pr_opened"
+
+
+def run_metrics(since: dt.date) -> dict[str, object]:
+    outcomes: collections.Counter[str] = collections.Counter()
+    cost: collections.defaultdict[str, float] = collections.defaultdict(float)
+    for f in sorted((HUB / ".agent-runs").glob("*.jsonl")):
+        if dt.date.fromisoformat(f.stem) < since:
+            continue
+        for line in f.read_text().splitlines():
+            rec = json.loads(line)
+            if rec.get("event") == "reported":
+                outcomes[run_outcome(rec)] += 1
+                cost[rec["issue"]] += float(rec.get("total_cost_usd") or 0)
+    return {"outcomes": dict(outcomes), "cost_per_issue": {k: round(v, 2) for k, v in cost.items()}}
+
+
+def ci_metrics(since: dt.date) -> dict[str, dict[str, object]]:
+    out: dict[str, dict[str, object]] = {}
+    for repo, branch in CI_REPOS:
+        runs = gh_json(["run", "list", "-R", repo, "--branch", branch, "--limit", "60",
+                        "--json", "conclusion,createdAt,workflowName"])
+        runs = [r for r in runs if ts(r["createdAt"]).date() >= since and r.get("conclusion")]
+        failed = [r for r in runs if r["conclusion"] == "failure"]
+        out[repo] = {"runs": len(runs), "failed": len(failed),
+                     "failed_workflows": sorted({str(r.get("workflowName")) for r in failed})}
+    return out
+
+
+def note_day(path: Path) -> dt.date:
+    """The note's day: its ``YYYY-MM-DD-`` file name prefix (the /learn convention), else its mtime as a local date."""
+    if path.name[10:11] == "-":
+        try:
+            return dt.date.fromisoformat(path.name[:10])
+        except ValueError:
+            pass
+    return dt.date.fromtimestamp(path.stat().st_mtime)
+
+
+def memory_metrics(since: dt.date) -> dict[str, object]:
+    pending = [p for p in (HUB / "brain" / "_inbox").glob("*.md")]
+    old = [p for p in pending if note_day(p) < dt.date.today() - dt.timedelta(days=INBOX_OLD_DAYS)]
+    merged = subprocess.run(["git", "-C", str(HUB), "log", f"origin/{CFG.project.default_branch}", f"--since={since.isoformat()}", "--diff-filter=AM",
+                             "--name-only", "--format=", "--", "brain/learnings"], capture_output=True, text=True).stdout.split()
+    return {"inbox_pending": len(pending), "inbox_older_than_2d": len(old), "learnings_added_or_changed": len(set(merged)),
+            "note": "sessions that needed re-explanation are not measurable from files yet; count them by hand in the retro"}
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--days", type=int, default=14)
+    a = ap.parse_args(argv)
+    since = dt.date.today() - dt.timedelta(days=a.days)
+    report = {"window": f"{since} .. {dt.date.today()}", "prs": pr_metrics(since),
+              "pr_follow_up": pr_follow_up(since), "agent_runs": run_metrics(since),
+              "ci": ci_metrics(since), "memory": memory_metrics(since)}
+    print(json.dumps(report, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

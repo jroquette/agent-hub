@@ -1,0 +1,288 @@
+# The full gate on every PR and on main: the steps of `make check` (docs/CONTRIBUTING.md), split
+# into jobs that run at once, each on its own runner, so the gate takes as long as its slowest job.
+# Each job runs make targets, the same commands as local. Branch protection requires the `check`
+# job, which passes only when every other job here passed.
+name: ci
+
+on:
+  pull_request:
+    # edited: a changed title or body is checked again (the authorship job); it reruns every job,
+    # so the required check is never left with an older result for the same commit.
+    types: [opened, synchronize, reopened, edited]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # format, lint, mypy, layout, lockstep, import contracts, migrations and the OpenAPI drift.
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          node: "true"
+      # mypy's incremental cache: a warm one checks in seconds what a cold one takes a minute for.
+      # mypy re-checks whatever changed, so a stale cache only costs time.
+      - uses: actions/cache@v6
+        with:
+          path: .mypy_cache
+          key: mypy-${{ runner.os }}-${{ hashFiles('uv.lock', 'mypy.ini') }}-${{ github.sha }}
+          restore-keys: mypy-${{ runner.os }}-${{ hashFiles('uv.lock', 'mypy.ini') }}-
+      - name: make format lint typecheck layout lockstep imports migrations openapi-check
+        run: make format lint typecheck layout lockstep imports migrations openapi-check
+
+  # The web app: typecheck, ESLint, Prettier, tokens drift, Vitest with coverage, and web_dist.
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          python: "false"
+          node: "true"
+      - name: make web-fast web-dist-check
+        run: make web-fast web-dist-check
+
+  # Unit, contract and integration tests, one shard per runner, then that shard's serial tests
+  # alone on it. `rest` ignores the other shards' paths, so a new package lands there. Each shard
+  # uploads its coverage data; the coverage job combines them and checks the floors.
+  tests:
+    name: tests (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: generator
+            tests: packages/generator
+          - shard: cli
+            tests: packages/cli
+          - shard: rest
+            tests: --ignore=packages/generator --ignore=packages/cli
+    # make reads TESTS from the environment (Makefile).
+    env:
+      TESTS: ${{ matrix.tests }}
+      COVERAGE_FILE: .coverage.${{ matrix.shard }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          python39: "true"
+      - name: make test-suite test-suite-serial
+        run: make test-suite test-suite-serial
+      - uses: actions/upload-artifact@v7
+        with:
+          name: coverage-${{ matrix.shard }}
+          path: .coverage.${{ matrix.shard }}
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
+  # The per-package floors over every shard's data (make coverage).
+  coverage:
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: coverage-*
+          merge-multiple: true
+      - name: Combine the shards' coverage data
+        run: uv run --locked --all-packages coverage combine
+      - name: make coverage
+        run: make coverage
+
+  # The installed product and the gates as subprocesses (marker e2e), without the serial ones.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          python39: "true"
+      - name: make test-e2e-parallel
+        run: make test-e2e-parallel
+
+  # The serial e2e tests (the web smoke and the visual baselines: wall-clock budgets), one file per
+  # runner, each alone on it. `rest` ignores the visual file, so a new serial test lands there.
+  e2e-serial:
+    name: e2e-serial (${{ matrix.part }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - part: visual
+            tests: tests/e2e/test_web_visual.py
+          - part: rest
+            tests: --ignore=tests/e2e/test_web_visual.py
+    env:
+      TESTS: ${{ matrix.tests }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          python39: "true"
+          node: "true"
+          chromium: "true"
+      - name: make test-e2e-serial
+        run: make test-e2e-serial
+
+  # The perf suite on the 400k-event fixture (docs/TESTING.md, ADR 0053), not in `make check`. It
+  # calls the runner itself, not `make perf`, so a broken suite (exit 2) fails the job on its own.
+  # The gate then posts the table in the job summary and fails only for a budget marked `enforced`
+  # in scripts/perf/budgets.json that is over by more than the file's margin; any other over row
+  # only warns. perf.json is uploaded either way.
+  perf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PERF_EVENTS: "400000"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          node: "true"
+          chromium: "true"
+      - name: Run the perf suite
+        run: uv run --locked --all-packages python -m scripts.perf.run_suite
+      - name: Judge perf.json against the budgets
+        if: always() && hashFiles('perf.json') != ''
+        run: uv run --locked --all-packages python -m scripts.perf.ci_gate --perf perf.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: perf
+          path: perf.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  # AGENTS.md rule 1 on a pull request: no AI attribution in its title, body or commit messages,
+  # and each of its commits authored and committed by the owner (GitHub's own committer, for a web
+  # edit or "Update branch", is let through). The step is the hub CI's, byte for byte
+  # (tests/e2e/test_ci_workflow_shape.py); this repo has no hub.json, so the owner's email is in
+  # its env. On a push both steps are skipped and the job passes.
+  authorship:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # The whole history: the step reads the pull request's commits.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        if: github.event_name == 'pull_request'
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Authorship
+        if: github.event_name == 'pull_request'
+        env:
+          AUTHOR_EMAIL: roquettejh@gmail.com
+        run: |
+          python3 -I -S -c '
+          import json, os, re, subprocess, sys
+          ATTRIBUTION = re.compile(r"co-authored-by:\s*[^\n]*(claude|anthropic|openai|copilot|\bai\b)|generated with \[?claude|generated by \[claude code\]|claude-session:|\U0001f916", re.I)
+          WEB_FLOW = "noreply@github.com"
+          SHA = re.compile(r"[0-9a-f]{40}")
+          def fail(reason):
+              sys.exit("Authorship: " + reason)
+          try:
+              with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as stream:
+                  pull = json.load(stream)["pull_request"]
+              title, body = pull["title"], pull["body"] or ""
+              base, head = pull["base"]["sha"], pull["head"]["sha"]
+          except (KeyError, TypeError, OSError, ValueError, RecursionError):
+              fail("cannot read the pull request from the event file")
+          texts = (title, body, base, head)
+          if not all(isinstance(text, str) for text in texts) or not (SHA.fullmatch(base) and SHA.fullmatch(head)):
+              fail("cannot read the pull request from the event file")
+          expected = os.environ.get("AUTHOR_EMAIL", "")
+          if not expected and os.path.exists("hub.json"):
+              try:
+                  with open("hub.json", encoding="utf-8") as stream:
+                      document = json.load(stream)
+              except (OSError, ValueError, RecursionError):  # RecursionError: nesting too deep
+                  fail("cannot read hub.json as JSON")
+              project = document.get("project") if isinstance(document, dict) else None
+              value = project.get("author_email") if isinstance(project, dict) else None
+              expected = value if isinstance(value, str) else ""
+          log = subprocess.run(["git", "log", "--format=%H%x1f%ae%x1f%ce%x1f%B%x1e", base + ".." + head], capture_output=True)
+          if log.returncode != 0:
+              fail("cannot list the pull request commits (git log " + base[:12] + ".." + head[:12] + ")")
+          records = log.stdout.decode("utf-8", "replace").split("\x1e")
+          commits = [record.lstrip("\n").split("\x1f", 3) for record in records if record.strip()]
+          allowed = {"author": {expected.lower()}, "committer": {expected.lower(), WEB_FLOW}}
+          problems = []
+          if ATTRIBUTION.search(title):
+              problems.append("the pull request title carries AI attribution")
+          if ATTRIBUTION.search(body):
+              problems.append("the pull request body carries AI attribution")
+          for sha, author, committer, message in commits:
+              if ATTRIBUTION.search(message):
+                  problems.append("commit " + sha[:12] + ": the message carries AI attribution")
+              for role, email in (("author", author), ("committer", committer)):
+                  if expected and email.lower() not in allowed[role]:
+                      problems.append("commit " + sha[:12] + ": the " + role + " email " + email + " is not " + expected)
+          for problem in problems:
+              print("Authorship: " + problem, file=sys.stderr)
+          if problems:
+              sys.exit(1)
+          print("Authorship: the title, the body and " + str(len(commits)) + " commit(s) are clean")
+          '
+
+  # The required status: green only when every job above passed (a skipped or cancelled job fails it).
+  check:
+    if: always()
+    needs: [checks, web, tests, coverage, e2e, e2e-serial, perf, authorship]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every gate job passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          for result in $RESULTS; do
+            [ "$result" = success ] || { echo "a gate job did not pass ($result)" >&2; exit 1; }
+          done
+
+  # The image and its Compose service (Dockerfile, compose.yaml, ADR 0022): build them, run the
+  # service on a loopback port and test it from the host (make test-docker, marker docker). Not in
+  # `make check`, which needs no Docker; under CI the test fails when the daemon is missing.
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: make test-docker
+        run: make test-docker

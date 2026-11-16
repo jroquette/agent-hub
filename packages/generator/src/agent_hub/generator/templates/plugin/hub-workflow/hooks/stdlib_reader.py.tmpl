@@ -1,0 +1,1044 @@
+"""The hooks' ``hub.json`` and ``hub.local.json`` reader: stdlib only, Python 3.9, never raises.
+
+Hooks run on the system ``python3`` (3.9 on macOS) with no dependencies, so this module imports
+nothing outside the standard library and nothing else from agent-hub; agent-hub's tests run it on
+a real 3.9 and lint it with ruff at ``--target-version py39``. A hook must never fail because of
+``hub.json`` (docs/design/project-config.md § Readers): where ``HubConfig`` would reject the file,
+this reader falls back instead.
+
+- A key that is absent, of the wrong type, or an empty string takes its default, and only that
+  key: the rest of the file is kept. A list with any item that is not a string is ``()``.
+- ``tracker.team_keys`` is ``tracker.teams`` when it is a non-empty list of non-empty strings,
+  else ``(team,)`` when ``tracker.team`` is a non-empty string, else ``()``; ``team`` keeps its
+  own value (``""`` when ``teams`` is set).
+- The defaults of optional keys equal ``HubConfig``'s (the consistency test is
+  ``packages/generator/tests/integration/test_hub_json_reader.py``). Required strings default
+  to ``""``, ``project.name`` to the name of the directory holding the file (then ``hub``), and a
+  repo without a non-empty string ``dir`` is dropped.
+- ``platform.version`` counts only as three ASCII numbers (``0.2.0``); anything else is ``None``.
+- ``platform.repository`` is the value as written when it is a string of at most 200 characters
+  with the model's pattern; else ``None``. Present but not that (``null`` and ``""`` included),
+  it also sets ``has_bad_repository``, which the hook reports instead of using the default.
+- ``repos[].check_fast_timeout`` counts only as a JSON integer from 1 to 160; anything else is
+  ``None``, the gate's default.
+- ``repos[].check_stop`` is the string as written when it holds no control character and is
+  UTF-8 text (``FREE_STRING``); anything else is ``""``, and the Stop gate runs ``check_fast``.
+  A blank string is kept as it is: the gate strips it.
+- A repo's ``default_branch`` is its effective value: its own when it is a string matching the
+  model's branch pattern, else the ``project`` section's ``default_branch`` (it inherits).
+- ``guard.readable_env_files`` keeps only the names that match the model's ``EnvFileName``
+  (``.env.<suffix>``, not ending in a key-file suffix such as ``.pem``), so a bad ``hub.json`` never
+  releases another file; ``secret_env_files``
+  keeps its strings as written (they only tighten).
+- ``guard.infra`` is ``None`` when absent. Present, ``InfraSection.problem`` names the first value
+  the guard cannot use, and that key's tuple is ``()``: ``guard.infra`` when it is not an object
+  (``null`` included), ``guard.infra.<key>`` when its value is not a list (``null`` included), and
+  ``guard.infra.<key>[<i>]`` for an item that is not a string, is blank, holds a control
+  character or is not valid UTF-8 (a lone surrogate). A key under it other than ``allow``,
+  ``prod_markers`` and comment keys is unusable (``guard.infra.<key>``): a misspelled key must not
+  drop a list silently. "First" is in document order. Patterns are compiled by the guard, not here.
+- ``guard.blocked_words``, ``blocked_words_files`` and ``blocked_words_env`` keep a list only when
+  every item has the model's shape and the list is within the model's length; else that list is
+  ``()`` and ``GuardSection.problem`` names the first unusable location (``guard.<key>`` or
+  ``guard.<key>[<i>]``), or a key under ``guard`` the model does not know (``guard.<key>``, the
+  key shown only when it is lowercase letters, digits and ``_``, else the literal ``<key>``), in
+  document order; a ``guard`` that is not an object is ``guard``. The guard asks while it is set (docs/design/environments.md § Fail closed).
+- ``environments`` keeps each entry whose name is a safe segment of at most 40 characters, whose
+  ``access`` is ``read``, ``write`` or ``ask`` and whose ``production`` (default ``false``) is a
+  boolean; any other entry is dropped. ``credential_env`` keeps the ``credentials.env`` items with
+  the model's variable-name shape.
+- ``env_files`` and ``endpoints`` (also ``load_local_targets`` for ``hub.local.json``): each
+  ``credentials.env_file`` of an environment, then of a ``repos[].services`` endpoint, once per path
+  with the first environment naming it; and each endpoint's host (lowercase, from its ``url``) and
+  ``resource``. An entry is kept only under a safe environment name; a path only with the model's
+  ``EnvFilePath`` shape (no ``..`` segment, no leading ``/`` or ``~``, no secret shape), a url only
+  with the model's ``Url`` shape, a resource only as non-blank text without a control character or
+  secret shape; anything else is dropped, and only that entry. Whether the environment is declared
+  is not checked: the guard only tightens with them (docs/design/scenarios.md § Credentials).
+- Elsewhere, unknown keys and comment keys (``_`` first) are ignored. ``modules`` and
+  ``doctor.rules`` keep each entry's settings, minus comment keys, without checking them.
+- ``hub.local.json`` (one developer's ``project.branch_prefix``, ``author_name``,
+  ``author_email`` and ``tracker.transport``) counts only as a regular file of at most
+  ``LOCAL_FILE_MAX_BYTES``; otherwise it sets nothing. A local value counts only when it is a
+  string with the model's shape (pattern, or ``api``/``mcp``), else that key falls through.
+  ``EffectiveValues`` gives each key from ``hub.local.json``, else ``hub.json``, else git config
+  (asked lazily, once per key); with no prefix in a file, the prefix is the effective email's
+  local part plus ``/`` when that is a valid prefix (docs/design/developer-identity.md).
+
+- ``load_local_layer`` reads ``hub.local.json``'s ``environments`` (as above, but an entry
+  without ``access`` is kept with ``""``: it may tighten a committed one) and its three blocked
+  lists (as above; any other key under ``guard`` is unusable, since only those are local). A file
+  that exists but is not a regular file of at most ``LOCAL_FILE_MAX_BYTES`` holding a JSON object
+  sets ``file_problem``; an absent one sets nothing.
+
+- ``read_lock_source`` gives the source ``<repository>@<commit>#subdirectory=packages/agent-hub``
+  of the release commit ``hub.lock`` records (ADR 0054), only when the lock is a regular file
+  (not a link) of at most ``LOCK_FILE_MAX_BYTES`` holding a JSON object whose
+  ``platform_commit`` is 40 lowercase hex, whose ``platform_version`` is ``platform.version`` and
+  whose ``platform_repository`` is the repository in use (``platform.repository``, else the
+  caller's ``default_repository``, the platform's own); else ``None``, and the caller uses the tag.
+
+- ``read_brief_cache`` and ``read_refresh_cause`` read ``.hub-cache/brief.json`` (what
+  ``hub brief --write-cache`` writes) and ``.hub-cache/refresh.json`` (what a failed SessionStart
+  refresh writes; ADR 0055) as untrusted: only a regular file (not a link, in a folder that is not
+  a link) of at most ``CACHE_FILE_MAX_BYTES`` holding a JSON object whose ``made_at`` is a finite
+  number at most ``CACHE_FUTURE_SECONDS`` ahead of ``now``, and whose ``brief`` (cut at
+  ``CACHE_BRIEF_MAX_CHARS``, then stripped, not empty) or ``cause`` (cut at
+  ``REFRESH_CAUSE_MAX_CHARS``, then stripped, not empty) is a string; else ``None``.
+
+A hook that loads this file by path must register the module before running it, or the frozen
+dataclasses fail to build (``AttributeError`` on ``NoneType.__dict__``)::
+
+    spec = importlib.util.spec_from_file_location("hub_stdlib_reader", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import os
+import re
+import stat
+from collections.abc import Callable
+from dataclasses import dataclass, field
+
+# ``re.compile`` as it was when this module loaded: what ``LazyPattern`` compiles with.
+_compile = re.compile
+# The attributes of a compiled pattern that the hooks read: ``LazyPattern`` keeps each one.
+KEPT_ATTRIBUTES = (
+    "search",
+    "match",
+    "fullmatch",
+    "finditer",
+    "findall",
+    "split",
+    "sub",
+    "pattern",
+    "flags",
+)
+
+
+class LazyPattern:
+    """``re.compile(*args)``, compiled when first used and then kept.
+
+    Reading any attribute (``search``, ``finditer``, ``pattern``) compiles the pattern once, so
+    loading a hook compiles none of its patterns, only the ones a call uses. It is not a
+    ``re.Pattern``: call its methods, never pass it to ``re.search`` and the like. The compile
+    also sets each of ``KEPT_ATTRIBUTES`` on the instance, so a later read of one is a plain
+    attribute read, as cheap in a loop over words as outside it; only a first read, or a read of
+    another attribute, goes through ``__getattr__``. Like a ``re.Pattern`` it never changes, so a
+    copy or a deep copy is the pattern itself, and a pickle holds only the arguments: it loads
+    back as a pattern of the same arguments.
+    """
+
+    __slots__ = ("_args", "_compiled", *KEPT_ATTRIBUTES)
+
+    def __init__(self, *args: object) -> None:
+        self._args = args
+        self._compiled: re.Pattern[str] | None = None
+
+    def __getattr__(self, name: str) -> object:
+        # Only a name the instance lacks gets here: any name before the first compile, then only
+        # a name it does not keep. A name with a leading underscore is never the pattern's: on an
+        # instance whose slots are not set yet (made by __new__ alone), reading the unset
+        # _compiled for a dunder lookup would call this method without end.
+        if name.startswith("_"):
+            raise AttributeError(name)
+        if self._compiled is None:
+            self._compiled = compiled = _compile(*self._args)
+            for kept in KEPT_ATTRIBUTES:
+                setattr(self, kept, getattr(compiled, kept))
+        return getattr(self._compiled, name)
+
+    def __reduce__(self) -> tuple[type[LazyPattern], tuple[object, ...]]:
+        # the arguments only: the kept attributes are the compiled pattern's bound methods
+        return LazyPattern, self._args
+
+    def __copy__(self) -> LazyPattern:
+        return self
+
+    def __deepcopy__(self, memo: dict) -> LazyPattern:
+        return self
+
+
+COMMENT_KEY_PREFIX = "_"
+FALLBACK_PROJECT_NAME = "hub"
+LOCAL_FILE = "hub.local.json"
+LOCAL_FILE_MAX_BYTES = 65_536
+TRANSPORTS = ("api", "mcp")
+PREFIX_FROM_LOCAL = LOCAL_FILE
+PREFIX_FROM_HUB = "hub.json"
+PREFIX_DERIVED = "derived"
+# ``[0-9]`` and ``fullmatch``: ``\d`` takes any Unicode digit and ``$`` a final newline.
+RELEASE_VERSION = LazyPattern(r"[0-9]+\.[0-9]+\.[0-9]+")
+# The model's ``PlatformRepository`` pattern, for ``fullmatch``, rendered from agent-hub's core.
+PLATFORM_REPOSITORY = LazyPattern(r"@@{platform_repository_pattern}")
+PLATFORM_REPOSITORY_MAX_CHARS = 200
+LOCK_FILE = "hub.lock"
+LOCK_FILE_MAX_BYTES = 1_048_576
+RELEASE_COMMIT = LazyPattern(r"[0-9a-f]{40}")
+RELEASE_SUBDIRECTORY = "#subdirectory=packages/agent-hub"
+# The brief cache (ADR 0055): core's ``agent_hub.core.workspace.brief_cache`` writes the same names.
+CACHE_FOLDER = ".hub-cache"
+BRIEF_CACHE_FILE = "brief.json"
+REFRESH_RECORD_FILE = "refresh.json"
+CACHE_FILE_MAX_BYTES = 65_536
+CACHE_BRIEF_MAX_CHARS = 8000
+REFRESH_CAUSE_MAX_CHARS = 200
+# A clock a little behind the writer's still reads its file; one far ahead of it does not.
+CACHE_FUTURE_SECONDS = 60
+# The model's bounds for ``repos[].check_fast_timeout``.
+CHECK_FAST_TIMEOUT_MIN = 1
+CHECK_FAST_TIMEOUT_MAX = 160
+# The model's ``BranchName`` pattern without ``^`` and ``$``, for ``fullmatch``. No separator
+# character is also a segment character, so ``re`` matches in linear time.
+BRANCH_NAME = LazyPattern(
+    r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*(?:/[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*)*"
+)
+# The model's ``BranchPrefix``, ``EmailAddress`` and ``FreeString`` patterns, likewise.
+BRANCH_PREFIX = LazyPattern(r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*/")
+EMAIL_ADDRESS = LazyPattern(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+")
+FREE_STRING = LazyPattern(r"[^\x00-\x1f\x7f]+")
+# The model's ``EnvFileName`` pattern without ``^`` and ``$``: an env file name with a suffix.
+ENV_FILE_NAME = LazyPattern(r"\.env\.[A-Za-z0-9_.-]+")
+# The model's ``KEY_FILE_SUFFIXES``: a readable env file name never ends in one.
+KEY_FILE_SUFFIXES = (".pem", ".key", ".p12", ".pfx")
+# A character ``FREE_STRING`` refuses: an infra pattern holding one is unusable.
+CONTROL_CHARACTER = LazyPattern(r"[\x00-\x1f\x7f]")
+# The keys ``guard.infra`` may hold besides comment keys; any other key is unusable.
+INFRA_LISTS = ("allow", "prod_markers")
+# The git config key each git-read identity key comes from.
+GIT_KEYS = {"author_name": "user.name", "author_email": "user.email"}
+# The model's ``Guard`` keys (core/hub_config/model.py), in its order: any other key under
+# ``guard`` is unusable for the blocked lists.
+GUARD_KEYS = (
+    "ask_before_edit",
+    "deny_hosts",
+    "deny_paths",
+    "readable_env_files",
+    "secret_env_files",
+    "infra",
+    "blocked_words",
+    "blocked_words_files",
+    "blocked_words_env",
+)
+BLOCKED_LISTS = ("blocked_words", "blocked_words_files", "blocked_words_env")
+# An unknown ``guard`` key is named in a problem only with this shape; any other is ``<key>``, so
+# a secret pasted as a key never reaches a reason.
+PLAIN_GUARD_KEY = LazyPattern(r"[a-z][a-z0-9_]{0,40}")
+# The model's ``BlockedWord``, ``WordFileGlob`` and ``EnvVarPattern`` shapes and bounds
+# (core/hub_config/environments.py), for ``fullmatch``. No separator character is also a segment
+# character, so ``re`` matches in linear time.
+BLOCKED_WORD = LazyPattern(r"[A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*")
+BLOCKED_WORD_MIN_CHARS = 2
+BLOCKED_WORD_MAX_CHARS = 64
+MAX_BLOCKED_WORDS = 200
+BLOCKED_GLOB = LazyPattern(r"[!-.0-~][!-~]*")
+BLOCKED_GLOB_MAX_CHARS = 200
+MAX_BLOCKED_GLOBS = 100
+BLOCKED_ENV = LazyPattern(r"[A-Z_][A-Z0-9_]{0,63}\*?")
+MAX_BLOCKED_ENV = 50
+# The model's ``EnvironmentName`` (a safe segment of at most 40 characters), ``Access`` and
+# ``EnvVarName`` (core/hub_config/environments.py), for ``fullmatch``.
+ENVIRONMENT_NAME = LazyPattern(r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*")
+ENVIRONMENT_NAME_MAX_CHARS = 40
+ACCESS_LEVELS = ("read", "write", "ask")
+ENV_VAR_NAME = LazyPattern(r"[A-Z_][A-Z0-9_]{0,63}")
+# The model's ``EnvFilePath`` (printable ASCII without space, not starting with ``/`` or ``~``, at
+# most 200 characters, no ``..`` segment) and ``Url`` (``scheme://host[:port][/path]``, no user
+# info, query or fragment, at most 200 characters) shapes, for ``fullmatch``; the url's host is
+# group 1.
+ENV_FILE_PATH = LazyPattern(r"[!-.0-}][!-~]*")
+ENV_FILE_PATH_MAX_CHARS = 200
+ENDPOINT_URL = LazyPattern(
+    r"[A-Za-z][A-Za-z0-9+.-]*://([A-Za-z0-9.-]+)(?::[0-9]{1,5})?(?:/[!\"$->A-~]*)?"
+)
+ENDPOINT_URL_MAX_CHARS = 200
+# core/secret_shapes.py's shapes that fit an environment name or a blocked word (letters, digits
+# and -_. only), then two for the text of a prompt (prompt_secret.py), which a name or a word,
+# with no space, "=" or ":", never matches: core's private-key header, and a credential
+# assignment of the reader's own (a name ending in SECRET, TOKEN, PASSWORD, PASSWD, API_KEY or
+# PRIVATE_KEY, "=" or ":", then 8 or more characters that are not a $VAR, ${VAR}, <placeholder>
+# or *** reference). The Fernet shape is not ported. The JWT shape is the old lint's, which
+# matches what core's linear rewrite matches but is quadratic in a run with no ".": a caller
+# bounds the text (names and words are at most 64 characters; prompt_secret.py scans windows).
+# No other shape nests a quantifier, and the assignment's name starts at a word boundary, so each
+# runs in linear time.
+SECRET_SHAPES = tuple(
+    LazyPattern(pattern)
+    for pattern in (
+        r"eyJ[A-Za-z0-9_-]{15,}\.[A-Za-z0-9_-]{15}",
+        r"AKIA[0-9A-Z]{16}",
+        r"\b(?:sk|pk)_(?:live|test)_[A-Za-z0-9]{16,}",
+        r"\bsk-[A-Za-z0-9_-]{20,}",
+        r"\bghp_[A-Za-z0-9]{30,}",
+        r"\blin_api_[A-Za-z0-9]{20,}",
+        r"-{5}BEGIN [A-Z ]*PRIVATE KEY-{5}",
+        r"\b[A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY)[ \t]*[=:][ \t]*"
+        r"[\"']?(?![$<*])[^\s\"']{8}",
+    )
+)
+
+
+@dataclass(frozen=True)
+class PlatformSection:
+    """``platform``: the release the hub is pinned to, ``None`` when absent or malformed.
+
+    ``repository`` is the source as written, ``None`` when absent or bad; ``has_bad_repository``
+    tells a bad one from an absent one.
+    """
+
+    version: str | None = None
+    repository: str | None = None
+    has_bad_repository: bool = False
+
+
+@dataclass(frozen=True)
+class ProjectSection:
+    """``project``."""
+
+    name: str = FALLBACK_PROJECT_NAME
+    hub_repo: str = ""
+    branch_prefix: str = ""
+    default_branch: str = "main"
+    author_name: str = ""
+    author_email: str = ""
+
+
+@dataclass(frozen=True)
+class TrackerSection:
+    """``tracker``: ``team_keys`` are the configured team keys in order, the first the default."""
+
+    kind: str = ""
+    team: str = ""
+    team_keys: tuple[str, ...] = ()
+    ready_label: str = "agent-ready"
+    failed_label: str = "agent-failed"
+    transport: str = "api"
+
+
+@dataclass(frozen=True)
+class RepoEntry:
+    """One ``repos[]`` item; items without a ``dir`` are dropped.
+
+    ``default_branch`` is the effective value: the repo's own, else the project's.
+    """
+
+    dir: str
+    github: str = ""
+    role: str = "app"
+    check_fast: str = ""
+    check_fast_timeout: int | None = None
+    check_stop: str = ""
+    check: str = ""
+    default_branch: str = "main"
+
+
+@dataclass(frozen=True)
+class InfraSection:
+    """``guard.infra``; ``problem`` names the first value the guard cannot use."""
+
+    allow: tuple[str, ...] = ()
+    prod_markers: tuple[str, ...] = ()
+    problem: str = ""
+
+
+@dataclass(frozen=True)
+class GuardSection:
+    """``guard``; ``infra`` is ``None`` when ``guard.infra`` is absent. ``problem`` names the first
+    blocked list (or ``guard`` key) the guard cannot use, ``""`` when none."""
+
+    ask_before_edit: tuple[str, ...] = ()
+    deny_hosts: tuple[str, ...] = ()
+    deny_paths: tuple[str, ...] = ()
+    readable_env_files: tuple[str, ...] = ()
+    secret_env_files: tuple[str, ...] = ()
+    infra: InfraSection | None = None
+    blocked_words: tuple[str, ...] = ()
+    blocked_words_files: tuple[str, ...] = ()
+    blocked_words_env: tuple[str, ...] = ()
+    problem: str = ""
+
+
+@dataclass(frozen=True)
+class EnvironmentEntry:
+    """One ``environments`` entry: its name, ``access`` (``""`` for a local entry without one),
+    whether it is production, and the variable names of its ``credentials.env``."""
+
+    name: str
+    access: str
+    production: bool = False
+    credential_env: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class EnvFileEntry:
+    """A declared env file: its path relative to the workspace and the first environment naming it."""
+
+    path: str
+    environment: str
+
+
+@dataclass(frozen=True)
+class EndpointEntry:
+    """A service's endpoint in one environment: its url's host (lowercase) and its resource, each
+    ``""`` when absent."""
+
+    environment: str
+    host: str = ""
+    resource: str = ""
+
+
+@dataclass(frozen=True)
+class EnvironmentTargets:
+    """What a file's environments reach: their env files and their services' endpoints."""
+
+    env_files: tuple[EnvFileEntry, ...] = ()
+    endpoints: tuple[EndpointEntry, ...] = ()
+
+
+@dataclass(frozen=True)
+class DoctorSection:
+    """``doctor``: each rule id with its settings, unchecked."""
+
+    rules: dict[str, dict[str, object]] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class HubFile:
+    """``hub.json`` as read by hooks; field names are the JSON keys."""
+
+    schema_version: int | None = None
+    platform: PlatformSection = field(default_factory=PlatformSection)
+    project: ProjectSection = field(default_factory=ProjectSection)
+    tracker: TrackerSection = field(default_factory=TrackerSection)
+    repos: tuple[RepoEntry, ...] = ()
+    guard: GuardSection = field(default_factory=GuardSection)
+    environments: tuple[EnvironmentEntry, ...] = ()
+    modules: dict[str, dict[str, object]] = field(default_factory=dict)
+    doctor: DoctorSection = field(default_factory=DoctorSection)
+    env_files: tuple[EnvFileEntry, ...] = ()
+    endpoints: tuple[EndpointEntry, ...] = ()
+
+
+def load_hub_file(path: str | os.PathLike[str]) -> HubFile:
+    """Read ``hub.json`` at ``path``; never raises (see the module docstring for the defaults)."""
+    document = _read_document(path)
+    project = _object(document.get("project"))
+    tracker = _object(document.get("tracker"))
+    guard = _object(document.get("guard"))
+    schema_version = document.get("schema_version")
+    project_branch = _text(project, "default_branch", ProjectSection.default_branch)
+    blocked, blocked_problem = _blocked(guard, GUARD_KEYS)
+    blocked_problem = _guard_shape_problem(document) or blocked_problem
+    targets = _targets(document)
+    return HubFile(
+        # ``bool`` is an ``int``; only a JSON integer is a schema version.
+        schema_version=schema_version if type(schema_version) is int else None,
+        platform=_platform(_object(document.get("platform"))),
+        project=ProjectSection(
+            name=_text(project, "name", _directory_name(path)),
+            hub_repo=_text(project, "hub_repo", ""),
+            branch_prefix=_text(project, "branch_prefix", ""),
+            default_branch=project_branch,
+            author_name=_text(project, "author_name", ""),
+            author_email=_text(project, "author_email", ""),
+        ),
+        tracker=TrackerSection(
+            kind=_text(tracker, "kind", ""),
+            team=_text(tracker, "team", ""),
+            team_keys=_team_keys(tracker),
+            ready_label=_text(tracker, "ready_label", TrackerSection.ready_label),
+            failed_label=_text(tracker, "failed_label", TrackerSection.failed_label),
+            transport=_text(tracker, "transport", TrackerSection.transport),
+        ),
+        repos=_repos(document.get("repos"), project_branch),
+        guard=GuardSection(
+            ask_before_edit=_texts(guard, "ask_before_edit"),
+            deny_hosts=_texts(guard, "deny_hosts"),
+            deny_paths=_texts(guard, "deny_paths"),
+            readable_env_files=tuple(
+                name
+                for name in _texts(guard, "readable_env_files")
+                if ENV_FILE_NAME.fullmatch(name) and not name.endswith(KEY_FILE_SUFFIXES)
+            ),
+            secret_env_files=_texts(guard, "secret_env_files"),
+            infra=_infra(guard),
+            blocked_words=blocked.get("blocked_words", ()),
+            blocked_words_files=blocked.get("blocked_words_files", ()),
+            blocked_words_env=blocked.get("blocked_words_env", ()),
+            problem=blocked_problem,
+        ),
+        environments=_environments(document.get("environments")),
+        modules=_settings_by_id(document.get("modules")),
+        doctor=DoctorSection(rules=_settings_by_id(_object(document.get("doctor")).get("rules"))),
+        env_files=targets.env_files,
+        endpoints=targets.endpoints,
+    )
+
+
+@dataclass(frozen=True)
+class LocalFile:
+    """``hub.local.json`` as read by hooks: each key's checked value, ``""`` when it sets none."""
+
+    branch_prefix: str = ""
+    author_name: str = ""
+    author_email: str = ""
+    transport: str = ""
+
+
+def load_local_file(path: str | os.PathLike[str]) -> LocalFile:
+    """Read ``hub.local.json`` at ``path``; never raises (see the module docstring)."""
+    document = _read_document(path, max_bytes=LOCAL_FILE_MAX_BYTES)
+    project = _object(document.get("project"))
+    transport = _text(_object(document.get("tracker")), "transport", "")
+    return LocalFile(
+        branch_prefix=_matching(project, "branch_prefix", BRANCH_PREFIX),
+        author_name=_matching(project, "author_name", FREE_STRING),
+        author_email=_matching(project, "author_email", EMAIL_ADDRESS),
+        transport=transport if transport in TRANSPORTS else "",
+    )
+
+
+@dataclass(frozen=True)
+class LocalLayer:
+    """``hub.local.json``'s environments and blocked lists, as the hooks add them to hub.json's.
+
+    ``problem`` names the first blocked list (or ``guard`` key) the guard cannot use;
+    ``file_problem`` is ``hub.local.json`` when the file exists but cannot be used as a whole,
+    ``""`` when it is absent or usable.
+    """
+
+    environments: tuple[EnvironmentEntry, ...] = ()
+    blocked_words: tuple[str, ...] = ()
+    blocked_words_files: tuple[str, ...] = ()
+    blocked_words_env: tuple[str, ...] = ()
+    problem: str = ""
+    file_problem: str = ""
+
+
+def load_local_layer(path: str | os.PathLike[str]) -> LocalLayer:
+    """Read ``hub.local.json``'s layer at ``path``; never raises (see the module docstring)."""
+    if not os.path.lexists(path):
+        return LocalLayer()
+    document = _read_object(path, max_bytes=LOCAL_FILE_MAX_BYTES)
+    if document is None:
+        return LocalLayer(file_problem=LOCAL_FILE)
+    lists, problem = _blocked(_object(document.get("guard")), BLOCKED_LISTS)
+    problem = _guard_shape_problem(document) or problem
+    return LocalLayer(
+        environments=_environments(document.get("environments"), needs_access=False),
+        blocked_words=lists.get("blocked_words", ()),
+        blocked_words_files=lists.get("blocked_words_files", ()),
+        blocked_words_env=lists.get("blocked_words_env", ()),
+        problem=problem,
+    )
+
+
+def load_local_targets(path: str | os.PathLike[str]) -> EnvironmentTargets:
+    """``hub.local.json``'s env files and endpoints at ``path``; none when the file is absent or
+    cannot be used (the guard then asks for the file itself, ``LocalLayer.file_problem``)."""
+    if not os.path.lexists(path):
+        return EnvironmentTargets()
+    document = _read_object(path, max_bytes=LOCAL_FILE_MAX_BYTES)
+    return EnvironmentTargets() if document is None else _targets(document)
+
+
+class EffectiveValues:
+    """One developer's identity and transport: ``hub.local.json``, else ``hub.json``, else git.
+
+    ``git_value(key)`` gives git's output for ``git config --get <key>`` (``user.name``,
+    ``user.email``), ``""`` when unset or when git fails. It is called only for a key no file
+    sets, at most once per key, and never while the object is built. Its value loses one
+    trailing newline and then counts only with the model's shape. ``hub.json``'s values are used
+    unchecked, as elsewhere in this reader; a derived prefix counts only when it matches
+    ``BRANCH_PREFIX``. Every method gives ``""`` when no source gives a value.
+    """
+
+    def __init__(self, hub_file: HubFile, local_file: LocalFile, git_value: Callable[[str], str]):
+        self.hub_file = hub_file
+        self.local_file = local_file
+        self.transport = local_file.transport or hub_file.tracker.transport
+        self._git_value = git_value
+        self._git: dict[str, str] = {}
+
+    def author_name(self) -> str:
+        return self._value("author_name", FREE_STRING)
+
+    def author_email(self) -> str:
+        return self._value("author_email", EMAIL_ADDRESS)
+
+    def branch_prefix(self) -> str:
+        """The file's prefix, else the effective email's local part plus ``/`` when valid."""
+        from_file = self.local_file.branch_prefix or self.hub_file.project.branch_prefix
+        if from_file:
+            return from_file
+        derived = self.author_email().rpartition("@")[0] + "/"
+        return derived if BRANCH_PREFIX.fullmatch(derived) else ""
+
+    def prefix_source(self) -> str:
+        """``hub.local.json``, ``hub.json``, ``derived``, or ``""`` when there is no prefix."""
+        if self.local_file.branch_prefix:
+            return PREFIX_FROM_LOCAL
+        if self.hub_file.project.branch_prefix:
+            return PREFIX_FROM_HUB
+        return PREFIX_DERIVED if self.branch_prefix() else ""
+
+    def _value(self, key: str, pattern: LazyPattern) -> str:
+        from_file = getattr(self.local_file, key) or getattr(self.hub_file.project, key)
+        if from_file:
+            return from_file
+        git_key = GIT_KEYS[key]
+        if git_key not in self._git:
+            value = self._git_value(git_key)
+            # As the CLI: one trailing newline is git's own, anything else is the value's.
+            value = value[:-1] if value.endswith("\n") else value
+            self._git[git_key] = value if _is_shaped(value, pattern) else ""
+        return self._git[git_key]
+
+
+def _read_document(
+    path: str | os.PathLike[str], max_bytes: int | None = None
+) -> dict[str, object]:
+    """The file's top-level object; ``{}`` when it cannot be read, is larger than ``max_bytes``
+    or is not a JSON object."""
+    document = _read_object(path, max_bytes)
+    return {} if document is None else document
+
+
+def _read_object(
+    path: str | os.PathLike[str], max_bytes: int | None = None, *, follow_links: bool = True
+) -> dict[str, object] | None:
+    """The file's top-level object; ``None`` when it cannot be read, is larger than ``max_bytes``,
+    is not a JSON object, or (``follow_links`` false) is a link."""
+    # Only a regular file (a symlink to one included, unless ``follow_links`` is false): opening a
+    # FIFO blocks and a device such as /dev/zero never ends, so a hook would hang. The check by
+    # path skips the open; what was opened (without blocking) is checked again, so a FIFO swapped
+    # in after it is not read.
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+    if not follow_links:
+        if os.path.islink(path):
+            return None
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+    if not os.path.isfile(path):
+        return None
+    try:
+        descriptor = os.open(path, flags)
+        with open(descriptor, "rb") as file:
+            if not stat.S_ISREG(os.fstat(file.fileno()).st_mode):
+                return None
+            if max_bytes is None:
+                content = file.read()
+            else:
+                # One byte more than allowed tells a file that grew after any size check.
+                content = file.read(max_bytes + 1)
+                if len(content) > max_bytes:
+                    return None
+        document = json.loads(content.decode("utf-8"))
+    # OSError: missing, a directory, unreadable. ValueError: bad UTF-8 or JSON (and a NUL in the
+    # path). RecursionError: nesting deeper than the parser's stack.
+    except (OSError, ValueError, RecursionError):
+        return None
+    return _object(document) if isinstance(document, dict) else None
+
+
+def _directory_name(path: str | os.PathLike[str]) -> str:
+    """The name of the hub directory, the one holding the file (``hubhooks.py`` does the same)."""
+    try:
+        directory = os.path.dirname(os.path.abspath(path))
+    # A relative path needs the working directory, which may have been deleted.
+    except OSError:
+        return FALLBACK_PROJECT_NAME
+    return os.path.basename(directory) or FALLBACK_PROJECT_NAME
+
+
+def _object(value: object) -> dict[str, object]:
+    """A JSON object without its comment keys; anything else is an empty object."""
+    if not isinstance(value, dict):
+        return {}
+    return {key: item for key, item in value.items() if not key.startswith(COMMENT_KEY_PREFIX)}
+
+
+def _text(section: dict[str, object], key: str, default: str) -> str:
+    value = section.get(key)
+    return value if isinstance(value, str) and value else default
+
+
+def _matching(section: dict[str, object], key: str, pattern: LazyPattern) -> str:
+    """The value at ``key`` when it is a string with ``pattern``'s shape, else ``""``."""
+    value = _text(section, key, "")
+    return value if _is_shaped(value, pattern) else ""
+
+
+def _is_shaped(value: str, pattern: LazyPattern) -> bool:
+    """Whether ``pattern`` matches all of ``value`` and ``value`` is UTF-8 text, as the model asks.
+
+    A lone surrogate (JSON ``"\\ud800"``) passes a negated character class but not the model.
+    """
+    if not pattern.fullmatch(value):
+        return False
+    try:
+        value.encode("utf-8", "strict")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _bounded_int(section: dict[str, object], key: str, low: int, high: int) -> int | None:
+    """The value at ``key`` when it is a JSON integer from ``low`` to ``high``, else ``None``."""
+    value = section.get(key)
+    if type(value) is int and low <= value <= high:
+        return value
+    return None
+
+
+def _texts(section: dict[str, object], key: str) -> tuple[str, ...]:
+    value = section.get(key)
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return tuple(value)
+    return ()
+
+
+def _infra(guard: dict[str, object]) -> InfraSection | None:
+    """``guard.infra``: ``None`` when absent; else its lists, with the first unusable location."""
+    if "infra" not in guard:
+        return None
+    infra = guard["infra"]
+    if not isinstance(infra, dict):
+        return InfraSection(problem="guard.infra")
+    lists: dict[str, tuple[str, ...]] = {}
+    first_problem = ""
+    # Keys in document order: the problem is the first unusable one. An unknown key (a misspelled
+    # ``prod_markers`` would drop the markers: fail open) is unusable as a whole.
+    for key, value in _object(infra).items():
+        if key in INFRA_LISTS:
+            lists[key], problem = _patterns(key, value)
+        else:
+            problem = "guard.infra." + key
+        first_problem = first_problem or problem
+    return InfraSection(
+        allow=lists.get("allow", ()),
+        prod_markers=lists.get("prod_markers", ()),
+        problem=first_problem,
+    )
+
+
+def _patterns(key: str, value: object) -> tuple[tuple[str, ...], str]:
+    """``value`` as a tuple and ``""``; ``()`` and the location of the first unusable value."""
+    location = "guard.infra." + key
+    if not isinstance(value, list):
+        return (), location
+    for index, item in enumerate(value):
+        if not _usable_pattern(item):
+            return (), f"{location}[{index}]"
+    return tuple(value), ""
+
+
+def _usable_pattern(item: object) -> bool:
+    """A non-blank string with no control character that encodes as UTF-8 (no lone surrogate)."""
+    if not isinstance(item, str) or not item.strip() or CONTROL_CHARACTER.search(item):
+        return False
+    try:
+        item.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _blocked(
+    guard: dict[str, object], known: tuple[str, ...]
+) -> tuple[dict[str, tuple[str, ...]], str]:
+    """The blocked lists under ``guard`` and the first unusable location, in document order: a
+    list that is not a list or is too long, a bad item, or a key not in ``known`` (a misspelled
+    list must not drop its words silently). An unusable list is ``()``."""
+    lists: dict[str, tuple[str, ...]] = {}
+    first_problem = ""
+    for key, value in guard.items():
+        if key in BLOCKED_LISTS:
+            lists[key], problem = _blocked_list(key, value)
+        else:
+            shown = key if PLAIN_GUARD_KEY.fullmatch(key) else "<key>"
+            problem = "" if key in known else "guard." + shown
+        first_problem = first_problem or problem
+    return lists, first_problem
+
+
+def _guard_shape_problem(document: dict[str, object]) -> str:
+    """``guard`` when the file has a ``guard`` that is not an object (its words would vanish)."""
+    if "guard" in document and not isinstance(document["guard"], dict):
+        return "guard"
+    return ""
+
+
+def _blocked_list(key: str, value: object) -> tuple[tuple[str, ...], str]:
+    """``value`` as a tuple and ``""``; ``()`` and the location of the first unusable value."""
+    location = "guard." + key
+    usable, limit = BLOCKED_SHAPES[key]
+    if not isinstance(value, list) or len(value) > limit:
+        return (), location
+    for index, item in enumerate(value):
+        if not isinstance(item, str) or not usable(item):
+            return (), f"{location}[{index}]"
+    return tuple(value), ""
+
+
+def secret_shaped(text: str) -> bool:
+    """Whether ``text`` (a name or a word) holds a secret's shape, as core's ``secret_kind``."""
+    return any(shape.search(text) for shape in SECRET_SHAPES)
+
+
+def _is_blocked_word(item: str) -> bool:
+    # A secret-shaped word is unusable, so the guard asks, as the CLI refuses it.
+    return (
+        BLOCKED_WORD_MIN_CHARS <= len(item) <= BLOCKED_WORD_MAX_CHARS
+        and bool(BLOCKED_WORD.fullmatch(item))
+        and not secret_shaped(item)
+    )
+
+
+def _is_blocked_glob(item: str) -> bool:
+    return (
+        len(item) <= BLOCKED_GLOB_MAX_CHARS
+        and bool(BLOCKED_GLOB.fullmatch(item))
+        and ".." not in item.split("/")
+    )
+
+
+def _is_blocked_env(item: str) -> bool:
+    return bool(BLOCKED_ENV.fullmatch(item))
+
+
+# Each blocked list's item check and its most items.
+BLOCKED_SHAPES: dict[str, tuple[Callable[[str], bool], int]] = {
+    "blocked_words": (_is_blocked_word, MAX_BLOCKED_WORDS),
+    "blocked_words_files": (_is_blocked_glob, MAX_BLOCKED_GLOBS),
+    "blocked_words_env": (_is_blocked_env, MAX_BLOCKED_ENV),
+}
+
+
+def _environments(value: object, *, needs_access: bool = True) -> tuple[EnvironmentEntry, ...]:
+    """Each entry with a usable name, ``access`` and ``production``; the others are dropped. With
+    ``needs_access`` false (``hub.local.json``), an entry without ``access`` is kept with ``""``."""
+    entries = []
+    for name, item in _object(value).items():
+        if len(name) > ENVIRONMENT_NAME_MAX_CHARS or not ENVIRONMENT_NAME.fullmatch(name):
+            continue
+        if not isinstance(item, dict):
+            continue
+        environment = _object(item)
+        access = environment.get("access", None if needs_access else "")
+        production = environment.get("production", False)
+        usable = ACCESS_LEVELS if needs_access else ACCESS_LEVELS + ("",)
+        if not isinstance(access, str) or access not in usable or not isinstance(production, bool):
+            continue
+        names = _object(environment.get("credentials")).get("env")
+        credential_env = tuple(
+            text
+            for text in (names if isinstance(names, list) else [])
+            if isinstance(text, str) and ENV_VAR_NAME.fullmatch(text)
+        )
+        entries.append(EnvironmentEntry(name, access, production, credential_env))
+    return tuple(entries)
+
+
+def _environment_name(name: object) -> bool:
+    return (
+        isinstance(name, str)
+        and len(name) <= ENVIRONMENT_NAME_MAX_CHARS
+        and _is_shaped(name, ENVIRONMENT_NAME)
+        and not secret_shaped(name)
+    )
+
+
+def _env_file(credentials: object) -> str:
+    """``credentials.env_file`` when it has the model's ``EnvFilePath`` shape, else ``""``."""
+    value = _object(credentials).get("env_file")
+    if (
+        not isinstance(value, str)
+        or len(value) > ENV_FILE_PATH_MAX_CHARS
+        or not _is_shaped(value, ENV_FILE_PATH)
+        or ".." in value.split("/")
+        or secret_shaped(value)
+    ):
+        return ""
+    return value
+
+
+def _endpoint(environment: str, item: object) -> EndpointEntry | None:
+    """The endpoint's host and resource; ``None`` when neither is usable."""
+    endpoint = _object(item)
+    url, resource = endpoint.get("url"), endpoint.get("resource")
+    host = ""
+    if isinstance(url, str) and len(url) <= ENDPOINT_URL_MAX_CHARS and not secret_shaped(url):
+        found = ENDPOINT_URL.fullmatch(url)
+        host = found.group(1).lower() if found and _is_shaped(url, ENDPOINT_URL) else ""
+    if not (isinstance(resource, str) and resource.strip() and _is_shaped(resource, FREE_STRING)) or (
+        secret_shaped(resource)
+    ):
+        resource = ""
+    return EndpointEntry(environment, host, resource) if host or resource else None
+
+
+def _targets(document: dict[str, object]) -> EnvironmentTargets:
+    """The env files (environments' first, then endpoints', each path once) and the endpoints of
+    ``environments`` and ``repos[].services``; a bad entry is dropped, and only that entry."""
+    env_files: dict[str, str] = {}
+    endpoints = []
+    for name, item in _object(document.get("environments")).items():
+        path = _env_file(_object(item).get("credentials"))
+        if _environment_name(name) and path:
+            env_files.setdefault(path, name)
+    repos = document.get("repos")
+    for repo in repos if isinstance(repos, list) else []:
+        for service in _object(_object(repo).get("services")).values():
+            for name, item in _object(_object(service).get("endpoints")).items():
+                if not _environment_name(name):
+                    continue
+                path = _env_file(_object(item).get("credentials"))
+                if path:
+                    env_files.setdefault(path, name)
+                endpoint = _endpoint(name, item)
+                if endpoint is not None:
+                    endpoints.append(endpoint)
+    return EnvironmentTargets(
+        env_files=tuple(EnvFileEntry(path, name) for path, name in env_files.items()),
+        endpoints=tuple(endpoints),
+    )
+
+
+def _team_keys(tracker: dict[str, object]) -> tuple[str, ...]:
+    """``teams`` when every item is a non-empty string, else ``(team,)``, else ``()``."""
+    teams = _texts(tracker, "teams")
+    if teams and all(teams):
+        return teams
+    team = _text(tracker, "team", "")
+    return (team,) if team else ()
+
+
+def _platform(platform: dict[str, object]) -> PlatformSection:
+    version = _version(platform)
+    if "repository" not in platform:
+        return PlatformSection(version=version)
+    value = platform["repository"]
+    if (
+        isinstance(value, str)
+        and len(value) <= PLATFORM_REPOSITORY_MAX_CHARS
+        and _is_shaped(value, PLATFORM_REPOSITORY)
+    ):
+        return PlatformSection(version=version, repository=value)
+    return PlatformSection(version=version, has_bad_repository=True)
+
+
+def read_lock_source(
+    hub: str | os.PathLike[str], platform: PlatformSection, default_repository: str
+) -> str | None:
+    """The source of the release commit ``hub.lock`` records for ``platform``, else ``None``
+    (see the module docstring); never raises."""
+    if platform.version is None or platform.has_bad_repository:
+        return None
+    repository = platform.repository or default_repository
+    lock = _read_object(
+        os.path.join(hub, LOCK_FILE), max_bytes=LOCK_FILE_MAX_BYTES, follow_links=False
+    )
+    if lock is None:
+        return None
+    commit = lock.get("platform_commit")
+    if not (isinstance(commit, str) and RELEASE_COMMIT.fullmatch(commit)):
+        return None
+    if lock.get("platform_version") != platform.version:
+        return None
+    if lock.get("platform_repository") != repository:
+        return None
+    return repository + "@" + commit + RELEASE_SUBDIRECTORY
+
+
+@dataclass(frozen=True)
+class BriefCache:
+    """The brief cache: when it was made (seconds since the epoch) and its brief."""
+
+    made_at: float
+    brief: str
+
+
+def read_brief_cache(hub: str | os.PathLike[str], now: float) -> BriefCache | None:
+    """The hub's brief cache, else ``None`` (see the module docstring); never raises."""
+    found = _cache_document(hub, BRIEF_CACHE_FILE, "brief", CACHE_BRIEF_MAX_CHARS, now)
+    return None if found is None else BriefCache(made_at=found[0], brief=found[1])
+
+
+def read_refresh_cause(hub: str | os.PathLike[str], now: float) -> str | None:
+    """The cause the last failed refresh recorded, else ``None``; never raises."""
+    found = _cache_document(hub, REFRESH_RECORD_FILE, "cause", REFRESH_CAUSE_MAX_CHARS, now)
+    return None if found is None else found[1]
+
+
+def _cache_document(
+    hub: str | os.PathLike[str], name: str, key: str, max_chars: int, now: float
+) -> tuple[float, str] | None:
+    """(``made_at``, the text under ``key`` cut at ``max_chars``) of a ``.hub-cache`` file."""
+    folder = os.path.join(hub, CACHE_FOLDER)
+    if os.path.islink(folder):  # the CLI refuses a linked folder; so does the reader
+        return None
+    document = _read_object(
+        os.path.join(folder, name), max_bytes=CACHE_FILE_MAX_BYTES, follow_links=False
+    )
+    if document is None:
+        return None
+    made_at = document.get("made_at")
+    if isinstance(made_at, bool) or not isinstance(made_at, (int, float)):
+        return None
+    try:
+        if not math.isfinite(made_at) or made_at > now + CACHE_FUTURE_SECONDS:
+            return None
+        made_at = float(made_at)
+    except OverflowError:  # an integer too large for a float
+        return None
+    text = document.get(key)
+    if not isinstance(text, str):
+        return None
+    text = text[:max_chars].strip()
+    return (made_at, text) if text else None
+
+
+def _version(platform: dict[str, object]) -> str | None:
+    value = platform.get("version")
+    if isinstance(value, str) and RELEASE_VERSION.fullmatch(value):
+        return value
+    return None
+
+
+def _branch(repo: dict[str, object], project_branch: str) -> str:
+    """The repo's ``default_branch`` when it matches ``BRANCH_NAME``, else ``project_branch``."""
+    value = repo.get("default_branch")
+    if isinstance(value, str) and BRANCH_NAME.fullmatch(value):
+        return value
+    return project_branch
+
+
+def _repos(value: object, project_branch: str) -> tuple[RepoEntry, ...]:
+    items = value if isinstance(value, list) else []
+    repos = [_object(item) for item in items]
+    return tuple(
+        RepoEntry(
+            dir=_text(repo, "dir", ""),
+            github=_text(repo, "github", ""),
+            role=_text(repo, "role", RepoEntry.role),
+            check_fast=_text(repo, "check_fast", ""),
+            check_fast_timeout=_bounded_int(
+                repo, "check_fast_timeout", CHECK_FAST_TIMEOUT_MIN, CHECK_FAST_TIMEOUT_MAX
+            ),
+            check_stop=_matching(repo, "check_stop", FREE_STRING),
+            check=_text(repo, "check", ""),
+            default_branch=_branch(repo, project_branch),
+        )
+        for repo in repos
+        if _text(repo, "dir", "")
+    )
+
+
+def _settings_by_id(value: object) -> dict[str, dict[str, object]]:
+    """``modules`` or ``doctor.rules``: each id whose settings are an object, minus comment keys."""
+    return {key: _object(item) for key, item in _object(value).items() if isinstance(item, dict)}

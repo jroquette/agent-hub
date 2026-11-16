@@ -1,0 +1,1316 @@
+"""AGH-7's characterization cases, run on the rendered hooks and scripts (AC-4.22, erratum E1).
+
+Each ``<file>/<case>`` of ``CASES`` builds its workspace in a fresh ``<ROOT>`` (``char_workspace``),
+returns how the file under test is run, and is compared byte for byte with the golden AGH-7 wrote
+for the hub's own files (``golden/<file>/<case>.golden``), copied from the hub, then changed only
+under D1 (slices 17 and 20). The builders and their data are AGH-7's, case for case. The session
+start goldens hold the mini brief (D1, Q-6): the case hub pins no ``platform.version``, so the
+hook never calls ``uvx`` and names the cause ``no version`` (erratum E1).
+"""
+
+import json
+import re
+import shutil
+from collections.abc import Callable, Mapping
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+type Run = dict[str, Any]
+type Builder = Callable[..., Run]
+
+# post_edit (AGH-7's test_post_edit.py). The two lint reports are exactly 1501 chars once ANSI
+# codes are removed and the ends stripped: the hook keeps the last 1500.
+ESC = "\x1b"
+CUT = 1500
+NO_COLOR_ENV = {"NO_COLOR": "1", "FORCE_COLOR": "0"}
+
+
+def lint_report(
+    *, first_line: str, line: Callable[[int], str], count: int, summary: str
+) -> tuple[str, str]:
+    """(stdout, stderr) of a colored lint report whose plain, stripped text is CUT + 1 chars."""
+    head = f"{ESC}[1m^{first_line}{ESC}[0m\n"
+    lines = "".join(line(i) for i in range(1, count + 1))
+    tail = f"{summary}\n\n"
+    plain = re.sub(ESC + r"\[[0-9;]*m", "", head + lines + tail).strip()
+    pad = CUT + 1 - len(plain) - 1  # one more "\n" ends the padding line
+    if pad < 1:
+        raise AssertionError(f"report already {len(plain)} chars")
+    return head + lines + "=" * pad + "\n", tail
+
+
+RUFF_OUT, RUFF_ERR = lint_report(
+    first_line="ruff (fake) report —",
+    line=lambda i: (
+        f"{ESC}[1msrc/x.py{ESC}[0m:{i}:1: {ESC}[1;31mF401{ESC}[m `mod{i:02d}` imported but unused\n"
+    ),
+    count=29,
+    summary="Found 29 errors.",
+)
+ESLINT_OUT, ESLINT_ERR = lint_report(
+    first_line="eslint (fake) report —",
+    line=lambda i: (
+        f"  {i}:1  {ESC}[31merror{ESC}[39m  '{ESC}[4mv{i:02d}{ESC}[24m' is never used"
+        "  no-unused-vars\n"
+    ),
+    count=27,
+    summary=f"{ESC}[2K{ESC}[31m{ESC}[1m27 problems (27 errors, 0 warnings){ESC}[22m{ESC}[39m",
+)
+
+
+def rule(argv_has: list[str], **answer: Any) -> dict[str, Any]:
+    return dict(answer, argv_has=argv_has, env_has=NO_COLOR_ENV)
+
+
+RUFF_CLEAN = {
+    "ruff": [
+        rule(
+            ["format", "-q"],
+            stdout="1 file reformatted\n",
+            write={"x.py": "import os\n\nprint(os.sep)\n"},
+        ),
+        rule(["check", "--fix", "-q"], stdout="All checks passed!\n"),
+    ]
+}
+RUFF_ERRORS = {
+    "ruff": [  # format fails too: its rc and text are ignored
+        rule(
+            ["format", "-q"],
+            stderr="error: format failed\n",
+            rc=2,
+            write={"src/x.py": "import os  # formatted\n"},
+        ),
+        rule(["check", "--fix", "-q"], stdout=RUFF_OUT, stderr=RUFF_ERR, rc=1),
+    ]
+}
+
+
+def node(*, name: str, formatted: str) -> dict[str, Any]:
+    """prettier formats ``name`` (and fails: its rc and text are ignored); eslint reports errors."""
+    return {
+        "prettier": [
+            rule(
+                ["--write", "--log-level", "warn"],
+                stderr=f"[warn] {name}\n",
+                rc=2,
+                write={name: formatted},
+            )
+        ],
+        "eslint": [rule(["--fix"], stdout=ESLINT_OUT, stderr=ESLINT_ERR, rc=1)],
+    }
+
+
+def edit_event(path: Path, cwd: Path | None = None) -> bytes:
+    data: dict[str, Any] = {"tool_name": "Write", "tool_input": {"file_path": str(path)}}
+    if cwd is not None:
+        data["cwd"] = str(cwd)
+    return json.dumps(data).encode()
+
+
+def hub_of(ws: Any) -> Path:
+    return Path(ws.root, "ws", ws.HUB_DIR)
+
+
+def post_edit_workspace(ws: Any) -> tuple[Path, Path, Path]:
+    """The hub copy (with ``brain/``, so the workspace scan finds it), ``api`` and ``web``."""
+    ws.hub_copy(extra_files={"brain/now.md": "# Now\n", "notes/x.py": "x = 1\n"})
+    api = ws.make_repo(
+        ws.root / "ws" / "api",
+        files={"x.py": "import os\nprint( os.sep )\n", "src/x.py": "import os\n"},
+    )
+    web = ws.make_repo(
+        ws.root / "ws" / "web",
+        files={"a.ts": "export const a=1\n", "a.js": "export const b=2\n", "package.json": "{}\n"},
+    )
+    return hub_of(ws), api, web
+
+
+def post_edit_empty_stdin(*, ws: Any) -> Run:
+    _, api, _ = post_edit_workspace(ws)
+    ws.install_repo_fakes(api, ["ruff"])
+    return {"stdin": b"", "answers": RUFF_ERRORS}
+
+
+def post_edit_missing_file(*, ws: Any) -> Run:
+    # Inside a listed repo that has ruff: only the file check stops the hook.
+    hub, api, _ = post_edit_workspace(ws)
+    ws.install_repo_fakes(api, ["ruff"])
+    return {"stdin": edit_event(api / "gone.py", hub), "answers": RUFF_ERRORS}
+
+
+def post_edit_no_hub(*, ws: Any) -> Run:
+    # No hub above the cwd or the file, and the repo is named like a listed one. AGH-7 pinned
+    # "no hub, not linted"; under Q-4 the hub holding the hook is the config, so it is linted.
+    post_edit_workspace(ws)
+    repo = ws.make_repo(ws.root / "elsewhere" / "api", files={"x.py": "x = 1\n"})
+    ws.install_repo_fakes(repo, ["ruff"])
+    return {"stdin": edit_event(repo / "x.py", repo), "answers": RUFF_ERRORS, "no_hub": True}
+
+
+def post_edit_hub_file_not_linted(*, ws: Any) -> Run:
+    hub, _, _ = post_edit_workspace(ws)
+    ws.install_repo_fakes(hub, ["ruff"])  # .venv/ is ignored: the hub stays clean
+    return {"stdin": edit_event(hub / "notes" / "x.py", hub), "answers": RUFF_ERRORS}
+
+
+def post_edit_py_ruff_clean(*, ws: Any) -> Run:
+    hub, api, _ = post_edit_workspace(ws)
+    ws.install_repo_fakes(api, ["ruff"])
+    return {"stdin": edit_event(api / "x.py", hub), "answers": RUFF_CLEAN}
+
+
+def post_edit_py_ruff_errors(*, ws: Any) -> Run:
+    # In a worktree that has its own ruff, next to the main checkout's: the worktree's runs.
+    hub, api, _ = post_edit_workspace(ws)
+    wt = ws.add_worktree(api, "e")
+    ws.install_repo_fakes(api, ["ruff"])
+    ws.install_repo_fakes(wt, ["ruff"])
+    return {"stdin": edit_event(wt / "src" / "x.py", hub), "answers": RUFF_ERRORS}
+
+
+def post_edit_py_worktree_uses_main_ruff(*, ws: Any) -> Run:
+    hub, api, _ = post_edit_workspace(ws)
+    wt = ws.add_worktree(api, "t")
+    ws.install_repo_fakes(api, ["ruff"])
+    return {"stdin": edit_event(wt / "x.py", hub), "answers": RUFF_CLEAN}
+
+
+def post_edit_ts_prettier_eslint_errors(*, ws: Any) -> Run:
+    hub, _, web = post_edit_workspace(ws)
+    ws.install_repo_fakes(web, ["prettier", "eslint"])
+    ws.write_files(web, {"eslint.config.js": "export default [];\n"})
+    return {
+        "stdin": edit_event(web / "a.ts", hub),
+        "answers": node(name="a.ts", formatted="export const a = 1;\n"),
+    }
+
+
+def post_edit_js_prettier_only(*, ws: Any) -> Run:
+    # In web's worktree j: prettier and eslint in both checkouts, a listed eslint config only in
+    # the main checkout and look-alikes only in the worktree, so the worktree's own tools and top
+    # level decide. The event has no cwd and the hook runs from <ROOT>/elsewhere: the hub is found
+    # from the file path.
+    _, _, web = post_edit_workspace(ws)
+    wt = ws.add_worktree(web, "j")
+    ws.install_repo_fakes(web, ["prettier", "eslint"])
+    ws.install_repo_fakes(wt, ["prettier", "eslint"])
+    ws.write_files(web, {"eslint.config.js": "export default [];\n"})
+    ws.write_files(
+        wt, {"eslint.config.json": "{}\n", "src/eslint.config.js": "export default [];\n"}
+    )
+    return {
+        "stdin": edit_event(wt / "a.js"),
+        "answers": node(name="a.js", formatted="export const b = 2;\n"),
+        "cwd": ws.root / "elsewhere",
+    }
+
+
+def post_edit_py_stale_ruff_silent(*, ws: Any) -> Run:
+    # api's ruff exists but its interpreter is gone: both runs raise OSError, swallowed as rc 0.
+    hub, api, _ = post_edit_workspace(ws)
+    ws.write_exe(api / ".venv" / "bin" / "ruff", "#!/nonexistent/python3\n")
+    return {"stdin": edit_event(api / "x.py", hub), "answers": RUFF_ERRORS}
+
+
+def post_edit_event_cwd_hub_wins(*, ws: Any) -> Run:
+    # A repo outside the workspace, named like a listed one: the hub comes from the event cwd, and
+    # repo_of matches by directory name only, so it is linted. No hub is above <ROOT>/elsewhere.
+    hub, _, _ = post_edit_workspace(ws)
+    repo = ws.make_repo(ws.root / "elsewhere" / "api", files={"x.py": "x = 1\n"})
+    ws.install_repo_fakes(repo, ["ruff"])
+    return {"stdin": edit_event(repo / "x.py", hub), "answers": RUFF_CLEAN, "no_hub": True}
+
+
+# session_start (AGH-7's test_session_start.py), on the brief workspace.
+SNAPSHOT = "brain/auto/workspace/session-snapshot.md"
+LONG_SNAPSHOT = (
+    "# Session snapshot (2026-01-15 10:20, before auto)\n"
+    + "".join(f"- note {i:03d}: café … résumé; keep going\n" for i in range(1, 80))
+)[:2501]
+BRIEF_SCRIPT = "scripts/brief.py"
+CACHED_BRIEF = "# Brief\n\n## Now\nShip the collector.\nThen the CLI.\n"
+
+
+def session_event(source: str, cwd: Path | None = None) -> bytes:
+    data = {"session_id": "abcdef123456", "hook_event_name": "SessionStart", "source": source}
+    if cwd is not None:
+        data["cwd"] = str(cwd)
+    return json.dumps(data).encode()
+
+
+def write_snapshot(ws: Any, text: str = LONG_SNAPSHOT) -> None:
+    ws.write_files(hub_of(ws), {SNAPSHOT: text})
+
+
+def decoy(ws: Any) -> Path:
+    """A dir that find_hub accepts (it holds hub.json) but that has no brief and no snapshot."""
+    folder = Path(ws.root) / "elsewhere" / "decoy"
+    ws.write_files(folder, {"hub.json": "{}\n"})
+    return folder
+
+
+def drop_brief(ws: Any) -> None:
+    """AGH-7 deleted the hub's brief script here; no hub copy of the rendered files holds one."""
+    assert not (hub_of(ws) / BRIEF_SCRIPT).exists()
+
+
+def start(
+    ws: Any,
+    stdin: bytes,
+    *,
+    cwd: Path | None = None,
+    env: Mapping[str, str] | None = None,
+    no_hub: bool = False,
+) -> Run:
+    return {
+        "stdin": stdin,
+        "cwd": cwd or ws.root / "elsewhere",
+        "env": env,
+        "answers": ws.BRIEF_GH,
+        "no_hub": no_hub,
+    }
+
+
+def session_start_no_hub(*, ws: Any) -> Run:
+    ws.brief_workspace()
+    # HUB_CONFIG names a dir, so it is ignored. AGH-7 pinned "no snapshot"; under Q-4 the hub
+    # holding the hook is found, so its snapshot is appended.
+    write_snapshot(ws)
+    return start(
+        ws,
+        session_event("compact", ws.root / "elsewhere"),
+        env={"HUB_CONFIG": str(hub_of(ws) / "brain")},
+        no_hub=True,
+    )
+
+
+def session_start_startup(*, ws: Any) -> Run:
+    ws.brief_workspace()
+    write_snapshot(ws)
+    folder = decoy(ws)
+    return start(
+        ws,
+        session_event("startup", hub_of(ws)),
+        cwd=folder,
+        env={"CLAUDE_PROJECT_DIR": str(folder)},
+    )
+
+
+def session_start_sibling_repo_cwd(*, ws: Any) -> Run:
+    ws.brief_workspace()
+    (ws.root / "ws" / "api" / "src").mkdir()
+    return start(ws, session_event("startup", ws.root / "ws" / "api" / "src"))
+
+
+def session_start_compact_snapshot(*, ws: Any) -> Run:
+    ws.brief_workspace()
+    write_snapshot(ws)
+    return start(
+        ws,
+        session_event("compact", decoy(ws)),
+        env={"HUB_CONFIG": str(hub_of(ws) / "hub.json")},
+    )
+
+
+def session_start_no_brief_compact(*, ws: Any) -> Run:
+    ws.brief_workspace()
+    drop_brief(ws)
+    write_snapshot(ws, LONG_SNAPSHOT[:2500])
+    bare = ws.add_worktree(hub_of(ws), "y")  # no brain/, so the walk skips it
+    ws.commit_hub({"brain/now.md": None, **dict.fromkeys(ws.JOURNAL)}, repo=bare)
+    shutil.rmtree(bare / "brain")
+    return start(ws, session_event("compact"), cwd=decoy(ws), env={"CLAUDE_PROJECT_DIR": str(bare)})
+
+
+def session_start_no_brief_startup(*, ws: Any) -> Run:
+    ws.brief_workspace()
+    drop_brief(ws)
+    write_snapshot(ws)
+    return start(ws, session_event("startup", hub_of(ws)), cwd=hub_of(ws))
+
+
+def session_start_hub_worktree_cwd(*, ws: Any) -> Run:
+    ws.brief_workspace()
+    # In the main hub only. AGH-7 read the worktree (none, so nothing appended); under Q-4 the
+    # hook reads the main hub that holds it, so its now.md and this snapshot are injected.
+    write_snapshot(ws)
+    wt = ws.add_worktree(hub_of(ws), "x")
+    ws.add_worktree(hub_of(ws), "z")  # also a hub worktree: the scan takes the first sorted
+    project = dict(ws.BRIEF_HUB_JSON["project"], hub_repo="acme/demo-hub-wt")
+    wt_hub_json = dict(ws.BRIEF_HUB_JSON, project=project)
+    wt_now_md = ws.NOW_MD.replace(
+        "Ship the collector.\nThen the CLI.", "Worktree focus.\nOnly here."
+    )
+    ws.commit_hub(
+        {"hub.json": json.dumps(wt_hub_json, indent=2) + "\n", "brain/now.md": wt_now_md}, repo=wt
+    )
+    return start(ws, session_event("compact"), cwd=wt / "brain")
+
+
+def session_start_non_object_stdin(*, ws: Any) -> Run:
+    # AGH-7 pinned a crash; hooks fail open (AC-4.11): an empty object, exit 0.
+    ws.brief_workspace()
+    return start(ws, b"[]", cwd=hub_of(ws))
+
+
+def session_start_brief_crash_compact(*, ws: Any) -> Run:
+    ws.brief_workspace()
+    broken = {key: value for key, value in ws.BRIEF_HUB_JSON.items() if key != "tracker"}
+    ws.commit_hub({"hub.json": json.dumps(broken, indent=2) + "\n"})  # AGH-7's brief: KeyError
+    write_snapshot(ws, "  Snapshot body with surrounding spaces.  \n\n")
+    return start(ws, session_event("compact", hub_of(ws)))
+
+
+def session_start_cached_startup(*, ws: Any) -> Run:
+    # ADR 0055: a hub pinned to a release with a cache made 200 s ago, under the 5 min
+    # refresh floor. The cached brief, headed with its age, is the context; the fake uvx is on
+    # PATH and never called, and nothing is written.
+    ws.brief_workspace()
+    pinned = dict(ws.BRIEF_HUB_JSON, platform={"version": "1.2.3"})
+    ws.commit_hub({"hub.json": json.dumps(pinned, indent=2) + "\n"})
+    ws.fake(ws.root / "bin" / "uvx", "uvx")
+    cache = {"made_at": ws.FIXED - 200, "brief": CACHED_BRIEF}
+    ws.write_files(
+        hub_of(ws),
+        {".hub-cache/.gitignore": "*\n", ".hub-cache/brief.json": json.dumps(cache)},
+    )
+    return start(ws, session_event("startup", hub_of(ws)), cwd=hub_of(ws))
+
+
+# session_end (AGH-7's test_session_end.py).
+DAY_FILE = "brain/_inbox/sessions/2026-01-15.md"
+OLD_DAY = (
+    "---\ntype: session-log\nstatus: proposed\nlast_verified: 2026-01-15\n"
+    "provenance: agent-from-code\n---\n"
+    "# Sessions 2026-01-15\n\n- 08:00 session `old12345` ended (clear), cwd `/w`\n"
+    "  - api [trunk]: 9 changed\n"
+)
+
+
+def fields_event(**fields: Any) -> bytes:
+    return json.dumps(fields).encode()
+
+
+def session_end_workspace(ws: Any) -> None:
+    """The hub copy (with a brain/; clean) and ``api`` with 2 dirty entries (one modified file,
+    one untracked dir holding two files: porcelain lists the dir once); ``web`` is clean."""
+    ws.hub_copy(extra_files={"brain/now.md": "# Now\n"})
+    api = ws.make_repo(ws.root / "ws" / "api", files={"README.md": "api\n"})
+    ws.write_files(api, {"README.md": "api, edited\n", "notes/a.txt": "a\n", "notes/b.txt": "b\n"})
+    ws.make_repo(ws.root / "ws" / "web", files={"index.html": "<p>web</p>\n"})
+
+
+def session_end_no_hub(*, ws: Any) -> Run:
+    # No hub above the event's or the process's cwd. AGH-7 pinned "nothing written"; under Q-4
+    # the entry goes to the hub holding the hook.
+    session_end_workspace(ws)
+    stdin = fields_event(session_id="abcdef123456", reason="logout", cwd=str(ws.root / "elsewhere"))
+    return {"stdin": stdin, "no_hub": True}
+
+
+def session_end_new_day_file(*, ws: Any) -> Run:
+    # Three api worktrees created as t, b, c: the listing is sorted, so b (a branch, 3 files), c
+    # (a branch, 2 files), then t (detached, 1 file). The sessions dir does not exist yet. The
+    # process cwd has no hub above it: the hub comes from the event's cwd.
+    session_end_workspace(ws)
+    for name, files in (("t", 1), ("b", 3), ("c", 2)):
+        wt = ws.add_worktree(
+            ws.root / "ws" / "api", name, detach=name == "t", branch=f"dev/tst-{files}-{name}"
+        )
+        ws.write_files(wt, {f"x{i}.txt": f"{i}\n" for i in range(1, files + 1)})
+    stdin = fields_event(
+        session_id="abcdef123456", reason="logout", cwd=str(ws.root / "ws" / "api")
+    )
+    return {"stdin": stdin, "cwd": ws.root / "elsewhere"}
+
+
+def session_end_append(*, ws: Any) -> Run:
+    # An int session id (str() then cut to 8), no reason; web and the hub dirty too.
+    session_end_workspace(ws)
+    web = ws.root / "ws" / "web"
+    ws.write_files(hub_of(ws), {DAY_FILE: OLD_DAY, "scratch.txt": "hub\n"})
+    ws.write_files(web, {"index.html": "<p>web, edited</p>\n"})
+    return {"stdin": fields_event(session_id=1234567890123, cwd=str(web)), "cwd": web}
+
+
+def session_end_empty_stdin_in_hub(*, ws: Any) -> Run:
+    session_end_workspace(ws)
+    return {"stdin": b""}
+
+
+def session_end_hub_worktree_cwd(*, ws: Any) -> Run:
+    # AGH-7's pinned item 1: hooks run from a hub worktree took <hub>/.claude/worktrees as the
+    # workspace and wrote into the worktree's brain/. Under Q-4 the worktree's hooks read its
+    # hub.json, but the hub and workspace are the main checkout's: the entry goes into the main
+    # brain/ and lists api and the worktree. A null session id prints `None`.
+    session_end_workspace(ws)
+    wt = ws.add_worktree(hub_of(ws), "x", branch="dev/tst-9-x")
+    ws.write_files(wt, {"draft.txt": "wt\n"})
+    stdin = fields_event(session_id=None, reason="clear", cwd=str(wt / "brain"))
+    return {"stdin": stdin, "cwd": wt / "brain", "hub": wt}
+
+
+# pre_compact (AGH-7's test_pre_compact.py).
+FINAL = "é" + "0123456789" * 80  # 801 chars, 802 UTF-8 bytes: the char cut drops the final 9
+
+
+def jsonl_bytes(*records: Any) -> bytes:
+    """JSON lines as bytes (non-ASCII kept raw); a bytes record is written as is."""
+    return b"".join(
+        record
+        if isinstance(record, bytes)
+        else (json.dumps(record, ensure_ascii=False) + "\n").encode("utf-8")
+        for record in records
+    )
+
+
+# An invalid first line, a user string holding an invalid UTF-8 byte (read with
+# errors="replace"), then the final user string: every later line must be skipped.
+TRANSCRIPT = jsonl_bytes(
+    b"{not json\n",
+    {"type": "user", "message": {"content": "first request"}},
+    b'{"type": "user", "message": {"content": "caf\xff"}}\n',
+    {"type": "user", "message": {"content": FINAL}},
+    {"type": "assistant", "message": {"content": "assistant text is not a request"}},
+    {"type": "user", "message": {"content": "<command-name>/compact</command-name>"}},
+    {"type": "user", "message": {"content": [{"type": "text", "text": "list content"}]}},
+    b"{not json either\n",
+    {"type": "user", "message": None},
+    {"type": "user", "message": {"content": 42}},
+    {"type": "user"},
+)
+
+
+def pre_compact_workspace(ws: Any) -> None:
+    """The hub copy (with a brain/; clean), ``api`` with one modified file and 11 untracked
+    (12 entries), ``web`` clean."""
+    ws.hub_copy(extra_files={"brain/now.md": "# Now\n"})
+    api = ws.make_repo(ws.root / "ws" / "api", files={"README.md": "api\n"})
+    ws.write_files(
+        api,
+        dict(
+            {"README.md": "api, edited\n"}, **{f"f{i:02d}.txt": f"{i}\n" for i in range(11, 0, -1)}
+        ),
+    )
+    ws.make_repo(ws.root / "ws" / "web", files={"index.html": "<p>web</p>\n"})
+
+
+def write_transcript(ws: Any) -> Path:
+    transcript = Path(ws.root) / "home" / "t.jsonl"
+    transcript.write_bytes(TRANSCRIPT)
+    return transcript
+
+
+def pre_compact_no_hub(*, ws: Any) -> Run:
+    # As session_end/no_hub: under Q-4 the snapshot goes to the hub holding the hook.
+    pre_compact_workspace(ws)
+    transcript = write_transcript(ws)
+    stdin = fields_event(
+        cwd=str(ws.root / "elsewhere"), trigger="manual", transcript_path=str(transcript)
+    )
+    return {"stdin": stdin, "no_hub": True}
+
+
+def pre_compact_full(*, ws: Any) -> Run:
+    # api: 12 entries, cut to 10. A detached worktree with exactly 10 untracked entries (an
+    # untracked dir, listed once as `sub/`, and 9 files) keeps all 10. The process cwd has no hub
+    # above it: the hub is found from the event's cwd.
+    pre_compact_workspace(ws)
+    wt = ws.add_worktree(ws.root / "ws" / "api", "t", detach=True)
+    ws.write_files(
+        wt,
+        dict(
+            {"sub/one.txt": "1\n", "sub/two.txt": "2\n"},
+            **{f"w{i:02d}.txt": "w\n" for i in range(1, 10)},
+        ),
+    )
+    transcript = write_transcript(ws)
+    stdin = fields_event(
+        cwd=str(ws.root / "ws" / "api"), trigger="manual", transcript_path=str(transcript)
+    )
+    return {"stdin": stdin, "cwd": ws.root / "elsewhere"}
+
+
+def pre_compact_minimal_overwrite(*, ws: Any) -> Run:
+    # Clean checkouts, no transcript_path, no trigger; the old snapshot is longer than the new one
+    # and is ignored by the hub's .gitignore, so the hub stays clean.
+    pre_compact_workspace(ws)
+    api, web = ws.root / "ws" / "api", ws.root / "ws" / "web"
+    ws.git("checkout", "-q", "--", "README.md", cwd=api)
+    ws.git("clean", "-qfd", cwd=api)
+    ws.write_files(hub_of(ws), {SNAPSHOT: "# Session snapshot (old)\n" + "- stale\n" * 20})
+    return {"stdin": fields_event(cwd=str(web)), "cwd": web}
+
+
+def pre_compact_missing_transcript(*, ws: Any) -> Run:
+    # A transcript_path that does not exist reads as no request: `(n/a)`.
+    pre_compact_workspace(ws)
+    stdin = fields_event(
+        cwd=str(ws.root / "ws" / "api"),
+        trigger="auto",
+        transcript_path=str(ws.root / "home" / "none.jsonl"),
+    )
+    return {"stdin": stdin}
+
+
+# retro_metrics (AGH-7's test_retro_metrics.py). The window of `--days 14` starts on 2026-01-01,
+# that of `--days 3` on 2026-01-12; file- and gh-based dates sit on both boundaries.
+
+
+def commits(*dates: str | None) -> list[dict[str, str]]:
+    return [{"committedDate": d} if d else {"oid": "no-date"} for d in dates]
+
+
+API_PRS = [
+    {
+        "number": 11,
+        "createdAt": "2026-01-09T08:00:00Z",
+        "mergedAt": "2026-01-09T09:09:00Z",
+        "body": "Refs the Agent run r0 log",
+        "commits": commits("2026-01-09T12:00:00Z"),
+    },
+    {
+        "number": 12,
+        "createdAt": "2026-01-10T09:00:00Z",
+        "mergedAt": "2026-01-10T19:00:00Z",
+        "body": "Agent run `r1` for TST-1",
+        "commits": commits("2026-01-10T08:30:00Z", "2026-01-10T09:00:00Z", None),
+    },
+    {
+        "number": 13,
+        "createdAt": "2026-01-12T10:00:00Z",
+        "mergedAt": "2026-01-12T10:30:00Z",
+        "body": "Agent run `r2` for TST-2",
+        "commits": commits("2026-01-12T09:00:00Z", "2026-01-12T10:00:01Z"),
+    },
+]
+HUB_PRS = [
+    {
+        "number": 5,
+        "createdAt": "2026-01-13T08:00:00Z",
+        "mergedAt": "2026-01-13T13:00:00Z",
+        "body": None,
+        "commits": [],
+    },
+    {"number": 4, "createdAt": "2026-01-11T10:00:00Z", "mergedAt": "2026-01-11T12:20:00Z"},
+    {
+        "number": 3,
+        "createdAt": "2026-01-08T10:00:00Z",
+        "mergedAt": "2026-01-08T11:00:00Z",
+        "body": "Agent run `r3` for TST-3",
+    },
+    {
+        "number": 2,
+        "createdAt": "2026-01-06T10:00:00Z",
+        "mergedAt": "2026-01-06T13:00:00Z",
+        "body": "agent run `r4`",
+        "commits": [],
+    },
+]
+
+
+def ci_run(conclusion: str | None, created: str, name: str | None = None) -> dict[str, Any]:
+    run: dict[str, Any] = {"conclusion": conclusion, "createdAt": created}
+    if name:
+        run["workflowName"] = name
+    return run
+
+
+API_RUNS = [
+    ci_run("failure", "2026-01-14T09:00:00Z", "lint"),
+    ci_run("failure", "2026-01-13T09:00:00Z", "build"),
+    ci_run("success", "2026-01-14T10:00:00Z", "build"),
+    ci_run("failure", "2026-01-10T09:00:00Z", "lint"),
+    ci_run(None, "2026-01-14T11:00:00Z", "deploy"),
+    ci_run("failure", "2025-12-26T09:00:00Z", "e2e"),
+    ci_run("failure", "2026-01-01T00:00:00Z", "docs"),
+    ci_run("failure", "2026-01-12T00:00:00Z", "security"),
+    ci_run("failure", "2026-01-13T12:00:00Z", "lint " + chr(0x2713)),  # the report escapes it
+    ci_run("failure", "2025-12-31T23:59:59Z", "release"),
+    ci_run("", "2026-01-14T12:00:00Z", "queued"),
+    ci_run("cancelled", "2026-01-11T09:00:00Z", "build"),
+]
+WEB_RUNS = [
+    ci_run("failure", "2026-01-14T09:00:00Z"),
+    ci_run("success", "2026-01-14T09:30:00Z", "ci"),
+]
+RETRO_GH = {
+    "gh": [
+        {"argv_has": ["pr", "acme/api"], "stdout": json.dumps(API_PRS)},
+        {"argv_has": ["pr", "acme/web"], "stdout": "[]"},
+        {"argv_has": ["pr", "acme/demo-hub"], "stdout": json.dumps(HUB_PRS)},
+        {"argv_has": ["run", "acme/api"], "stdout": json.dumps(API_RUNS)},
+        {"argv_has": ["run", "acme/web"], "stdout": json.dumps(WEB_RUNS)},
+        {"argv_has": ["run", "acme/demo-hub"], "stdout": ""},
+    ]
+}
+
+
+def jsonl_text(*records: Any) -> str:
+    return "".join(json.dumps(record) + "\n" for record in records)
+
+
+def reported(issue: str, cost: float | None, stage: str | None = None) -> dict[str, Any]:
+    record: dict[str, Any] = {"event": "reported", "issue": issue, "total_cost_usd": cost}
+    if stage is not None:
+        record["failed_stage"] = stage
+    return record
+
+
+AGENT_RUNS = {
+    ".agent-runs/2025-12-31.jsonl": jsonl_text(reported("TST-9", 9)),
+    ".agent-runs/2026-01-01.jsonl": jsonl_text(
+        {"event": "started", "issue": "TST-3"}, reported("TST-3", 0.1, "verify")
+    ),
+    ".agent-runs/2026-01-10.jsonl": jsonl_text(
+        {"event": "started", "issue": "TST-1"},
+        reported("TST-1", 1.25),
+        reported("TST-2", 0.165, "verify"),
+        reported("TST-1", 0.2),
+        reported("TST-2", None, "check"),
+        {"event": "stage", "issue": "TST-2", "failed_stage": "lint"},
+        reported("TST-4", None),
+        reported("TST-5", 2),
+    ),
+    ".agent-runs/2026-01-12.jsonl": jsonl_text(reported("TST-3", 0.2, "")),
+    ".agent-runs/README.md": "not a run log\n",
+}
+INBOX = {
+    "brain/_inbox/a.md": "a\n",
+    "brain/_inbox/b.md": "b\n",
+    "brain/_inbox/notes.txt": "n\n",
+    "brain/_inbox/sessions/x.md": "x\n",
+}
+# brain/learnings on trunk, never on T-14 or T-3; b.md renamed to b2.md at T-1 (an R entry).
+LEARNINGS: list[tuple[int, dict[str, str | None]]] = [
+    (20, {"brain/learnings/old.md": "old\n"}),
+    (10, {"brain/learnings/a.md": "a\n", "brain/learnings.md": "index\n"}),
+    (5, {"brain/learnings/a.md": "a, again\n", "brain/learnings/b.md": "b\n"}),
+    (4, {"brain/learnings/old.md": None}),
+    (2, {"brain/learnings/c.md": "c\n"}),
+    (1, {"brain/learnings/b.md": None, "brain/learnings/b2.md": "b\n"}),
+]
+
+
+def retro_workspace(ws: Any) -> Path:
+    """The hub copy with the learnings history and its origin, then the untracked run logs and
+    inbox."""
+    hub = ws.hub_copy()
+    for days_before, files in LEARNINGS:
+        for rel, text in files.items():
+            if text is None:
+                (hub / rel).unlink()
+            else:
+                ws.write_files(hub, {rel: text})
+        ws.git("add", "-A", cwd=hub)
+        ws.git("commit", "-q", "-m", "learnings", cwd=hub, date=ws.at(days_before, "11:00"))
+    ws.bare_origin(hub)
+    ws.write_files(hub, dict(AGENT_RUNS, **INBOX))
+    return Path(hub)
+
+
+def retro_metrics_full(*, ws: Any) -> Run:
+    retro_workspace(ws)
+    return {"answers": RETRO_GH}
+
+
+def retro_metrics_days_3(*, ws: Any) -> Run:
+    retro_workspace(ws)
+    return {"argv": ["--days", "3"], "answers": RETRO_GH}
+
+
+def retro_metrics_gh_failing(*, ws: Any) -> Run:
+    # The message is 201 chars once stripped: the warning keeps the first 200 (drops the final X).
+    retro_workspace(ws)
+    message = "HTTP 503: " + "-" * 189 + "|X"
+    return {"answers": {"gh": [{"stderr": "  " + message + "\n\n", "rc": 1}]}}
+
+
+def retro_metrics_gh_bad_json_no_data(*, ws: Any) -> Run:
+    hub = retro_workspace(ws)
+    shutil.rmtree(hub / ".agent-runs")
+    shutil.rmtree(hub / "brain" / "_inbox")
+    ws.git("remote", "remove", "origin", cwd=hub)  # the learnings stay on local trunk
+    answers = {
+        "gh": [{"argv_has": ["pr"], "stdout": "oops\n"}, {"argv_has": ["run"], "stdout": ""}]
+    }
+    return {"answers": answers}
+
+
+def retro_metrics_from_hub_worktree(*, ws: Any) -> Run:
+    # The worktree has its own run log and inbox, and the only hub.json listing api (the main
+    # checkout's is changed after): the report takes the worktree's repos, the main one's data.
+    hub = retro_workspace(ws)
+    wt = ws.add_worktree(hub, "x")
+    ws.write_files(
+        wt,
+        {
+            ".agent-runs/2026-01-14.jsonl": jsonl_text(reported("TST-7", 7.0)),
+            "brain/_inbox/w1.md": "w\n",
+            "brain/_inbox/w2.md": "w\n",
+            "brain/_inbox/w3.md": "w\n",
+        },
+    )
+    main_json = dict(ws.HUB_JSON, repos=[{"dir": "web", "github": "acme/web"}])
+    ws.commit_hub({"hub.json": json.dumps(main_json, indent=2) + "\n"})
+    return {"answers": RETRO_GH, "hub": wt}
+
+
+def retro_metrics_bad_run_file(*, ws: Any) -> Run:
+    hub = retro_workspace(ws)
+    ws.write_files(hub, {".agent-runs/notes.jsonl": jsonl_text(reported("TST-8", 8.0))})
+    return {"answers": RETRO_GH}
+
+
+def retro_metrics_per_repo_branch(*, ws: Any) -> Run:
+    # api sets its own default branch (AGH-46): its CI runs are read on master; web and the hub
+    # repo keep the project's trunk, and the learnings still come from the hub's origin/trunk.
+    retro_workspace(ws)
+    repos = [dict(ws.HUB_JSON["repos"][0], default_branch="master"), ws.HUB_JSON["repos"][1]]
+    ws.commit_hub({"hub.json": json.dumps(dict(ws.HUB_JSON, repos=repos), indent=2) + "\n"})
+    return {"answers": RETRO_GH}
+
+
+def retro_metrics_inbox_age(*, ws: Any) -> Run:
+    # AGH-833 (D5): with the clock at 2026-01-15, only the 01-12 note is older than 2 days;
+    # a.md and b.md have no date prefix and a real mtime after the clock, so they do not count.
+    hub = retro_workspace(ws)
+    ws.write_files(
+        hub,
+        {
+            "brain/_inbox/2026-01-12-old.md": "old\n",
+            "brain/_inbox/2026-01-13-edge.md": "edge\n",
+            "brain/_inbox/2026-01-15-today.md": "today\n",
+        },
+    )
+    return {"answers": RETRO_GH}
+
+
+# AGH-833 (D1 to D4, D6): the PRs the review records name, read through `gh api -X GET <path>`
+# (REST). The clock is 2026-01-15T10:30Z, `since` 2026-01-01, the review lookback 2025-12-25.
+def review_record(ticket: str, *, pr: str, reviewed_at: str | None = None) -> str:
+    """A review record's text; ``pr`` is the whole ``pr: …`` or ``prs: […]`` line."""
+    day = f"reviewed_at: {reviewed_at}\n" if reviewed_at else ""
+    return f"---\ntype: review\nticket: {ticket}\noutcome: approved\n{pr}\n{day}---\n# Review\n"
+
+
+REVIEWS = {
+    "TST-1": review_record("TST-1", pr="pr: api#21", reviewed_at="2026-01-09"),
+    "TST-2": review_record("TST-2", pr="pr: api#22", reviewed_at="2026-01-12"),
+    "TST-3": review_record("TST-3", pr="prs: [api#23, hub#7]", reviewed_at="2026-01-14"),
+    "TST-4": review_record("TST-4", pr="pr: api#pending"),
+    "TST-5": review_record("TST-5", pr="pr: pending"),
+    "TST-6": review_record("TST-6", pr="pr: api#9", reviewed_at="2025-12-01"),
+    "TST-7": review_record("TST-7", pr="pr: web#30", reviewed_at="2026-01-11"),
+    "TST-8": review_record("TST-8", pr="pr: nope#1", reviewed_at="2026-01-11"),
+    "TST-9": review_record("TST-9", pr="pr: api#20", reviewed_at="2025-12-28"),
+    "TST-10": review_record("TST-10", pr="pr: api#24", reviewed_at="2026-01-06"),
+    "TST-11": review_record("TST-11", pr="pr: api#25", reviewed_at="2026-01-02"),
+    "TST-12": review_record("TST-12", pr="pr: api#26", reviewed_at="2026-01-08"),
+}
+
+
+def pull(
+    number: int,
+    *,
+    created: str,
+    merged: str | None = None,
+    state: str = "closed",
+    mergeable_state: str = "unknown",
+) -> dict[str, Any]:
+    return {
+        "number": number,
+        "state": state,
+        "created_at": created,
+        "merged_at": merged,
+        "closed_at": merged,
+        "mergeable_state": mergeable_state,
+    }
+
+
+def head(sha: str, date: str) -> dict[str, Any]:
+    return {"sha": sha, "commit": {"committer": {"date": date}}}
+
+
+def check_runs(*runs: tuple[str | None, str | None]) -> dict[str, Any]:
+    """The check-runs answer: one run per (conclusion, completed_at)."""
+    listed = [{"conclusion": c, "completed_at": at} for c, at in runs]
+    return {"total_count": len(listed), "check_runs": listed}
+
+
+GREEN = check_runs(("success", "2026-01-01T00:00:00Z"))
+# Each PR: its pull, its commits (as the API lists them) and the check runs of each head it reads.
+# A commit before the last one at or before created_at is no head: its runs are never read.
+FOLLOW_UP_PULLS: dict[str, tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]] = {
+    "acme/api/pulls/21": (  # red 09:00 to the next head at 09:30: 0.5 h, not slow
+        pull(21, created="2026-01-09T08:00:00Z", merged="2026-01-10T12:00:00Z"),
+        [head("a21", "2026-01-09T07:30:00Z"), head("b21", "2026-01-09T09:30:00Z")],
+        {
+            "a21": check_runs(("failure", "2026-01-09T09:00:00Z"), ("success", None)),
+            "b21": GREEN,
+        },
+    ),
+    "acme/api/pulls/22": (  # red from 10:00 (the earliest red run) to 12:30: 2.5 h, slow
+        pull(22, created="2026-01-12T09:00:00Z", merged="2026-01-13T09:00:00Z"),
+        [
+            head("o22", "2026-01-12T07:00:00Z"),
+            head("b22", "2026-01-12T12:30:00Z"),
+            head("a22", "2026-01-12T08:30:00Z"),
+        ],
+        {
+            "a22": check_runs(
+                ("failure", "2026-01-12T10:15:00Z"),
+                ("timed_out", "2026-01-12T10:00:00Z"),
+                ("success", "2026-01-12T09:00:00Z"),
+            ),
+            "b22": GREEN,
+        },
+    ),
+    "acme/api/pulls/23": (  # open, dirty, newest head at 08:00: a conflict for 2.5 h, slow
+        pull(23, created="2026-01-14T09:00:00Z", state="open", mergeable_state="dirty"),
+        [head("a23", "2026-01-14T08:00:00Z"), head("b23", "2026-01-15T08:00:00Z")],
+        {"a23": GREEN, "b23": GREEN},
+    ),
+    "acme/demo-hub/pulls/7": (  # open, clean and green: checked, not slow
+        pull(7, created="2026-01-14T12:00:00Z", state="open", mergeable_state="clean"),
+        [head("a7", "2026-01-14T11:00:00Z")],
+        {"a7": GREEN},
+    ),
+    # A full page of 100 commits may not be all of them: unchecked, no check-runs read (the
+    # last heads answer green, so reading them would count it checked).
+    "acme/api/pulls/24": (
+        pull(24, created="2026-01-05T09:00:00Z", merged="2026-01-06T09:00:00Z"),
+        [head(f"c{i:03}", f"2026-01-05T{9 + i // 60:02}:{i % 60:02}:00Z") for i in range(100)],
+        {f"c{i:03}": GREEN for i in range(90, 100)},
+    ),
+    # Merged in the window, but red for 26 h from 12-29T10:00 to the next head at 12-30T12:00,
+    # before since: that lapse is not counted, so it is checked, not slow.
+    "acme/api/pulls/25": (
+        pull(25, created="2025-12-29T09:00:00Z", merged="2026-01-02T09:00:00Z"),
+        [head("a25", "2025-12-29T08:00:00Z"), head("b25", "2025-12-30T12:00:00Z")],
+        {"a25": check_runs(("failure", "2025-12-29T10:00:00Z")), "b25": GREEN},
+    ),
+    # 12 heads (d00 at or before created_at, then 11 more): only the last FOLLOW_UP_HEADS = 10
+    # (d02 to d11) are read. d00 was red for 3.5 h before d01, but it is never read: not slow.
+    "acme/api/pulls/26": (
+        pull(26, created="2026-01-07T09:00:00Z", merged="2026-01-08T09:00:00Z"),
+        [head("d00", "2026-01-07T08:00:00Z")]
+        + [head(f"d{i:02}", f"2026-01-07T{10 + i:02}:00:00Z") for i in range(1, 12)],
+        dict(
+            {f"d{i:02}": GREEN for i in range(1, 12)},
+            d00=check_runs(("failure", "2026-01-07T08:30:00Z")),
+        ),
+    ),
+}
+
+
+def follow_up_gh() -> dict[str, Any]:
+    """RETRO_GH plus the `gh api -X GET` answers, each matched on its exact path."""
+    rules: list[dict[str, Any]] = []
+    for path, (data, heads, runs) in FOLLOW_UP_PULLS.items():
+        pull_path = f"repos/{path}"
+        rules.append({"argv_has": ["api", "GET", pull_path], "stdout": json.dumps(data)})
+        rules.append(
+            {
+                "argv_has": ["api", "GET", f"{pull_path}/commits?per_page=100"],
+                "stdout": json.dumps(heads),
+            }
+        )
+        owner_repo = pull_path.split("/pulls/")[0]
+        for sha, answer in runs.items():
+            rules.append(
+                {
+                    "argv_has": [
+                        "api",
+                        "GET",
+                        f"{owner_repo}/commits/{sha}/check-runs?per_page=100",
+                    ],
+                    "stdout": json.dumps(answer),
+                }
+            )
+    rules.append(  # merged before since: read once, outside the window
+        {
+            "argv_has": ["api", "GET", "repos/acme/api/pulls/20"],
+            "stdout": json.dumps(
+                pull(20, created="2025-12-29T09:00:00Z", merged="2025-12-30T10:00:00Z")
+            ),
+        }
+    )
+    rules.append(
+        {
+            "argv_has": ["api", "GET", "repos/acme/web/pulls/30"],
+            "stderr": "gh: Not Found (HTTP 404)\n",
+            "rc": 1,
+        }
+    )
+    return {"gh": rules + RETRO_GH["gh"]}
+
+
+def retro_metrics_pr_follow_up(*, ws: Any) -> Run:
+    # Expected pr_follow_up: checked 6 (api#21, api#22, api#23, hub#7, api#25, whose only long
+    # red stretch ended before since, and api#26, with only its last 10 heads read), slow 2
+    # (api#22 red_ci 2.5,
+    # api#23 conflict 2.5), unchecked 2 (web#30, with one `gh api GET` warning, and api#24, whose
+    # commits fill a page: its pull and commits are read, no check runs). TST-4 and TST-5
+    # are pending, TST-6 is before the lookback and TST-8 names no repo: none of them is read.
+    hub = retro_workspace(ws)
+    ws.write_files(
+        hub,
+        {f"brain/features/demo/reviews/{ticket}.md": text for ticket, text in REVIEWS.items()},
+    )
+    return {"answers": follow_up_gh()}
+
+
+# guard and stop_gate (AGH-200 E9): characterized from the unchanged templates before they emit
+# their decisions to the event server; their streams must never change because of that.
+def guard_hub_json(ws: Any) -> dict[str, Any]:
+    """The case ``hub.json`` with ``guard.ask_before_edit`` naming ``api/docs/adr``."""
+    return dict(ws.HUB_JSON, guard={"ask_before_edit": ["api/docs/adr"]})
+
+
+def guard_workspace(ws: Any) -> Path:
+    """The hub copy (with that guard list) and ``api``; returns ``api``."""
+    ws.hub_copy(guard_hub_json(ws), extra_files={"brain/now.md": "# Now\n"})
+    return Path(ws.make_repo(ws.root / "ws" / "api", files={"docs/adr/0001.md": "# ADR\n"}))
+
+
+def tool_event(cwd: Path, tool: str, **tool_input: Any) -> bytes:
+    data = {
+        "session_id": "abcdef123456",
+        "hook_event_name": "PreToolUse",
+        "tool_name": tool,
+        "tool_input": tool_input,
+        "tool_use_id": "toolu_01",
+        "cwd": str(cwd),
+    }
+    return json.dumps(data).encode()
+
+
+def guard_deny_push_main(*, ws: Any) -> Run:
+    api = guard_workspace(ws)
+    return {"stdin": tool_event(api, "Bash", command="git push origin main"), "cwd": api}
+
+
+def guard_deny_force_push(*, ws: Any) -> Run:
+    api = guard_workspace(ws)
+    return {"stdin": tool_event(api, "Bash", command="git push --force origin dev/x"), "cwd": api}
+
+
+def guard_deny_secret_write(*, ws: Any) -> Run:
+    api = guard_workspace(ws)
+    stdin = tool_event(api, "Write", file_path=str(api / ".env"), content="A=1\n")
+    return {"stdin": stdin, "cwd": api}
+
+
+def guard_ask_before_edit(*, ws: Any) -> Run:
+    api = guard_workspace(ws)
+    path = api / "docs" / "adr" / "0001.md"
+    stdin = tool_event(api, "Edit", file_path=str(path), old_string="ADR", new_string="Record")
+    return {"stdin": stdin, "cwd": api}
+
+
+def guard_allow(*, ws: Any) -> Run:
+    api = guard_workspace(ws)
+    return {"stdin": tool_event(api, "Bash", command="ls -la"), "cwd": api}
+
+
+def stop_hub_json(ws: Any, check_fast: str) -> dict[str, Any]:
+    """The case ``hub.json`` whose ``api`` runs ``check_fast``."""
+    repos = [dict(repo, check_fast=check_fast) for repo in ws.HUB_JSON["repos"]]
+    return dict(ws.HUB_JSON, repos=repos)
+
+
+def stop_gate_workspace(ws: Any, *, check_fast: str, changed: bool) -> Run:
+    """The hub copy and ``api`` (a new ``feature.py`` when ``changed``); the event's cwd is
+    ``api``, no transcript (so the window is the fallback's), and the block counter under
+    ``<ROOT>``. The change is an untracked file: the gate strips git's porcelain output, so the
+    first line's leading blank of an unstaged ` M` entry is lost and that file is not seen."""
+    ws.hub_copy(stop_hub_json(ws, check_fast), extra_files={"brain/now.md": "# Now\n"})
+    api = Path(ws.make_repo(ws.root / "ws" / "api", files={"app.py": "x = 1\n"}))
+    if changed:
+        ws.write_files(api, {"feature.py": "y = 2\n"})
+    temp = ws.root / "home" / "tmp"
+    temp.mkdir(parents=True, exist_ok=True)
+    data = {"session_id": "abcdef123456", "hook_event_name": "Stop", "cwd": str(api)}
+    return {"stdin": json.dumps(data).encode(), "cwd": api, "env": {"TMPDIR": str(temp)}}
+
+
+def stop_gate_check_passes(*, ws: Any) -> Run:
+    return stop_gate_workspace(ws, check_fast="echo checks ok", changed=True)
+
+
+def stop_gate_check_fails_block(*, ws: Any) -> Run:
+    return stop_gate_workspace(ws, check_fast="echo boom; exit 3", changed=True)
+
+
+def stop_gate_no_changed_code(*, ws: Any) -> Run:
+    return stop_gate_workspace(ws, check_fast="echo boom; exit 3", changed=False)
+
+
+# readonly_gate (AGH-141, AC-141.15): the base plugin's researcher, declared read-only, runs in a
+# workspace of the hub copy and ``api``. Setup runs its SubagentStart (silent, the state saved in
+# ``<ROOT>/home/tmp``), makes the change and writes the transcripts; the case is its SubagentStop.
+# The stream shows the gate's files only as added or deleted (the state, holding mtimes and
+# hashes, is never rewritten after its start), and the record's ``ts`` is the frozen clock's.
+GATE_SESSION = "abcdef123456"
+GATE_AGENT = "ab12cd34"
+GATE_STATE = f"hub-readonly-{GATE_SESSION}-{GATE_AGENT}.json"
+RESEARCHER = "plugin/hub-workflow/agents/researcher.md"
+
+
+def gate_transcript_line(number: int, block: Mapping[str, Any]) -> str:
+    """One assistant (a ``tool_use`` block) or user (a ``tool_result``) JSON line."""
+    role = "assistant" if block["type"] == "tool_use" else "user"
+    message: dict[str, Any] = {"role": role, "content": [dict(block)]}
+    if role == "assistant":
+        message["id"] = f"msg_{number:02d}"
+    return json.dumps({"type": role, "message": message}) + "\n"
+
+
+def gate_call(number: int, tool: str, **tool_input: Any) -> dict[str, Any]:
+    return {"type": "tool_use", "id": f"toolu_{number:02d}", "name": tool, "input": tool_input}
+
+
+def gate_result(number: int) -> dict[str, Any]:
+    return {"type": "tool_result", "tool_use_id": f"toolu_{number:02d}", "content": "ok"}
+
+
+def gate_event(ws: Any, name: str) -> bytes:
+    main = gate_main_transcript(ws)
+    data: dict[str, Any] = {
+        "session_id": GATE_SESSION,
+        "transcript_path": str(main),
+        "cwd": str(hub_of(ws)),
+        "hook_event_name": name,
+        "agent_id": GATE_AGENT,
+        "agent_type": "researcher",
+    }
+    if name == "SubagentStop":
+        data["agent_transcript_path"] = str(
+            main.with_suffix("") / "subagents" / f"agent-{GATE_AGENT}.jsonl"
+        )
+        data["stop_hook_active"] = False
+    return json.dumps(data).encode()
+
+
+def gate_main_transcript(ws: Any) -> Path:
+    return Path(ws.root) / "home" / ".claude" / "projects" / "ws" / f"{GATE_SESSION}.jsonl"
+
+
+def readonly_gate_workspace(ws: Any, *, worktree: bool = False) -> Path:
+    """The hub copy (holding the rendered researcher), ``api`` (and its worktree ``t``), the
+    main transcript, then the researcher's SubagentStart; returns the checkout it works in."""
+    researcher = next(file for file in ws.render.files if file.path == RESEARCHER)
+    ws.hub_copy(extra_files={"brain/now.md": "# Now\n", RESEARCHER: researcher.content})
+    api = Path(ws.make_repo(ws.root / "ws" / "api", files={"x.py": "x = 1\n"}))
+    checkout = ws.add_worktree(api, "t") if worktree else api
+    main = gate_main_transcript(ws)
+    ws.write_files(main.parent, {main.name: gate_transcript_line(0, gate_call(0, "Agent"))})
+    started = ws.run_named(
+        "readonly_gate/start", stdin=gate_event(ws, "SubagentStart"), **gate_run(ws)
+    )
+    assert (started["rc"], started["stdout"], started["stderr"]) == (b"0\n", b"", b""), started
+    assert (Path(ws.root) / "home" / "tmp" / GATE_STATE).is_file()
+    return checkout
+
+
+def gate_run(ws: Any) -> Run:
+    temp = Path(ws.root) / "home" / "tmp"
+    temp.mkdir(parents=True, exist_ok=True)
+    return {"cwd": ws.root / "elsewhere", "env": {"TMPDIR": str(temp)}}
+
+
+def gate_agent_transcript(ws: Any, *blocks: Mapping[str, Any]) -> None:
+    folder = gate_main_transcript(ws).with_suffix("") / "subagents"
+    first = json.dumps({"type": "user", "message": {"role": "user", "content": "Research."}})
+    calls = (gate_transcript_line(number, block) for number, block in enumerate(blocks, 1))
+    text = "".join([first + "\n", *calls])
+    ws.write_files(folder, {f"agent-{GATE_AGENT}.jsonl": text})
+
+
+def gate_stop(ws: Any) -> Run:
+    return {"stdin": gate_event(ws, "SubagentStop"), **gate_run(ws)}
+
+
+def readonly_gate_clean_silent(*, ws: Any) -> Run:
+    # The researcher only read: silent, its state deleted.
+    api = readonly_gate_workspace(ws)
+    gate_agent_transcript(ws, gate_call(1, "Read", file_path=str(api / "x.py")), gate_result(1))
+    return gate_stop(ws)
+
+
+def readonly_gate_block_own_edit(*, ws: Any) -> Run:
+    # Its own Write changed api/x.py and nothing else ran: held once, with its Bash command as the
+    # evidence; the counter is added and the state kept for the retry.
+    api = readonly_gate_workspace(ws)
+    ws.write_files(api, {"x.py": "x = 2\n"})
+    gate_agent_transcript(
+        ws,
+        gate_call(1, "Write", file_path=str(api / "x.py"), content="x = 2\n"),
+        gate_result(1),
+        gate_call(2, "Bash", command="git -C api status\n  --short"),
+        gate_result(2),
+    )
+    return gate_stop(ws)
+
+
+def readonly_gate_block_worktree_edit(*, ws: Any) -> Run:
+    # Its Edit in api's task worktree t, and a new file there: both blocked, labelled by worktree.
+    wt = readonly_gate_workspace(ws, worktree=True)
+    ws.write_files(wt, {"x.py": "x = 3\n", "notes.md": "n\n"})
+    gate_agent_transcript(
+        ws,
+        gate_call(1, "Edit", file_path=str(wt / "x.py"), old_string="1", new_string="3"),
+        gate_result(1),
+    )
+    return gate_stop(ws)
+
+
+def readonly_gate_overlap_report(*, ws: Any) -> Run:
+    # The main session edited api/x.py while the researcher ran (a call and its result in the
+    # main transcript's window): reported to the main session, never blocked.
+    api = readonly_gate_workspace(ws)
+    ws.write_files(api, {"x.py": "x = 4\n"})
+    main = gate_main_transcript(ws)
+    with main.open("a", encoding="utf-8") as stream:
+        stream.write(gate_transcript_line(5, gate_call(5, "Edit", file_path=str(api / "x.py"))))
+        stream.write(gate_transcript_line(5, gate_result(5)))
+    gate_agent_transcript(ws, gate_call(1, "Grep", pattern="x"), gate_result(1))
+    return gate_stop(ws)
+
+
+CASES: dict[str, Builder] = {
+    "post_edit/empty_stdin": post_edit_empty_stdin,
+    "post_edit/missing_file": post_edit_missing_file,
+    "post_edit/no_hub": post_edit_no_hub,
+    "post_edit/hub_file_not_linted": post_edit_hub_file_not_linted,
+    "post_edit/py_ruff_clean": post_edit_py_ruff_clean,
+    "post_edit/py_ruff_errors": post_edit_py_ruff_errors,
+    "post_edit/py_worktree_uses_main_ruff": post_edit_py_worktree_uses_main_ruff,
+    "post_edit/ts_prettier_eslint_errors": post_edit_ts_prettier_eslint_errors,
+    "post_edit/js_prettier_only": post_edit_js_prettier_only,
+    "post_edit/py_stale_ruff_silent": post_edit_py_stale_ruff_silent,
+    "post_edit/event_cwd_hub_wins": post_edit_event_cwd_hub_wins,
+    "session_start/no_hub": session_start_no_hub,
+    "session_start/startup": session_start_startup,
+    "session_start/sibling_repo_cwd": session_start_sibling_repo_cwd,
+    "session_start/compact_snapshot": session_start_compact_snapshot,
+    "session_start/no_brief_compact": session_start_no_brief_compact,
+    "session_start/no_brief_startup": session_start_no_brief_startup,
+    "session_start/hub_worktree_cwd": session_start_hub_worktree_cwd,
+    "session_start/non_object_stdin": session_start_non_object_stdin,
+    "session_start/brief_crash_compact": session_start_brief_crash_compact,
+    "session_start/cached_startup": session_start_cached_startup,
+    "session_end/no_hub": session_end_no_hub,
+    "session_end/new_day_file": session_end_new_day_file,
+    "session_end/append": session_end_append,
+    "session_end/empty_stdin_in_hub": session_end_empty_stdin_in_hub,
+    "session_end/hub_worktree_cwd": session_end_hub_worktree_cwd,
+    "pre_compact/no_hub": pre_compact_no_hub,
+    "pre_compact/full": pre_compact_full,
+    "pre_compact/minimal_overwrite": pre_compact_minimal_overwrite,
+    "pre_compact/missing_transcript": pre_compact_missing_transcript,
+    "retro_metrics/full": retro_metrics_full,
+    "retro_metrics/days_3": retro_metrics_days_3,
+    "retro_metrics/gh_failing": retro_metrics_gh_failing,
+    "retro_metrics/gh_bad_json_no_data": retro_metrics_gh_bad_json_no_data,
+    "retro_metrics/from_hub_worktree": retro_metrics_from_hub_worktree,
+    "retro_metrics/bad_run_file": retro_metrics_bad_run_file,
+    "retro_metrics/per_repo_branch": retro_metrics_per_repo_branch,
+    "retro_metrics/inbox_age": retro_metrics_inbox_age,
+    "retro_metrics/pr_follow_up": retro_metrics_pr_follow_up,
+    "guard/deny_push_main": guard_deny_push_main,
+    "guard/deny_force_push": guard_deny_force_push,
+    "guard/deny_secret_write": guard_deny_secret_write,
+    "guard/ask_before_edit": guard_ask_before_edit,
+    "guard/allow": guard_allow,
+    "stop_gate/check_passes": stop_gate_check_passes,
+    "stop_gate/check_fails_block": stop_gate_check_fails_block,
+    "stop_gate/no_changed_code": stop_gate_no_changed_code,
+    "readonly_gate/clean_silent": readonly_gate_clean_silent,
+    "readonly_gate/block_own_edit": readonly_gate_block_own_edit,
+    "readonly_gate/block_worktree_edit": readonly_gate_block_worktree_edit,
+    "readonly_gate/overlap_report": readonly_gate_overlap_report,
+}
+# AGH-7's case count per file under test, plus AGH-46's retro_metrics/per_repo_branch and
+# AGH-200's guard and stop_gate cases (E9).
+CASES_PER_FILE = {
+    "post_edit": 11,
+    "session_start": 10,  # with cached_startup
+    "session_end": 5,
+    "pre_compact": 4,
+    "retro_metrics": 9,  # with AGH-833's inbox_age and pr_follow_up
+    "guard": 5,
+    "stop_gate": 3,
+    "readonly_gate": 4,  # AGH-141 (AC-141.15)
+}
+
+
+@pytest.mark.parametrize("case", sorted(CASES))
+def test_matches_golden_when_case_run(
+    case: str, char_workspace: Callable[..., Any], hook_python: str
+) -> None:
+    ws = char_workspace(python=hook_python)
+    ws.run_case(case, **CASES[case](ws=ws))
+
+
+def test_lists_every_golden_when_cases_collected(golden: Any) -> None:
+    files = [case.split("/", 1)[0] for case in CASES]
+    assert {name: files.count(name) for name in files} == CASES_PER_FILE
+    assert golden.orphans(golden.GOLDEN_ROOT, CASES) == []
+    if not golden.update_mode():  # in update mode the cases write what is missing
+        assert golden.missing(golden.GOLDEN_ROOT, CASES) == []
+
+
+# AGH-200 D7 (AC-200.8, AC-200.10): the guard and the Stop gate send their decisions to the event
+# server; with it up or down their streams still equal the goldens, and up it gets exactly the
+# decision of each deny, ask or block.
+DECISION_SENT: dict[str, list[dict[str, Any]]] = {
+    "guard/deny_push_main": [{"by": "guard", "kind": "deny", "rule": "push_protected_branch"}],
+    "guard/deny_force_push": [{"by": "guard", "kind": "deny", "rule": "force_push"}],
+    "guard/deny_secret_write": [{"by": "guard", "kind": "deny", "rule": "secret_file"}],
+    "guard/ask_before_edit": [{"by": "guard", "kind": "ask", "rule": "ask_before_edit"}],
+    "guard/allow": [],
+    "stop_gate/check_passes": [],
+    "stop_gate/check_fails_block": [
+        {"by": "stop_gate", "kind": "block", "command": "echo boom; exit 3", "exit_code": 3}
+    ],
+    "stop_gate/no_changed_code": [],
+}
+
+
+def with_url(run: Run, url: str) -> Run:
+    return run | {"env": dict(run.get("env") or {}) | {"AGENT_HUB_WEB_URL": url}}
+
+
+@pytest.mark.parametrize("case", sorted(DECISION_SENT))
+def test_matches_golden_when_event_server_up(
+    case: str, *, char_workspace: Callable[..., Any], hook_python: str, event_server: Any
+) -> None:
+    ws = char_workspace(python=hook_python)
+
+    ws.run_case(case, **with_url(CASES[case](ws=ws), event_server.url))
+
+    assert [body["decision"] for body in event_server.bodies()] == DECISION_SENT[case]
+    assert {body["project"] for body in event_server.bodies()} <= {"demo"}
+
+
+@pytest.mark.parametrize("case", sorted(DECISION_SENT))
+def test_matches_golden_when_event_server_down(
+    case: str,
+    *,
+    char_workspace: Callable[..., Any],
+    hook_python: str,
+    server_down_env: dict[str, str],
+) -> None:
+    ws = char_workspace(python=hook_python)
+
+    ws.run_case(case, **with_url(CASES[case](ws=ws), server_down_env["AGENT_HUB_WEB_URL"]))
+
+
+def test_lists_every_decision_case_when_cases_collected() -> None:
+    assert sorted(DECISION_SENT) == sorted(
+        case for case in CASES if case.split("/", 1)[0] in ("guard", "stop_gate")
+    )

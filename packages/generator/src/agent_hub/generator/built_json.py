@@ -1,0 +1,363 @@
+"""The JSON files the generator builds from the config (spec D5, Q-9, Q-10, Q-11).
+
+Each builder returns a JSON value; ``render_hub`` writes it in the JSON byte form
+(``json_form.dump_json``). A builder reads only the config: the same config builds the same value.
+"""
+
+from typing import Final, NamedTuple
+
+from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_files.sandbox_settings import WORKFLOW_EXCLUDED_COMMANDS
+from agent_hub.core.runner.session_prompt import TRACKER_MCP_SERVERS
+from agent_hub.generator.json_form import JsonValue
+
+# The base plugin's folder, the same in every hub; the project plugin's is `plugin/<project>`.
+_BASE_PLUGIN: Final = "hub-workflow"
+_PROJECT_MANIFEST_VERSION = "0.1.0"
+_PROJECT_MANIFEST_DESCRIPTION = "Project agents, skills and guard extension of this hub."
+
+_SETTINGS_SCHEMA: Final = "https://json.schemastore.org/claude-code-settings.json"
+# Spec Q-11: read-only git commands run without a prompt; secret files are never read. AGH-16 D2
+# (E14, inventory rows S4a-S4j and S6a) adds the base denies and sandbox. The guard hook is the
+# primary check; these rules are defense in depth. A project adds its own lists and hosts through
+# `settings.project.json`.
+_ALLOWED_COMMANDS: Final = (
+    "Bash(git status *)",
+    "Bash(git diff *)",
+    "Bash(git log *)",
+    "Bash(git show *)",
+)
+# The other reads that run without a prompt: the `gh` calls that only read, the watch of one pull
+# request (ADR 0063: `./hub pr-watch` reads through `gh api` GET calls only; the bare
+# `hub pr-watch` spelling is not allowed, so it still asks), and the read tools of the Linear and
+# GitHub MCP servers, one rule per tool by its full name (never a whole server).
+# A `./hub <verb>` rule here or in the sandbox exclusions runs the file of the call's folder, so
+# the guard's launcher-folder rule (`LAUNCHER_VERBS` in `guard.py.tmpl`) must name its verb: the
+# sandbox exclusions' `./hub claim` (ADR 0064, no allow rule) is held to the hub folder too.
+_READ_ONLY_COMMANDS: Final = (
+    "Bash(gh pr view *)",
+    "Bash(gh pr checks *)",
+    "Bash(gh pr diff *)",
+    "Bash(gh run view *)",
+    "Bash(gh run list *)",
+    "Bash(gh api -X GET *)",
+    "Bash(./hub pr-watch *)",
+)
+_LINEAR_READ_TOOLS: Final = (
+    "get_issue",
+    "list_issues",
+    "list_comments",
+    "list_issue_statuses",
+    "list_issue_labels",
+    "get_team",
+    "list_teams",
+    "get_user",
+    "get_project",
+    "list_projects",
+)
+_GITHUB_READ_TOOLS: Final = (
+    "pull_request_read",
+    "list_pull_requests",
+    "search_pull_requests",
+    "issue_read",
+    "list_issues",
+    "search_issues",
+    "get_file_contents",
+    "list_commits",
+    "get_commit",
+    "get_me",
+)
+_READ_ONLY_MCP_TOOLS: Final = (
+    *(f"{server}__{tool}" for server in TRACKER_MCP_SERVERS for tool in _LINEAR_READ_TOOLS),
+    *(f"mcp__github__{tool}" for tool in _GITHUB_READ_TOOLS),
+)
+# The writing forms of the allowed reads: an output file on a git read, a second method on
+# `gh api -X GET`. A deny refuses and never asks, so the `gh api` denies stay under the
+# `gh api -X GET` prefix: a global deny of `-f`, `-F`, `--input` or `--method` would refuse the
+# skills' REST calls that open and edit pull requests. `core.hub_files.writing_commands` holds the
+# model of these rules and the corpus of writing commands the test runs through them. Known
+# limits, which no rule catches: a redirect after an allowed read (`git status > f`), a method
+# flag bundled with another short flag (`-iX POST`) and a method flag in quotes (`'-X' POST`).
+# The guard and the sandbox stay the first barriers.
+_DENIED_WRITES: Final = (
+    "Bash(git diff *--output*)",
+    "Bash(git log *--output*)",
+    "Bash(git show *--output*)",
+    "Bash(gh api -X GET * -X*)",
+    "Bash(gh api -X GET * --method*)",
+    "Bash(gh api -X GET -X*)",
+    "Bash(gh api -X GET --method*)",
+)
+# AGH-114: a headless `/onboard propose` (the onboard skill's steps 1 to 4) runs with no one to
+# ask, so each read-only command it names gets an exact allow: the right-hand sides of
+# `git show origin/<default>:hub.json | sha256sum` (or `| shasum -a 256`; the left one is
+# `git show *` above), the `./hub doctor` baseline, and per repo the checkout and default-branch
+# reads (`_onboard_repo_reads`). It writes only the proposal and, before replacing an applied one,
+# a Write of its dated archive copy beside it (no `mv`); Claude Code checks Write and Edit against
+# `Edit(path)` rules only, and `/` anchors at the hub. The guard asks before an edit of the `hub`
+# or `agent` launcher. `apply` stays interactive: nothing it writes, pushes or runs is allowed here.
+_ONBOARD_PROPOSE_COMMANDS: Final = ("Bash(sha256sum)", "Bash(shasum -a 256)", "Bash(./hub doctor)")
+_ONBOARD_PROPOSAL_EDIT: Final = "Edit(/brain/_inbox/onboard-proposal*.md)"
+_DENIED_READS: Final = ("Read(**/*.pem)", "Read(**/*.key)")
+_DENIED_FORCE_PUSHES: Final = ("Bash(git push --force*)", "Bash(git push -f *)")
+# AGH-45 D11: denied unless `hub.json` sets `guard.infra`, whose guard classifies them by
+# environment; a project that wants them back lists them in `settings.project.json`.
+_DENIED_INFRA_TOOLS: Final = ("Bash(terraform *)", "Bash(aws *)")
+# Claude Code matches each subcommand of `|`, `&&`, `;` on its own, so a shell fed by a pipe is
+# denied as the bare `sh` or `bash` subcommand (`Bash(* | sh)` would never match).
+_DENIED_COMMANDS: Final = (
+    "Bash(security *)",
+    "Bash(ssh *)",
+    "Bash(sh)",
+    "Bash(bash)",
+)
+# The guard's own protected branches besides the config's default branches (`hubhooks.py`).
+_ALWAYS_PROTECTED: Final = ("main", "master")
+# Commands that reach the network or the host's credentials run outside the sandbox: docker, then
+# the hub workflow's own (AGH-134: `hub worktree` by its three spellings, never `make *` or
+# `./hub *`; ADR 0063: `hub pr-watch` by its two spellings; ADR 0064: `hub claim` by its two);
+# the hosts are the package registries and GitHub, the same in every hub.
+_SANDBOX_EXCLUDED: Final = ("docker *", *WORKFLOW_EXCLUDED_COMMANDS)
+_SANDBOX_HOSTS: Final = (
+    "localhost",
+    "127.0.0.1",
+    "[::1]",
+    "pypi.org",
+    "files.pythonhosted.org",
+    "registry.npmjs.org",
+    "*.npmjs.org",
+    "github.com",
+    "*.github.com",
+    "*.githubusercontent.com",
+)
+# The base plugin's hooks, from the hub root: cloud sessions do not install repo plugins, so the
+# managed settings wire the hooks themselves (docs/design/hub-generator.md § Hooks and plugin
+# wiring).
+_HOOKS_FOLDER: Final = "$CLAUDE_PROJECT_DIR/plugin/hub-workflow/hooks"
+# AGH-392 D-mcp-json: Claude Code starts `hub mcp` through the hub's own shim, so the server runs
+# the pinned release; `CLAUDE_PROJECT_DIR` is the hub when Claude Code sets it, else the cwd.
+_MCP_SERVER: Final = "hub"
+_MCP_COMMAND: Final = "${CLAUDE_PROJECT_DIR:-.}/hub"
+
+
+class HookEvent(NamedTuple):
+    """One hook the managed settings wire: the event, its matcher (``None``: every tool or
+    source), the base plugin hook file it runs and its timeout in seconds.
+    """
+
+    event: str
+    matcher: str | None
+    file: str
+    timeout: int
+
+
+# AGH-200 D6 and E2: the events the hook sensor has a group of its own on. It sends each input to
+# the local control plane within 0.5 s and always exits 0; the tool events match every tool. On
+# PreToolUse, `pre_tool_use.py` sends the input itself, after the guard.
+_SENSOR_FILE: Final = "event_sensor.py"
+_SENSOR_TIMEOUT: Final = 5
+_SENSOR_EVENTS: Final = (
+    ("SessionStart", None),
+    ("PostToolUse", "*"),
+    ("Stop", None),
+    ("PreCompact", None),
+    ("SessionEnd", None),
+    ("UserPromptSubmit", None),
+    ("PostToolUseFailure", "*"),
+    ("Notification", None),
+    ("SubagentStart", None),
+    ("SubagentStop", None),
+)
+# AGH-141 (O-3): the read-only gate on the two subagent events, no matcher; its group follows the
+# sensor's (E-4), so the events keep the sensor's order. Its own budgets are 5 s and 15 s.
+_GATE_FILE: Final = "readonly_gate.py"
+_GATE_EVENTS: Final = (("SubagentStart", 10), ("SubagentStop", 30))
+# AGH-838: a skill the user names anywhere in a prompt runs; its group follows the sensor's, so
+# the events keep their order.
+_PROMPT_SKILLS: Final = HookEvent("UserPromptSubmit", None, "prompt_skills.py", 5)
+
+# Spec AC-4.7 (Q-5): the base plugin's eight hooks (AGH-812 adds the session reminder), with
+# this hub's timeouts, then the sensor's ten (AGH-200), then the read-only gate's two (AGH-141),
+# then the prompt's skills (AGH-838); `hooks.json` wires the same groups for a plugin install.
+HOOK_EVENTS: Final = (
+    HookEvent("SessionStart", "startup|resume|clear|compact", "session_start.py", 20),
+    # Every tool call: the hook hands the calls its `GUARDED_TOOLS` matches to the guard, then runs
+    # the sensor.
+    HookEvent("PreToolUse", "*", "pre_tool_use.py", 10),
+    HookEvent("PostToolUse", "Edit|Write|MultiEdit", "post_edit.py", 60),
+    HookEvent("Stop", None, "stop_gate.py", 180),
+    HookEvent("PreCompact", None, "pre_compact.py", 20),
+    HookEvent("SessionEnd", None, "session_end.py", 10),
+    # AGH-814: before the sensor's group on UserPromptSubmit, as on Stop, PreCompact and SessionEnd.
+    HookEvent("UserPromptSubmit", None, "prompt_secret.py", 5),
+    # AGH-812: right after the prompt secret warning, the once-per-session handoff reminder.
+    HookEvent("UserPromptSubmit", None, "session_reminder.py", 5),
+    *(
+        HookEvent(event, matcher, _SENSOR_FILE, _SENSOR_TIMEOUT)
+        for event, matcher in _SENSOR_EVENTS
+    ),
+    *(HookEvent(event, None, _GATE_FILE, timeout) for event, timeout in _GATE_EVENTS),
+    _PROMPT_SKILLS,
+)
+
+
+def managed_settings(config: HubConfig) -> JsonValue:
+    """The managed ``.claude/settings.json``: the rules base every hub shares (spec D5).
+
+    The schema, the authorship rule (empty attribution, no co-author line), the hooks block, the
+    read-only allow list (the ``git`` and ``gh`` reads, then ``./hub pr-watch``, which reads one
+    pull request with GET calls only (ADR 0063; the bare ``hub pr-watch`` spelling is not
+    allowed), then the read tools of the Linear and GitHub MCP servers, each by name) and the
+    allows a headless ``/onboard propose`` needs (AGH-114), the base denies (secret reads, force
+    pushes and pushes to a protected branch, infra tools (``terraform``, ``aws``; left to the
+    guard when ``hub.json`` sets ``guard.infra``), the write denies (an allowed read with
+    ``--output`` or a second method), ``ssh``, a bare ``sh`` or ``bash``), the repos as
+    additional directories (``../<dir>``, in ``hub.json`` order), the base sandbox (AGH-16 D2,
+    E14) and the ``hub`` MCP server enabled (``enabledMcpjsonServers``; effective once the folder
+    is trusted, ADR 0057). Project settings (marketplace, plugins, extra sandbox hosts, ``env``,
+    skill overrides) come from the seeded ``settings.project.json``, which may also override the
+    sandbox's scalars.
+    """
+    return {
+        "$schema": _SETTINGS_SCHEMA,
+        "attribution": {"commit": "", "pr": ""},
+        "includeCoAuthoredBy": False,
+        "enabledMcpjsonServers": [_MCP_SERVER],
+        "hooks": base_hooks_block(),
+        "permissions": {
+            "allow": [
+                *_ALLOWED_COMMANDS,
+                *_READ_ONLY_COMMANDS,
+                *_READ_ONLY_MCP_TOOLS,
+                *_ONBOARD_PROPOSE_COMMANDS,
+                *_onboard_repo_reads(config),
+                _ONBOARD_PROPOSAL_EDIT,
+            ],
+            "deny": [
+                *_DENIED_READS,
+                *_DENIED_FORCE_PUSHES,
+                *_denied_pushes(config),
+                *_denied_infra_tools(config),
+                *_DENIED_WRITES,
+                *_DENIED_COMMANDS,
+            ],
+            "additionalDirectories": [f"../{repo.dir}" for repo in config.repos],
+        },
+        "sandbox": {
+            "enabled": True,
+            "allowUnsandboxedCommands": False,
+            "excludedCommands": list(_SANDBOX_EXCLUDED),
+            "network": {"allowLocalBinding": True, "allowedDomains": list(_SANDBOX_HOSTS)},
+        },
+    }
+
+
+def _onboard_repo_reads(config: HubConfig) -> list[str]:
+    """Two exact allows per repo, in ``hub.json`` order: the onboard skill's checkout test and its
+    default-branch read, each with the repo's own ``git -C ../<dir>`` (no wildcard to widen)."""
+    return [
+        rule
+        for repo in config.repos
+        for rule in (
+            f"Bash(git -C ../{repo.dir} rev-parse --show-toplevel)",
+            f"Bash(git -C ../{repo.dir} symbolic-ref refs/remotes/origin/HEAD)",
+        )
+    ]
+
+
+def _denied_infra_tools(config: HubConfig) -> tuple[str, ...]:
+    """The ``terraform`` and ``aws`` denies, or none when ``guard.infra`` is set, even ``{}``:
+    its guard then decides each such command (AGH-45 D11)."""
+    return () if config.guard.infra is not None else _DENIED_INFRA_TOOLS
+
+
+def _denied_pushes(config: HubConfig) -> list[str]:
+    """Two push denies per branch the guard protects (``main``, ``master``, the project's and each
+    repo's default branch), sorted, each once."""
+    branches = sorted(
+        {
+            *_ALWAYS_PROTECTED,
+            config.project.default_branch,
+            *(config.default_branch_for(repo.dir) for repo in config.repos),
+        }
+    )
+    return [
+        rule
+        for branch in branches
+        for rule in (f"Bash(git push * {branch})", f"Bash(git push origin HEAD:{branch}*)")
+    ]
+
+
+def base_hooks_block() -> dict[str, JsonValue]:
+    """The ``hooks`` value of the managed settings: one group per ``HOOK_EVENTS`` row, under its
+    event; events in first-seen order, an event's groups in row order (the base hook, then the
+    sensor, then the read-only gate on SubagentStart and SubagentStop, then the prompt's skills on
+    UserPromptSubmit).
+
+    hub doctor's ``settings.weakening`` rule checks ``settings.json`` against it without a render
+    (spec Q-14). Each call builds a new value.
+    """
+    block: dict[str, list[JsonValue]] = {}
+    for hook in HOOK_EVENTS:
+        block.setdefault(hook.event, []).append(_hook_group(hook))
+    return {event: groups for event, groups in block.items()}
+
+
+def _hook_group(hook: HookEvent) -> JsonValue:
+    command: JsonValue = {
+        "type": "command",
+        "command": f'python3 "{_HOOKS_FOLDER}/{hook.file}"',
+        "timeout": hook.timeout,
+    }
+    if hook.matcher is None:
+        return {"hooks": [command]}
+    return {"matcher": hook.matcher, "hooks": [command]}
+
+
+def project_settings(config: HubConfig) -> JsonValue:
+    """The seeded ``.claude/settings.project.json``: empty; the project adds its own settings."""
+    return {}
+
+
+def mcp_config(config: HubConfig) -> JsonValue:
+    """The managed ``.mcp.json``: the one stdio server ``hub``, which runs ``./hub mcp``. It is
+    the same in every hub (the config is not read)."""
+    del config
+    return {
+        "mcpServers": {_MCP_SERVER: {"type": "stdio", "command": _MCP_COMMAND, "args": ["mcp"]}}
+    }
+
+
+def project_manifest(config: HubConfig) -> JsonValue:
+    """The seeded project plugin manifest: the project's name, a first version, a description."""
+    return {
+        "name": config.project.name,
+        "version": _PROJECT_MANIFEST_VERSION,
+        "description": _PROJECT_MANIFEST_DESCRIPTION,
+    }
+
+
+def marketplace(config: HubConfig) -> JsonValue:
+    """The managed ``.claude-plugin/marketplace.json`` of module ``marketplace`` (AGH-17 D4).
+
+    Named after the project and owned by its author, or by the project on a hub that leaves the
+    author to each developer (no email then: AGH-65); it lists the base plugin, then the project's
+    own. Third-party pins go in the seeded ``marketplace.project.json``, merged after them.
+    """
+    project = config.project
+    owner: dict[str, JsonValue] = {"name": project.author_name or project.name}
+    if project.author_email is not None:
+        owner["email"] = project.author_email
+    return {
+        "name": project.name,
+        "owner": owner,
+        "plugins": [
+            {"name": _BASE_PLUGIN, "source": f"./plugin/{_BASE_PLUGIN}"},
+            {"name": project.name, "source": f"./plugin/{project.name}"},
+        ],
+    }
+
+
+def marketplace_project(config: HubConfig) -> JsonValue:
+    """The seeded ``.claude-plugin/marketplace.project.json``: empty; the project adds its pins."""
+    return {}

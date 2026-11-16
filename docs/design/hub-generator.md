@@ -1,0 +1,438 @@
+# Hub generator: init, hooks, plugin wiring and commands
+
+## Purpose
+
+Phase 1 contract for what a hub holds and who owns it, `hub init`, hooks, plugin wiring, the commands that replace
+the hub scripts, and how the CLI ships. `hub.lock`, `hub sync`, the write path: [hub-sync.md](hub-sync.md); `--adopt`:
+[hub-adopt.md](hub-adopt.md). Config: [project-config.md](project-config.md); full rules and reasons: the ADRs.
+
+## Contract
+
+### Classification and rendering
+
+Kind: `generic` (same for every project), `module` (only when selected in `modules`) or `project-owned`. Ownership:
+`managed` (sync rewrites it), `seeded` (written once when absent, then never touched) or `not generated`.
+
+| Entry in a generated hub | Kind | Ownership |
+|---|---|---|
+| `hub.json` (`hub.lock` is tool state: written by init and sync, not listed in itself) | project-owned | seeded |
+| `.mcp.json` (declares the `hub` stdio server, `./hub mcp`; built from code; the same in every hub; a hand-made one is a sync conflict, and a hub has no seeded sibling for its own servers) | generic | managed |
+| `hub.schema.json`, `AGENTS.md` and `CLAUDE.md` (base rules; Brain rules route each learning: [memory-layers.md](memory-layers.md)), `Makefile`, `hub` shim, `agent` launcher, `.githooks/pre-commit` and `.githooks/commit-msg` (executable; `hub sync` sets `core.hooksPath` to `.githooks` when it is unset or `.git/hooks`, else warns; [ADR 0061](../adr/0061-hub-git-hooks-check-the-staged-commit.md)): the first runs `./hub doctor --staged` (the staged files' hygiene, the staged features and a staged `hub.json`, read from git's index), the second `python3 plugin/hub-workflow/hooks/commit_msg.py`, which refuses AI attribution in the message (the guard's pattern) and, when `project.author_email` is set, another author or committer email, `.github/workflows/ci.yml` | generic | managed |
+| `AGENTS.project.md` (project rules, created empty); `Makefile.project`; `README.md` (with a "Join this hub" section: requirements, access, `./hub setup`, known traps, and cloud steps with module `cloud`); `docs/app-repo-AGENTS.md` (starter for each repo's root `AGENTS.md`); `.gitignore` (base entries, `hub.local.json`, the launch context files `brain/auto/agent-context*.md` and personal memory `brain/auto/workspace/*` among them) | project-owned (`README.md`, `docs/app-repo-AGENTS.md`, `.gitignore` generic) | seeded |
+| `.claude/settings.json` (merged with a seeded `.claude/settings.project.json`, which can add sandbox hosts and override the sandbox's scalars, `enabled` included: only managed or CLI settings can enforce the sandbox; it holds the base denies (push denies per protected branch; no `terraform`/`aws` denies when `guard.infra` is set) and sandbox and runs the base hooks, so a hub never enables `hub-workflow`: Claude Code drops only identical duplicate hook commands. Its `permissions.allow` holds the read-only list, which runs with no prompt: the `git` reads (`git status`, `git diff`, `git log`, `git show`), the `gh` reads (`gh pr view`, `gh pr checks`, `gh pr diff`, `gh run view`, `gh run list`, `gh api -X GET`), `./hub pr-watch`, which only reads one pull request through `gh api` GET calls ([ADR 0063](../adr/0063-session-follows-its-own-pr.md)), and the read tools of the MCP servers `Linear`, `claude_ai_Linear` and `github`, one rule per tool by its full name, never a whole server. Seven denies refuse the writing forms of those reads (`--output` on `git diff`, `git log` and `git show`; a second `-X` or `--method` on `gh api -X GET`); the `gh api` denies stay under that prefix because a deny refuses and never asks, so a global one would refuse the skills' REST calls that open and edit pull requests. A rule matches the text of a command, so none catches a redirect after an allowed read (`git status > f`) or a method flag bundled with another short flag (`-iX POST`) or in quotes (`'-X' POST`); the guard and the sandbox stay the first barriers, but `gh` runs outside the sandbox, and so does `./hub pr-watch`. The file also enables the `hub` server of `.mcp.json` (`enabledMcpjsonServers`, effective once the folder is trusted, ADR 0057; a developer opts out with `disabledMcpjsonServers` in `.claude/settings.local.json`)), `.claude/agents/` and `.claude/skills/` (one link per entry of both plugins, since cloud sessions do not install repo-declared plugins; not dotfiles such as `.gitkeep`; a new project entry is linked at the next sync) | generic (+ project-owned) | managed (+ seeded) |
+| `plugin/hub-workflow/**` (base agents `architect`, `evaluator`, `planner`, `quality-reviewer`, `requirements-analyst`, `researcher`, `security-reviewer`, `spec-reviewer`, `test-writer`, `ux-designer`; `quality-reviewer`, `researcher`, `security-reviewer` and `spec-reviewer` say `mutates_checkout: false`; skills `adr`, `change`, `context-audit`, `create-plan`, `deliver`, `design-fit`, `feature`, `fix` (the deprecated alias of `change`, kept for one release), `handoff`, `incident`, `kickoff`, `learn` (`/learn personal` writes `brain/auto/workspace/`), `onboard`, `overengineering-review` (with `references/patterns.md`), `plain-language` (rules for text that people read; `AGENTS.md` rule 6 points to it), `premortem`, `property-based-testing`, `recall`, `refactor`, `release`, `research`, `retro`, `review`, `summarize`, `test-strength` (with `references/tools.md`), `triage`, `upgrade`, `ux-review` (with `references/checklist.md`); hooks; `schemas/review.v1.json`, `schemas/eval.v1.json` and `schemas/eval.v2.json`, the agent output schemas, core package data copied verbatim; same name in every hub; on adoption, a hand-built hub's own workflow plugin becomes it plus `plugin/<project>/`) | generic | managed |
+| `plugin/<project>/**` (project agents, skills, guard extension; empty folders hold a `.gitkeep`) | project-owned | seeded |
+| Brain skeleton: `brain/index.md`, `brain/now.md`, `brain/decisions/index.md`, folder `.gitkeep`s (`brain/auto/workspace/` too), journal template | generic | seeded |
+| `scripts/` transcript mining, recall and retro metrics | generic | managed (until Phase 2) |
+| `scripts/cloud-setup.sh`, `scripts/contract-sync.sh`, `mk/<module>.mk`, `.claude-plugin/marketplace.json` (merged with a seeded `.claude-plugin/marketplace.project.json`) | module: `cloud`, `contract-sync`, the selecting module, `marketplace` | managed (+ seeded) |
+| Worktree, brief, runner, benchmark, config-lint and feature-check scripts | generic (`bench`: module) | not generated: `hub` commands |
+| `workflows/<pack>/**`: the built-in packs (`brain-care`: `inbox.yaml`, `context.yaml`, `prompts/`, `scripts/`, `fixtures/`; `issue-to-pr`: `issue-to-pr.yaml`, `prompts/`, `fixtures/`; `post-merge-verify`: `post-merge-verify.yaml`, `prompts/`, `scripts/`, `fixtures/`; `review-incoming`: `review-incoming.yaml`, `prompts/`, `scripts/`, `fixtures/`; `sdlc`: `deliver.yaml`, `review.yaml`, `implement.yaml`, `ticket-pass.yaml`, `preflight.yaml`, `preflight-check.yaml`, `prompts/`, `scripts/`, `fixtures/`; `retro`: `retro.yaml`, `prompts/`, `scripts/`, `fixtures/`; `spike`: `spike.yaml`, `prompts/`, `scripts/`, `fixtures/`; `incident`: `incident.yaml`, `prompts/`, `scripts/`, `fixtures/`; `upgrade`: `upgrade.yaml`, `prompts/`, `scripts/`, `fixtures/`; `security-sweep`: `security-sweep.yaml`, `prompts/`, `scripts/`, `fixtures/`; `backlog-care`: `backlog-care.yaml`, `prompts/`, `scripts/`, `fixtures/`; `doc-drift`: `doc-drift.yaml`, `prompts/`, `scripts/`, `fixtures/`; `flaky`: `flaky.yaml`, `prompts/`, `scripts/`, `fixtures/`; `release`: `release.yaml`, `release-pin.yaml`, `prompts/`, `scripts/`, `fixtures/`), core package data copied byte for byte. A pack is seeded as a unit: only when `hub.lock` holds none of its paths and its folder holds nothing but the render's own folders and bytes (an interrupted seed is completed); else no file of it is written, so a release that adds a fixture never adds it to a hub's own pack. The hub's copy is the one discovery and `hub run` read ([workflow-schema.md](workflow-schema.md)); to follow the built-in again, delete `workflows/<pack>/`: sync neither re-seeds it nor reports drift for seeded files | generic | seeded |
+| Brain content, bench cases, hub `tests/`, other `workflows/` packs, run output (`.agent-runs/`), domain rules (e.g. money as `Decimal`, kept in `AGENTS.project.md`) | project-owned | not generated |
+
+Output depends only on `hub.json` (values validated or quoted: [project-config.md](project-config.md)), the platform
+version and the seeded extension inputs (`*.project.json`, `AGENTS.project.md`, entries under `plugin/<project>/`); text
+templates use `@@` placeholders, always substituted. A project changes a managed file only via `hub.json` or a seeded
+sibling: `CLAUDE.md` imports `@AGENTS.md` and `@AGENTS.project.md`; the `Makefile` includes `mk/<module>.mk` per
+selected module, then `-include Makefile.project`; a `*.project.json` is deep-merged at the next sync
+([hub-sync.md](hub-sync.md)), and `CLAUDE.md`'s superpowers line names the `superpowers@<marketplace>` key
+`.claude/settings.project.json` enables (else `superpowers@claude-plugins-official`). Every JSON the generator builds or merges (settings, manifests, merged
+`*.project.json`, `hub.lock`) has one form: sorted keys, 2-space indent, UTF-8, final newline.
+
+### hub init
+
+`hub init <project> --repos org/a,org/b --tracker linear:TEAM --branch-prefix P [--dir PATH]` writes a schema-1
+`hub.json` without defaults: repo `dir` = name, `github` = `org/name`, `role` = `app`, checks `make check-fast` / `make
+check`, `platform.version` = the running CLI. Git is read (never written) for a missing value only, in the target (else
+the cwd): `--author-name`/`--author-email` from `git config --get user.name`/`user.email`, `--hub-repo` from a GitHub
+`remote.origin.url`, never printed, read only if the target is its work tree's top and none of `GIT_DIR`,
+`GIT_WORK_TREE`, `GIT_COMMON_DIR` is set. `--branch-prefix` has no default. A missing or rejected value exits 1 naming
+its flag and why (no value, `git not found`, `git timed out`, `git could not run`). `--config PATH` checks the pin (else
+the pinned `uvx` command), schema and model, and copies it byte for byte (a team's may leave the identity out). `--dir` (default: the cwd) is created after every check. The target may hold only `.git`, seeded files (kept),
+paths equal to their render and leftovers: a `hub.lock` exits 1 pointing to `hub sync`; a differing managed path, an
+unknown entry or a `hub.json` other than this run's to `hub sync --adopt`; any other problem names its cause. It writes
+through the sync writer ([hub-sync.md](hub-sync.md), Apply), `hub.lock` last. It also writes the init-only scenario
+examples (`actions/demo/demo-get-status.yaml`, its script, `scenarios/demo/demo-service-up.yaml`;
+[scenarios.md](scenarios.md)): not registry entries and not in `hub.lock`, each only where absent (an example file
+already there, and the folders above it, are kept, not refused), after the hub's files and before `hub.lock`, and left
+out of the counts. Output:
+`created N files (M managed, K seeded) and L links in <root>`; if any, `kept X files already there (Y seeded, Z equal to
+the render)` (`and L links`) and `removed X leftover temporary files`; next steps. Exits: 0 done, 1 error, 2 usage.
+
+### Modules
+
+A selected module renders its files (rows above) and `mk/<id>.mk`, whose `.PHONY` targets `make help` lists: `bench`
+(`$(ARGS)` passed raw), `bench-validate`, `cloud-setup`, `contract-sync`, `marketplace-validate`. `contract-sync.sh` runs
+`make contract-export` in `../<source>`, then `make contract-import` in `../<target>` (no contract format). The managed
+marketplace holds `name`, `owner` and the plugins `hub-workflow` and `<project>`; the sibling's plugins follow in their
+order ([hub-sync.md](hub-sync.md)). `AGENTS.md` names the selected modules' files only, so it changes with `modules`.
+
+### Hooks and plugin wiring
+
+Managed stdlib scripts in `plugin/hub-workflow/hooks/`, run by the system `python3` (3.9 or newer), read `hub.json`
+through `stdlib_reader.py` beside them and fail open: on a crash the guard asks (as `pre_tool_use.py` does when
+`guard.py` is missing or does not import, naming the error), other hooks print one `skipped` line, the stop gate does
+not block if it cannot save its counter. `hub.json` is the one `$HUB_CONFIG` names (hub: its folder),
+else the hook root's (the hub or hub worktree holding the hook files; a worktree reads its own `hub.json`, but the hub
+is its main checkout and the workspace that checkout's parent), else (plugin cache) the first found walking up from the
+start, a sibling hub only if the start is in it or a repo it lists. That file gives every value (repos, the stop gate's
+`check_stop` and `check_fast`, SessionStart's `platform.version`, default branch, branch prefix, hub, workspace), except that
+`$HUB_CONFIG`'s `ask_before_edit`, `deny_paths`, `deny_hosts` and `secret_env_files` are added to the hook root's, never
+replace them, and `readable_env_files` is the hook root's only; for
+`guard.infra`, the mode and `allow` are the hook root's only and `$HUB_CONFIG`'s `prod_markers` and unusable-value
+problem are added (in the plugin cache, the found file's `guard.infra` as is); the extension, `@hub/` anchors and
+guard-file asks stay pinned to the hook root. Only SessionStart calls the CLI, and never in the foreground
+([ADR 0055](../adr/0055-session-start-brief-from-a-cache.md)). In a fixed order: (1) no version, a bad
+`platform.repository` or no `uvx` give the mini brief naming it (`no version`, `bad platform.repository`, `no uv`), with nothing written and no
+refresh; (2) it reads the brief cache `<hub>/.hub-cache/brief.json` through the stdlib reader (a regular file only, no
+link, at most 64 KiB, fields checked, the brief cut at 8000 characters); (3) when the cache is missing, unreadable or
+at least 5 min old, it writes `.hub-cache/.gitignore` (`*`) first, whole through `os.replace` (an empty or changed one is
+rewritten), takes a non-blocking `flock` on
+`.hub-cache/refresh.lock` (held: no refresh starts) and starts the refresh; (4) a cache under 12 h old is the
+context, headed with its age (`brief from 3 min ago`), else the mini brief names why: the last failed refresh's cause
+from `.hub-cache/refresh.json`, else `brief cache folder is a link` (or `is not a folder`; then no refresh starts),
+`no brief cache`, `brief cache stale` or `brief cache unreadable`; (5) after a
+compaction, the pre-compact snapshot as before. The refresh is the same hook file run as
+`session_start.py --refresh <hub>` on the hook's own interpreter, in its own session (`start_new_session`), stdio on `/dev/null` and only
+the lock's descriptor passed on, so it holds none of the hook's output, outlives the hook and its process-group kill,
+and holds the lock until it exits. It runs the pinned `hub brief --write-cache` from the hub with `AGENT_HUB_ROOT` set:
+when `hub.lock` records the release commit for the pin (`platform_commit`, read by the stdlib reader's
+`read_lock_source`, [ADR 0054](../adr/0054-pin-the-platform-release-by-commit.md)), one `uvx --from <repository>@<commit>…
+hub brief --write-cache`; else the shim's resolve step (`uvx … hub --version`), then the same source's brief; all
+within one 60 s limit, then the call's process group is killed. A failed refresh writes `refresh.json` with its cause
+(`resolve failed`, `failed (exit N)`, `failed (no output)`, `failed (cannot start)`, `timed out`); one that succeeds
+removes it. Plain `hub brief` writes nothing; only `--write-cache` writes the cache (folder made with its own
+`.gitignore` first, refused when it is a link, file replaced atomically). Guard extension: the seeded `plugin/<project>/hooks/project_guard.py` of the hook root (never from
+`CLAUDE_PROJECT_DIR`, the cwd or tool input). Unless the base verdict is `deny` (final), it runs in a child forked from
+the hook (no new interpreter) that leads its own session and calls `project_guard_runner.py`'s `main`, unchanged, with
+the argv and streams a run of that file would get (3 s, then its process group is killed). It only tightens:
+`check(event, cfg)` returns `None`, `("deny", reason)` or `("ask", reason)`, and the child, given the event JSON on
+stdin, prints it as one JSON value, `null` or `{"verdict": "deny"|"ask", "reason": "..."}`; anything else (other verdict
+or type, non-zero exit, unparseable or extra output, timeout, a fork that fails, a file resolving outside the hub) gives
+`ask` with the cause; no file: skipped. The base guard
+asks before edits to `plugin/hub-workflow/hooks/`, `plugin/<project>/hooks/`, `.claude/settings*.json`, `hub.lock`,
+`hub.json` and the `hub`/`agent` launchers (Bash asks only when it writes one). It is a guardrail against mistakes, not
+a sandbox: it matches tool input and Bash text by pattern, so a determined agent can get round it. It has one
+exception, the launcher-folder rule (below): for `./hub pr-watch` that rule is the only check between a sandboxed
+write and an unsandboxed run with no prompt. A hook's `ask` prompts in every Claude Code mode, so in a session whose
+`permission_mode` is `auto` the guard turns each `ask` into a `deny` with the same reason and a note (AGH-430). The real limits are
+OS permissions and Claude Code's permission rules; the extension's trust boundary is the ask on hooks folder edits. The
+settings' denies and sandbox are defense in depth (sandboxed Bash runs without a prompt; excluded commands take the
+normal permission flow). The sandbox keeps writes in the workspace and `$TMPDIR` and the network to the HTTP(S)
+allowlist; SSH never passes it. So the hub's own network commands are `excludedCommands` (AGH-134,
+`WORKFLOW_EXCLUDED_COMMANDS`): `gh`, git's `push`/`fetch`/`pull`/`clone`/`ls-remote`, `hub worktree` by its three
+spellings (`./hub worktree *`, `hub worktree *`, `make worktree *`, plus `make worktree-remove *`), since its own
+`git fetch` never matches, and `hub pr-watch` by its two (`./hub pr-watch *`, `hub pr-watch *`;
+[ADR 0063](../adr/0063-session-follows-its-own-pr.md)), since the `gh` it starts is not a Bash call of its own, and
+`hub claim` by its two (`./hub claim *`, `hub claim *`; [ADR 0064](../adr/0064-session-claims-its-ticket.md)), since
+its `ps` check needs the host's process table (the same two cover all three verbs, `take`, `wait` and `release`;
+`wait`, AGH-811, records the owner question a session stopped on); never
+`make *` or `./hub *`, which would let any Makefile target out. Of the two `hub pr-watch` spellings, only
+`./hub pr-watch *` is in `permissions.allow`, so the bare one still asks. Neither `hub claim` spelling is allowed, so
+both ask. Claude Code matches an
+entry against the literal Bash text, so only a call that is exactly the command escapes (no `cd … &&`, `;`, pipe,
+redirect or `git -C`). `hub worktree --no-fetch` is the escape hatch after a bare `git fetch`. The `hub` shim moves
+uv's cache and tool folders to `<hub>/.hub-uv/` (which ignores itself) only when they cannot be written, and then sets
+`UV_PYTHON_DOWNLOADS=never`; settings `env` cannot do it (no expansion, a committed file cannot name a per-machine
+path, and it would change every repo's uv), and `sandbox.filesystem.allowWrite` on `~/.cache/uv` or
+`~/.local/share/uv` would let a sandboxed agent plant code that later runs unsandboxed (uv tools on `PATH`).
+`hub doctor`'s `sandbox.workflow` checks the exclusions.
+
+**The launcher-folder rule** (`check_launcher` in `guard.py`, rule id `launcher_folder`). The guard denies a Bash call
+that runs `./hub claim`, `./hub pr-watch` or `./hub worktree`, the verbs of its constant `LAUNCHER_VERBS`, unless
+three things hold:
+
+- **The run is the bare command.** A run behind a `NAME=value` word, a wrapper (`timeout`, `time`, `nice`, `nohup`,
+  `stdbuf`, `env`, `command`, `exec`) or a shell word (`if`, `then`, `do`, `!` and the like) is denied in every folder.
+- **The call runs from the hub root.** The event's cwd must be the root of the hub that holds the hook file. The guard
+  compares the two as folders, so a link to the hub root and another spelling of it pass. A hub worktree, a folder
+  shaped like one and an event with no cwd are denied. Hooks that run from a plugin cache know no hub: they deny every
+  verb in every folder, and their reason hands the command to the user.
+- **The call changes no folder.** `cd`, `pushd` or `popd` anywhere in the call is denied. So is `-C` or `--chdir`
+  among the run's own arguments.
+
+The guard finds a run in the command's text. It splits the call at `;`, `&`, `|` and line breaks, and reads the command
+word of each part. It reads the words without their quotes. A redirect is no word, so `./hub pr-watch>log` is a run. A
+word before `./hub` still counts when its value holds a quoted or an escaped `;`, `&`, `|` or line break.
+
+- **Why.** `./hub` is the file of the folder a call runs in. All three verbs are excluded from the sandbox, and
+  `./hub pr-watch` is also pre-allowed.
+- **What it stops.** A `hub` file planted in a repo, a repo worktree, `$TMPDIR` or a hub subfolder. It also stops a
+  `python3` or a `uvx` planted on a `PATH` that is set before `./hub`.
+- **Where it runs.** On a Bash call, `decide` asks this rule first, before the blocked-word rule
+  ([ADR 0067](../adr/0067-refused-launcher-run-is-denied-first.md)). The blocked-word and env-file rules read the
+  disk, and a sandboxed command can make them slow enough to pass the hook's 10 s. Past that limit, Claude Code goes
+  on with no verdict, and the allow rule lets `./hub pr-watch` run. A call that this rule and one of those two both
+  refuse shows this rule's reason, and is recorded as `launcher_folder`. In every other case the order does not
+  change. This rule reads the command's text and compares the event's cwd with the hub root. The hook can still be
+  timed out. Before any rule it reads `hub.json` and `hub.local.json` at the hub root, and the other rules can still
+  be made slow for their own denies (AGH-184).
+- **Known false denies.** A deny has no override, so each reason says what to do instead.
+  - Off the hub root, a call that only names the command in a text is denied in two cases: the name starts a line of
+    the text, or it follows `;`, `&` or `|` there. Examples are a heredoc line and a commit-message line that start
+    with the run. A call that sets a variable to such a text is denied in every folder. Read the text from a file, or
+    reword it.
+  - A part led by a `NAME=value` word, a wrapper or a shell word is denied when it only names the pair
+    (`FOO=1 echo ./hub worktree x`). Reword it.
+  - A call at the hub root that holds a `cd` is denied. Run the verb as a call of its own.
+- **Left to the permission rules.** In any folder, none of these gets a verdict from this rule:
+  - a run inside `( )`, `$( )`, backticks or `{ }`;
+  - a run behind a word outside the lists above: `sudo`, `xargs`, `eval`, `setsid`, a `{name}>file` redirect before
+    the command, `././hub pr-watch`, `./hub -- pr-watch`;
+  - a word before `./hub` whose `$( )`, backticks, `${ }` or `$[ ]` holds a closing character that bash does not pair
+    with it: a `)` in a `case` pattern, in a comment or in a heredoc body there.
+
+  The rule rests there on the repo's model of how Claude Code matches a call. An allow rule must match a whole part
+  between `&&`, `||`, `;`, `|` and line breaks (`matches` in `agent_hub.core.hub_files.writing_commands`). An
+  exclusion must match the whole call (`agent_hub.core.hub_files.sandbox_settings`). Such a text matches neither, so
+  the call asks or stays in the sandbox. The repo cannot show what Claude Code does. Only a local Claude Code session
+  can, and that is not verified.
+- **Open at the hub root.**
+  - A write that the guard's patterns miss (`install`, `dd`, an interpreter, `git checkout`, `cp <file> .`) can
+    rewrite `hub`, `hub.json` or `hub.lock` there. The hook files already have this class of risk.
+  - A session whose hooks do not run gets no verdict.
+  - A chain passes the rule there when each run in it is bare (`export PATH=<repo>/bin:$PATH; ./hub pr-watch …`). By
+    the same model, a chain stays in the sandbox.
+  - `make worktree *` and `make worktree-remove *` are excluded from the sandbox too, and `make` reads the `Makefile`
+    of the call's folder. Both ask, and this rule does not read them.
+
+  AGH-841 covers the writes at the hub root and the two `make` targets.
+- **A new relative command.** A later `./` allow rule or sandbox exclusion must put its verb in `LAUNCHER_VERBS`.
+  `test_ties_relative_commands_to_guard_verbs_when_settings_built` fails until it does.
+
+Proof: integration tests (`test_guard_hook.py`, the tests named `launcher_verb` and `launcher_rule`).
+
+The stop gate checks the checkouts holding cwd or a file the session or its subagents edited,
+changed since the transcript's first timestamp (else its birth time, else 12 h ago), running the repo's `check_stop`, else
+its `check_fast`; in one 160 s budget each run gets
+`repos[].check_fast_timeout` (default 150 s), then its group is killed; a cut run says `not run`. A `check_stop` run
+gets the checkout's changed paths in `HUB_CHANGED_FILES`, one per line, unless git quotes one of them, git's output
+holds U+0085, U+2028 or U+2029 (raw in a name under `core.quotePath=false`), the list is over 64 KiB or the start fails
+with `E2BIG` (then it starts again without it); no check inherits the variable from the gate
+([project-config.md](project-config.md)). The summary names the kind of command the changed repos were given.
+PreToolUse has one hook, `pre_tool_use.py` (matcher `*`, 10 s; AGH-621), where it had the guard's and the sensor's. It
+reads the event once and hands the call to the guard module when the tool is one the guard's former anchored matcher
+named (its `GUARDED_TOOLS`: Bash, Read, Grep, Glob, Edit, Write, MultiEdit, NotebookEdit, WebFetch, WebSearch, Task,
+Agent, SendMessage and every `mcp__` tool) or when the event is not a JSON object, whatever the tool; it prints what
+`guard.py` prints, byte for byte (nothing for any other call), flushes it, then runs the sensor and exits 0. `guard.py`
+and `event_sensor.py` stay and still work alone, for settings written before the hook.
+The event sensor `event_sensor.py` (AGH-200) is registered beside them on ten events (SessionStart, UserPromptSubmit,
+PostToolUse and PostToolUseFailure with matcher `*`, Notification, Stop, SubagentStart, SubagentStop, PreCompact,
+SessionEnd; timeout 5 s) and runs inside `pre_tool_use.py` on PreToolUse: it reads the input (at most 16 MiB), reduces
+each body to its size (the prompt to `prompt_chars` and `prompt_slash_command`; a Write's `content` and an Edit's or
+MultiEdit edit's `old_string`/`new_string` to `<key>_lines`, a Write under `brain/_inbox/` keeping its first heading as
+`content_heading`; `tool_response` to `tool_response_bytes`), replaces each string still over 64 KiB with
+`{"_omitted_bytes": n}`, wraps it in the v1 envelope `{v, project, repo, run, step, attempt, sent_at, hook}`
+(project from `hub.json`, repo from the cwd's checkout or worktree, run/step/attempt from `AGENT_HUB_RUN_ID`,
+`AGENT_HUB_STEP`, `AGENT_HUB_ATTEMPT`, each null when out of bounds) and POSTs it to `/api/v1/events/hooks` of
+`AGENT_HUB_WEB_URL` (default `http://127.0.0.1:7420`; only plain `http` to `127.0.0.1`, `[::1]` or `localhost`, any other
+URL turns it off without opening a socket) within 0.5 s. An envelope over 1 MiB, an input that is not a JSON object or
+no hub found sends nothing; it never prints and always exits 0. An envelope the server does not take (refused, no
+answer in time, no time left, or a 5xx answer) goes to the hook spool (AGH-699): one line, the exact POST body,
+appended to `hook-spool.jsonl` in `$XDG_STATE_HOME/agent-hub/` (absolute only), else `$HOME/.local/state/agent-hub/`
+(absolute only; with neither, nothing is kept), never inside a hub or a repo, since its command text is redacted only
+at import. The folder is made with mode 0700; each file is opened by name in that folder with `O_NOFOLLOW` and used
+only when it is a regular file of this user, set to 0600. Each write holds an `flock` on `hook-spool.lock`, taken
+within 0.2 s or the envelope is dropped, uncounted (the count is in the spool, which only the lock's holder writes). A
+spool over 8 MiB (`MAX_SPOOL_BYTES`) loses its oldest lines down to 6 MiB (`SPOOL_KEEP_BYTES`), written to
+`hook-spool.trim` then renamed over it, and its first line `{"dropped": n}` adds those lines to the count an earlier
+trim wrote. Any failure there is silent, the exit code stays 0, and the hook's time is
+the send's deadline plus the lock wait and a few writes. `hub web` imports the spool when it starts and
+`hub collect --spool` imports it on demand, both through the collector's `HookSpool` ([SPEC](../SPEC.md), "Hooks as
+sensors"). After deciding, and after printing its decision, the
+guard sends a deny or an ask (`decision: {by: guard, kind, rule}`, `rule` a stable id read from the reason, e.g.
+`push_protected_branch`, `ask_before_edit`) and the Stop gate a block (`{by: stop_gate, kind: block, command,
+exit_code}`) through the sensor's `send_decision`, bounded the same way; their output and exit codes do not change
+(characterization goldens `golden/guard`, `golden/stop_gate`). In `pre_tool_use.py` the guard's decision goes first and
+the event's own envelope second, within one 0.5 s deadline for both that starts once the verdict is flushed; fd 1 then
+points at `/dev/null`, so nothing written after the verdict can follow it, and nothing that fails there touches the
+verdict or the exit code. The deadline leaves out name resolution: for a `localhost` URL the lookup runs before any limit
+applies, and each address it returns gets the time still left, so a slow resolver or two addresses that never answer
+can take longer (the hook's own 10 s limit still holds). Proof: integration tests.
+The read-only gate `readonly_gate.py` (AGH-141) is a second group on SubagentStart (timeout 10 s) and SubagentStop
+(30 s), after the sensor's. It acts only for a declared agent: the first definition whose frontmatter `name` is the bare
+`agent_type` (split at its last `:`), looked up in the hook root's `.claude/agents/`, then `plugin/<project>/agents/`,
+then the base plugin's own `agents/` (prefix `hub-workflow:`: the last only; the project's name: the second only; any
+other prefix: none; `<name>.md` first, then the folder's other `*.md`), says `mutates_checkout: false` (unquoted, any
+case). The base `researcher`, `spec-reviewer` and `quality-reviewer` do; app repos' and `~/.claude/agents/` are not
+searched; any other agent gets no state and no output. Watched checkouts: each repo of `hub.json` with a plain folder
+name, then the hub, then their task worktrees (a folder holding `.git` under `<checkout>/.claude/worktrees/`, newest
+first), each a checkout of its own labelled `<dir>/.claude/worktrees/<name>`; a worktree that is a link, or a
+`.claude/worktrees/` reached through one, is not watched (a main checkout's folder may be a link). At the start the gate
+saves in `$TMPDIR/hub-readonly-<session>-<agent>.json` each checkout's HEAD, branch and `git status --porcelain=v2`
+entries (status, modes, index blobs and the file's sha256, so staging alone is a change; a link's target text is hashed,
+never followed), the main transcript's size and the listing of the session's `subagents/` folder; a resumed agent keeps
+its first state while it is under 12 h old. The hub's `brain/` (also in a hub worktree), gitignored files,
+`.claude/worktrees/` seen from the main checkout and `$TMPDIR` never count; submodule content is not checked. At the
+stop the same checkouts are snapshotted again: a changed entry, a HEAD or branch move and a new task worktree
+(`<dir>/.claude/worktrees/<name>/ (new worktree)`, its files not read) are changes; a removed worktree or checkout is a
+note. Attribution reads the agent's transcript (`agent_transcript_path`, else
+`<main transcript minus .jsonl>/subagents/agent-<id>.jsonl`): the real paths its Write, Edit, MultiEdit and NotebookEdit
+named, and its Bash commands. A change at one of those paths is blocked. Any other change is blocked only when no
+overlap signal is present, each named in the report: another fresh gate state of the session
+(`another read-only agent running`), a tool call other than Agent or Task, or any tool result, in the main transcript
+after its size at the start (`main session tool call`, `main session tool result`; sidechain lines skipped), another
+subagent transcript created or changed (`another subagent ran`) or left ending in a call with no result
+(`another subagent running`), or any of these inputs unreadable or cut. With a signal, or without a readable agent
+transcript, the change is reported in a `systemMessage`: every doubtful case reports, never blocks. A block
+(`decision: block`) lists the paths (at most 40), asks the agent to revert them or explain each in its final report, and
+names its last 10 Bash commands (one line each, cut at 160 characters). The gate writes the agent's `.blocks` counter
+before blocking, so an agent is held once: on its next stop, or when `stop_hook_active` is true, whatever is still
+changed is reported as "left changed"; a counter that cannot be written means no block. Each outcome present (`block`,
+`report`, `left_changed`) appends one line `{ts, session_id, agent_id, agent_type, outcome, paths}` (labels only, at
+most 200; never file content or command text) to `$TMPDIR/hub-readonly-<session>.jsonl`. It imports no network module
+and sends nothing; the decisions will reach the control plane with AGH-159. Fail-open: no hub, an undeclared agent or an
+unreadable event prints nothing; a declared agent that cannot be checked gets
+`[hub readonly-gate] not checked (<cause>)` (`no start snapshot`, `start snapshot unreadable`, `state not saved`,
+`agent transcript unreadable`, `<label>: git failed`, `budget`, `caps` or `removed`, `<label>/<path>: too large`, …) and
+is never blocked for it; a crash prints one `skipped` line. Bounds: a 5 s budget at the start and 15 s at the stop (one
+`git` call at most 4 s, its process group killed after; at most 5 s of it reading the agent transcript), 24 checkouts
+per event, 256 worktree names per folder, 4 MiB and 2,000 status entries per checkout, 8 MiB hashed per file and 128 MiB
+per event, 1 MiB of stdin, 16 MiB of agent transcript, 8 MiB of main-transcript window, 1 MiB per line, 256 agent files
+per folder and 16 KiB of frontmatter, 256 subagent transcripts and 256 other states looked at, the last 64 KiB of each
+unchanged subagent transcript, a 16 MiB state, 12 h before a state or a silent subagent transcript is stale. Not seen,
+so a change it makes can be blamed on the agent (one block, which the agent answers by saying so): another Claude
+session or the user editing the same checkout, and a main-session background Bash started before the agent. A state left
+by a subagent that never got SubagentStop, or a subagent killed mid-call, makes later read-only agents of the session
+report instead of block for up to 12 h. Proof: integration tests, characterization goldens `golden/readonly_gate`.
+The prompt secret hook `prompt_secret.py` (AGH-814) is a group on UserPromptSubmit before the sensor's (timeout 5 s). It
+scans the prompt's first MiB for a secret's shape on a line (`stdlib_reader`'s `secret_shaped`, the shared
+`SECRET_SHAPES`, which include a private key header and a secret-named variable assigned a literal of 8 or more
+characters, not a `$VAR`, `<placeholder>` or `***`) or two or more consecutive `NAME=value` lines (`export` allowed). A
+file's name is not a match: it imports nothing from the guard. Each `secret_shaped` call sees at most `SHAPE_WINDOW`
+(1024) characters of a line, in windows that overlap by `SHAPE_OVERLAP` (256), so a long line costs linear time even for
+the JWT shape. On a match it prints one `systemMessage` that suggests a git-ignored env file (`.env.local`, or one in
+`hub.json`'s `guard.readable_env_files`) and never quotes the prompt or the match; it never blocks. Any error, a
+missing `stdlib_reader.py` included, prints nothing and exits 0. Proof: integration tests.
+
+The session reminder hook `session_reminder.py` (AGH-812) is a group on UserPromptSubmit right after
+`prompt_secret.py`'s (timeout 5 s). The agent cannot tell time or count compactions, so a per-session record does:
+`<hub>/.agent-runs/sessions/<session id>.json` (`.agent-runs/` is gitignored), `{"started": <epoch s>, "compactions":
+<int>, "reminded": <bool>}`, at most 4 KiB, never read through a link (`O_NOFOLLOW`) and published whole with
+`os.replace`. The session id must match `SESSION_ID_SHAPE` and be at most `SESSION_ID_MAX` characters, so the file name
+cannot leave the folder. `hubhooks.py` holds the shared pieces for its two consumers: those two constants (moved from
+`session_start.py`, which imports them), `session_record(hub, session_id)` and `save_session_record(hub, session_id,
+record)`. `pre_compact.py` adds 1 to `compactions`, creating the record when it is missing. `session_reminder.py`
+creates the record on the session's first prompt; when `compactions >= COMPACTION_LIMIT` (2) or `now - started >=
+OPEN_LIMIT` (2 days), and `reminded` is false, it prints one `systemMessage` line, `[hub] This session has been compacted
+twice or more: run /handoff, then start a new session for the next work.` (or `has been open for 2 days`; the
+compactions text wins when both hold), and sets `reminded`, so it fires once per session. It never blocks a prompt and
+prints nothing else. Fail-open: a missing, unreadable or malformed record is a fresh one (`started` = now, 0, false), and
+any error prints nothing and exits 0. Records are not pruned (one small file per session, like the run records).
+Accepted limit: `pre_compact.py` and `session_reminder.py` read, change and write the record with no lock, so two runs
+that overlap can at worst lose one compaction count or show the reminder a second time. No lock is added: both hooks are
+short and fail open. Proof: the integration tests in
+`packages/generator/tests/integration/test_session_reminder_hook.py` (the compaction count and the hook).
+
+The prompt's skills `prompt_skills.py` (AGH-838, [ADR 0062](../adr/0062-model-invocable-read-only-skills-and-skills-named-mid-message.md))
+is a group on UserPromptSubmit (timeout 5 s), after the sensor's. Claude Code expands a `/<name>` only at position
+0 of the prompt (it receives the same raw prompt, so that token is skipped; with any character before it the CLI does not
+expand it). The hook finds each other `/<name>` or `/<plugin>:<name>` token: whitespace or the start before it, the end,
+whitespace or trailing punctuation then one of those after it (`/usr/bin/change`, `a/change`, `/change.py`, a URL and
+`"/change"` do not count). Each name is looked up as a folder, never globbed: the hub's `.claude/skills/<name>/SKILL.md`
+(the hub at three folders above the hook, holding `hub.json`), then `skills/<name>/` of the hook's own plugin and of each
+`<hub>/plugin/<p>/`. For each existing skill, in order and once, at most 10, it adds one `additionalContext`: the user
+invoked it; load it with the Skill tool (bare name, or `<plugin>:<name>` when `CLAUDE_PLUGIN_ROOT` says the hooks run
+from the plugin), or, for a skill with `disable-model-invocation: true` (which the Skill tool refuses), Read its
+`SKILL.md` and follow it; its own gates hold. Unknown names add nothing. In the plugin cache (no hub) only the plugin's
+own skills count. Fail-open through `run_hook`. Proof: integration tests (`test_prompt_skills_hook.py`).
+
+### Commands
+
+| Hub item(s) | Becomes | Note |
+|---|---|---|
+| `worktree.sh`, `make worktree`, `make worktree-remove` | `./hub worktree <name> [--only REPO]... [--remove]` | keeps the per-repo setup/teardown scripts |
+| — | `./hub start ISSUE [--repo DIR]… [--no-agent]` | issue to worktrees, started state and a session ([hub-start.md](hub-start.md)) |
+| — | `./hub setup [--yes]` | onboards a machine ([hub-setup.md](hub-setup.md)) |
+| `brief.py`, `make brain-brief` | `./hub brief [--no-network] [--write-cache]` | SessionStart's background refresh calls it with `--write-cache` (Hooks) |
+| `agent_runner.py`, `make next`, `make run-issue` | `hub next`, `hub run <issue> --repo REPO [--live] [--budget USD] [--from implement\|verify]` | through `TrackerClient`; `run-issue` passes `BUDGET` and `FROM`, each checked as a name |
+| `agent`, `make agent` | `./agent`: `exec ./hub agent "$@"` | `--add-dir` per repo dir; the repos' `AGENTS.md` in `brain/auto/agent-context.md` (rewritten per launch, gitignored); auto memory in `brain/auto/workspace/` (personal, gitignored); then `exec claude` |
+| `bench.py`, `make bench`, `make bench-validate` | `hub bench [--validate] [options]`, module `bench` | cases stay in the brain: `brain/workflow/bench/tasks.json` (absent or `[]`: nothing to do; bounds: the `bench.tasks` row of [hub-doctor.md](hub-doctor.md)); without `bench` selected, exit 2 `module bench is not selected`. `--validate` (no run option) grades each case not excluded at its merge's parent (must fail) and at its merge (must pass), never runs `claude`. A run (`--runs` 3, `--arms with,without`, `--cases` all, `--budget` 15, `--per-run` 2, `--parallel` 3, `--label` `bench-%Y%m%d-%H%M`, `--trace`; `BENCH_EFFORT` low/medium/high) lays `origin/main`'s agent config over each case's merge parent in a detached worktree under `<ws>/_bench/wt` (`<ws>`: the folder of the hub's main checkout), runs one `claude -p` per job (the `with` arm enables `hub-workflow@<project>`), then grades it; a wave starts only while it fits the budget (else `STOP:`), and a failed session without a cost counts at `--per-run`. Records go to `<ws>/_bench/results/<label>.jsonl` (traces in `results/traces/`, files 0600), then the summary. Children run without `LINEAR_API_KEY`, `GH_TOKEN`, `GITHUB_TOKEN`; sessions use `--setting-sources user`, so the user's own hooks and plugins load in both arms (AGH-77 checks whether project instruction files are read). `<ws>/_bench/bench.lock` allows one bench per workspace; a left-behind lock exits 1 for the user to delete. Each job's `git worktree add` and its removal (`remove`, `prune`) run under one in-process lock, one at a time (AGH-120). Exits: 0 done, 1 bad cases, wrong grade, failed step or lock, 2 usage |
+| `agent_config_lint.py`, `features_check.py`; `hubconfig.py` | doctor rules ([hub-doctor.md](hub-doctor.md)); `hubconfig.py` dropped (the CLI reads `HubConfig`) | skills run `hub doctor --only features.tracker` |
+| `cloud-setup.sh` | stays a hub file, module `cloud` | sets the git identity from `hub.json`'s author (global and repo-local), else from `HUB_AUTHOR_NAME`/`HUB_AUTHOR_EMAIL` repo-local only, else a WARN ([developer-identity.md](developer-identity.md)); checks access to the pinned tag (`git ls-remote`), warms the uv cache (from the commit `hub.lock` records for the pin, else the tag; ADR 0054), then fetches the repos; no access: exit 1 naming it; it cannot need the CLI |
+| `mine_transcripts.py`, `recall_transcripts.py`, `retro_metrics.py`, `make mine`, `make retro`; `guard.py`, `hubhooks.py`, `hooks.json`, `post_edit.py`, `stop_gate.py`, `session_start.py`, `session_end.py`, `pre_compact.py`, `event_sensor.py`, `readonly_gate.py`, `pre_tool_use.py`, `prompt_secret.py`, `prompt_skills.py` | stay hub files, managed | scripts: AGH-5 R12, Phase 2 redesigns them; hooks: the hooks exception, AGH-5 D9 ([ADR 0012](../adr/0012-cli-subsumes-hub-scripts.md)) |
+| `make usage`, `make check`, `make help` | stay targets; `check` runs `hub doctor`, `hub workflow test` (the packs' fixtures) and the hub's own tests | `usage` wraps an external cost tool until the Phase 2 cost view; hook tests move to agent-hub |
+
+Every caller (Makefile `HUB`: `$(CURDIR)/hub` single-quoted; `.githooks/pre-commit`; skills; `./agent`) goes through
+the managed POSIX `sh` shim `./hub`, run by its real path (a symlink elsewhere reads the link's folder): it reads
+`platform.version` and `platform.repository` from its own folder's `hub.json` at run time (stdlib `python3`; no
+`python3` or no uv: exit 127; a bad pin or repository, never echoed: exit 1), then takes one of two paths
+([ADR 0054](../adr/0054-pin-the-platform-release-by-commit.md)). Commit path: `hub.lock` beside it is a regular file (not
+a link or FIFO) of at most 1 MiB whose `platform_commit` is 40 lowercase hex and whose `platform_version` and
+`platform_repository` match `hub.json`; the shim makes one call, `exec uvx --from <repository>@<commit>#subdirectory=packages/agent-hub
+hub …` (signals, stdin and the exit code are uvx's, and uv's own error text is the cause), and only a uv folder that
+nothing can write is found before it (exit 1, no call). Tag path (any other lock, or none): two calls, the resolve step
+`uvx --from <pinned source> hub --version` (fails: exit 1 naming the source and the missing access, no real call), then
+the `exec`'d real call. The shim, the SessionStart hook and cloud setup read only the lock's `platform_*` fields;
+`hub sync` validates the whole lock, so a lock whose other fields are invalid runs the commit in those three while sync
+refuses it (`test_lock_commit_parity.py` pins both). Either way the real call keeps the caller's cwd, gets `AGENT_HUB_ROOT` = the shim's folder, and
+passes its exit code through. Windows
+is not supported. A script is deleted when its command lands, after characterization tests (brief, bench, retro, lint,
+cloud setup). Order: `worktree`, `brief`, `doctor`, `agent`, `next`/`run`, `bench`, `setup`, `start`.
+
+### Distribution
+
+Releases are annotated semver tags `vX.Y.Z` (`git tag -a`) on agent-hub `main`, created by `release.yml` on a dispatch
+(ADR 0047) or pushed by hand; `release.yml` checks their form, that they are annotated and on `main`, and the
+meta-package version `agent-hub-cli` shares in lockstep
+(`make lockstep`); no PyPI. A shim runs the pinned release with no install (`hub init` takes the same source):
+`uvx --from <platform.repository>@v<platform.version>#subdirectory=packages/agent-hub hub …` (tag path: the resolve
+step, then the real call), or, when `hub.lock` records the tag's commit for that version and repository, one `exec`'d
+`uvx --from <platform.repository>@<platform_commit>#subdirectory=packages/agent-hub hub …` (commit path, ADR 0054); the
+repository is read from `hub.json` at run time (default `git+https://github.com/jroquette/agent-hub`, public: no credential). A private mirror
+([project-config.md](project-config.md)) reads through `AGENT_HUB_READ_TOKEN` in hub CI, or the repo attached or
+`GH_TOKEN` in cloud sessions (`cloud` setup checks access), on `https://github.com/` only, via a credential helper or
+`GIT_CONFIG_*` `insteadOf`, never the URL, `hub.json` or `hub.lock`. A direct `hub` other than `platform.version`: `hub
+sync` exits 1, `hub doctor` errors. Upgrade: edit `platform.version`, sync (sync records the new tag's commit in
+`hub.lock` when it can reach the repository, so the shim, SessionStart and cloud setup's warm-up run that commit in one call; until then they use the tag).
+
+### Acceptance
+
+Each hub's `ci.yml` has a golden step: the pinned `hub sync --check`, before `make check`, must exit 0 (steps, exits, CI
+credential: [hub-adopt.md](hub-adopt.md)). agent-hub tests a synthetic `demo`: identical inits, no-op and rerun syncs,
+an edit exits 3, adopt lists differences, a `hub.lock` snapshot. A hub built by hand: write `hub.json`, move guard rules to
+`guard.*`/`project_guard.py` and domain rules to `AGENTS.project.md`, adopt.
+
+## Invariants
+
+- No operation silently overwrites or deletes a project edit or an unknown path; seeded files are written once; same
+  inputs, same bytes; re-runs are safe; hooks need no CLI; agent-hub holds no project-owned material.
+
+## Implementers change files with Edit or Write (AGH-378)
+
+**Generator: rendered /feature skill and AGENTS.md**
+
+- **AC-378.1** Given a hub rendered by `hub init`/`hub sync` (one team or two teams), when its `/feature` skill is
+  read, then step 6 (**Implement**) says "Each implementer changes files with the Edit or Write tool, never by a shell
+  script, so the session's review shows each change.", once, and no other line names Edit or Write.
+- **AC-378.2** Given the same hubs, when the rendered `AGENTS.md` is read, then it does not carry the rule (no "Edit
+  or Write", no "shell script"): the rule is in /feature only, since a two-team hub's AGENTS.md is at its 100-line
+  cap.
+- **AC-378.3** Given the demo hub, when `hub init` writes its `hub.lock`, then the lock matches the committed golden
+  `golden/init/demo.hub.lock`, whose `feature/SKILL.md` hash carries the new step 6.
+
+## The guard denies instead of asking in auto mode (AGH-430)
+
+A hook's `ask` forces a permission prompt in every Claude Code mode, so a session in `auto` mode still stopped for a
+call nobody chose to confirm. Proof: `packages/generator/tests/integration/test_guard_hook.py`.
+
+- **AC-430.1** Given a session whose PreToolUse event has `permission_mode: auto`, when the guard (base rules,
+  environment endpoints, env files or the project extension) would ask about a call, then it denies it instead, with
+  the same reason followed by " (denied in auto mode, which never stops to confirm: take another way, or ask the user
+  to switch the session out of auto mode to approve it)".
+- **AC-430.2** Given any other mode (`default`, `acceptEdits`, `plan`, or no `permission_mode`), when the guard would
+  ask, then it still asks with the unchanged reason.
+- **AC-430.3** Given auto mode, when the guard denies a call (e.g. a push to `main`), then the deny and its reason are
+  unchanged, without the note.
+- **AC-430.4** Given auto mode, when the guard turns an ask into a deny, then the decision it records through the
+  event sensor is `kind: deny` under the ask's `rule`.
+
+## Decisions
+
+- [ADR 0009](../adr/0009-hub-sync-by-file-ownership.md): ownership, lock, sync, adopt; no 3-way merge or marker blocks.
+- [ADR 0011](../adr/0011-templates-as-package-data.md): templates as package data, the `@@` renderer, no new port.
+- [ADR 0012](../adr/0012-cli-subsumes-hub-scripts.md): logic in the CLI, shims, the hooks exception, the in-hub plugin.
+- [ADR 0013](../adr/0013-release-by-git-tags.md): semver tags, the per-hub pinned run, credentials, mismatch.
+
+## Open questions
+
+- None.

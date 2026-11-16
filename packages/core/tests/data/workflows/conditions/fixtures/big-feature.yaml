@@ -1,0 +1,9 @@
+# 9 > 8 opens the careful review; numbers compare numerically.
+workflow: conditions
+stubs:
+  classify: {output: {kind: feature, score: 9.0}}
+  build-feature: {text: built}
+  careful-review: {text: reviewed}
+  summary: {text: summary}
+expect: {status: done}
+reached: [classify, build-feature, careful-review, summary]

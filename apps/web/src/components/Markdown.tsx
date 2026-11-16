@@ -1,0 +1,805 @@
+/**
+ * The safe Markdown renderer of brain notes, feature records and learnings (AC-201.35, AC-201.36).
+ *
+ * In-house and small on purpose (no dependency): it builds React elements only, so raw HTML stays
+ * text and no script or `on*` attribute can reach the page. Links go through `resolveBrainLink`:
+ * notes of the same brain route inside the app (handed to `onBrainLink` when given), http(s) URLs
+ * open in a new tab, paths leaving the brain and anything else render as plain text. Images render
+ * as links, never as `<img>`. Inputs over the bounds render as text. A code block carries its
+ * language (as text) and a Copy button; a table scrolls sideways in its own region (AC-234.23).
+ * A completed block in a known language is coloured by the lazy `highlight` chunk (AC-234.31): never
+ * one still streaming (open fence while `streaming`), nor one over the highlight bounds.
+ *
+ * A skill body (AGH-164) passes `localLink`, asked first for every relative link (a bundled file of
+ * the skill opens in the page; null falls back to the rules above, so text without a note), and
+ * `stepAnchors`, which gives each top-level numbered item the id `step-<n>` (P5).
+ *
+ * The chat passes `refs`, asked for each run of text and each whole code span outside a link: what
+ * it names (a URL, a pull request, a ticket, a file of the review) becomes a link that opens in a
+ * new tab, or a button that opens it in the page; the rest stays text.
+ */
+import "./Markdown.css";
+
+import { Fragment, type MouseEvent, type ReactNode } from "react";
+
+import {
+  isRelativeHref,
+  resolveBrainLink,
+  stepAnchor,
+  uniqueAnchor,
+  type BrainLink,
+} from "../lib/brainLinks";
+import { cx } from "../lib/cx";
+import { CopyButton } from "./core";
+import { highlightable, useHighlight } from "./useHighlight";
+
+/** The largest note formatted; a larger one shows as plain text (the API's 256 KiB note bound). */
+export const MAX_MARKDOWN_BYTES = 256 * 1024;
+/** Lists nested deeper than this, and tables wider than MAX_TABLE_COLUMNS, render as text. */
+export const MAX_LIST_DEPTH = 6;
+export const MAX_TABLE_COLUMNS = 20;
+const MAX_QUOTE_DEPTH = 6;
+const MAX_INLINE_DEPTH = 8;
+/** How far a link's label and destination may run before the `[` is taken as text. */
+const LINK_WINDOW = 2000;
+/** A longer line is not a heading (core's `MAX_HEADING_CHARS`, so the TOC matches the body). */
+export const MAX_HEADING_CHARS = 1024;
+
+type Align = "left" | "center" | "right" | null;
+type Block =
+  | { t: "heading"; level: 1 | 2 | 3 | 4 | 5 | 6; text: string }
+  | { t: "para"; text: string }
+  | { t: "code"; lang: string; text: string; closed: boolean }
+  | { t: "quote"; blocks: Block[] }
+  | { t: "list"; ordered: boolean; start: number; indent: number; items: Block[][] }
+  | { t: "table"; head: string[]; align: Align[]; rows: string[][] }
+  | { t: "hr" }
+  | { t: "text"; text: string };
+
+type Inline =
+  | { t: "text"; v: string }
+  | { t: "code"; v: string }
+  | { t: "strong" | "em" | "del"; c: Inline[] }
+  | { t: "link"; href: string; c: Inline[] }
+  | { t: "image"; src: string; alt: string };
+
+interface Depth {
+  list: number;
+  quote: number;
+}
+
+/* ---------- Blocks ---------- */
+
+export const FENCE = /^ {0,3}(`{3,}|~{3,})[ \t]*([^`\s]*)/;
+// Linear by construction: the closing `#` sequence is stripped by `headingText`, not here.
+export const HEADING = /^ {0,3}(#{1,6})(?:[ \t]+(.*))?$/;
+const RULE = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
+const ITEM = /^( *)([-*+]|\d{1,9}[.)])( +|$)(.*)$/;
+const QUOTE = /^ {0,3}> ?(.*)$/;
+const TABLE_RULE = /^ *\|? *:?-+:? *(\| *:?-+:? *)*\|? *$/;
+
+/** A heading's text: trailing blanks dropped, then a closing `#` run after a blank or alone. */
+function headingText(content: string): string {
+  const text = content.replace(/[ \t]+$/, "");
+  let end = text.length;
+  while (end > 0 && text[end - 1] === "#") end--;
+  if (end === 0) return "";
+  if (end < text.length && (text[end - 1] === " " || text[end - 1] === "\t")) {
+    return text.slice(0, end).replace(/[ \t]+$/, "");
+  }
+  return text;
+}
+
+const heading = (line: string) => (line.length <= MAX_HEADING_CHARS ? HEADING.exec(line) : null);
+
+const lead = (line: string) => line.length - line.trimStart().length;
+const blank = (line: string) => line.trim() === "";
+
+function startsBlock(line: string): boolean {
+  return (
+    FENCE.test(line) ||
+    heading(line) !== null ||
+    RULE.test(line) ||
+    ITEM.test(line) ||
+    QUOTE.test(line)
+  );
+}
+
+function startsTable(lines: string[], i: number): boolean {
+  const next = lines[i + 1];
+  return (
+    (lines[i] ?? "").includes("|") &&
+    next !== undefined &&
+    next.includes("|") &&
+    TABLE_RULE.test(next)
+  );
+}
+
+function cellsOf(line: string): string[] {
+  let row = line.trim();
+  if (row.startsWith("|")) row = row.slice(1);
+  if (row.endsWith("|") && !row.endsWith("\\|")) row = row.slice(0, -1);
+  return row.split(/(?<!\\)\|/).map((cell) => cell.trim().replace(/\\\|/g, "|"));
+}
+
+function alignOf(cell: string): Align {
+  const left = cell.startsWith(":");
+  const right = cell.endsWith(":");
+  if (left && right) return "center";
+  if (right) return "right";
+  return left ? "left" : null;
+}
+
+/** The list starting at `start`: its items' lines (children unindented) and where it ends. */
+function listAt(lines: string[], start: number) {
+  const first = ITEM.exec(lines[start] ?? "");
+  const indent = first?.[1]?.length ?? 0;
+  const ordered = /\d/.test(first?.[2] ?? "");
+  const items: string[][] = [];
+  let i = start;
+  while (i < lines.length) {
+    const item = ITEM.exec(lines[i] ?? "");
+    if (!item || (item[1] ?? "").length !== indent || /\d/.test(item[2] ?? "") !== ordered) break;
+    const content = indent + (item[2] ?? "").length + Math.max(1, (item[3] ?? "").length);
+    const body = [item[4] ?? ""];
+    i++;
+    let afterBlank = false;
+    while (i < lines.length) {
+      const line = lines[i] ?? "";
+      if (blank(line)) {
+        let next = i;
+        while (next < lines.length && blank(lines[next] ?? "")) next++;
+        if (next >= lines.length || lead(lines[next] ?? "") <= indent) break;
+        body.push("");
+        i++;
+        afterBlank = true;
+        continue;
+      }
+      if (lead(line) > indent) {
+        body.push(line.slice(Math.min(lead(line), content)));
+      } else if (!afterBlank && !startsBlock(line)) {
+        body.push(line.trim());
+      } else break;
+      afterBlank = false;
+      i++;
+    }
+    items.push(body);
+    if (i < lines.length && blank(lines[i] ?? "")) {
+      let next = i;
+      while (next < lines.length && blank(lines[next] ?? "")) next++;
+      const sibling = ITEM.exec(lines[next] ?? "");
+      if (sibling && (sibling[1] ?? "").length === indent) i = next;
+    }
+  }
+  const number = ordered ? Number.parseInt(first?.[2] ?? "1", 10) : 1;
+  return { ordered, start: number, indent, items, end: i };
+}
+
+function parseBlocks(lines: string[], depth: Depth): Block[] {
+  const blocks: Block[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i] ?? "";
+    if (blank(line)) {
+      i++;
+      continue;
+    }
+    const fence = FENCE.exec(line);
+    if (fence) {
+      const marker = fence[1] ?? "```";
+      const body: string[] = [];
+      let closed = false;
+      i++;
+      while (i < lines.length) {
+        const close = lines[i] ?? "";
+        const trimmed = close.trim();
+        if (trimmed.startsWith(marker) && /^([`~])\1*$/.test(trimmed)) {
+          closed = true;
+          break;
+        }
+        body.push(close);
+        i++;
+      }
+      i++;
+      const lang = (fence[2] ?? "").slice(0, 40);
+      blocks.push({ t: "code", lang, text: body.join("\n"), closed });
+      continue;
+    }
+    const found = heading(line);
+    if (found) {
+      const level = Math.min(6, Math.max(1, (found[1] ?? "#").length)) as 1 | 2 | 3 | 4 | 5 | 6;
+      blocks.push({ t: "heading", level, text: headingText(found[2] ?? "") });
+      i++;
+      continue;
+    }
+    if (RULE.test(line)) {
+      blocks.push({ t: "hr" });
+      i++;
+      continue;
+    }
+    if (QUOTE.test(line)) {
+      const raw: string[] = [];
+      while (i < lines.length) {
+        const current = lines[i] ?? "";
+        if (QUOTE.test(current)) raw.push(current);
+        else if (!blank(current) && raw.length > 0 && !startsBlock(current)) raw.push(current);
+        else break;
+        i++;
+      }
+      if (depth.quote >= MAX_QUOTE_DEPTH) blocks.push({ t: "text", text: raw.join("\n") });
+      else {
+        const inner = raw.map((current) => QUOTE.exec(current)?.[1] ?? current.trim());
+        blocks.push({
+          t: "quote",
+          blocks: parseBlocks(inner, { ...depth, quote: depth.quote + 1 }),
+        });
+      }
+      continue;
+    }
+    if (ITEM.test(line)) {
+      const list = listAt(lines, i);
+      if (depth.list >= MAX_LIST_DEPTH) {
+        blocks.push({ t: "text", text: lines.slice(i, list.end).join("\n").trimEnd() });
+      } else {
+        const inner = { ...depth, list: depth.list + 1 };
+        blocks.push({
+          t: "list",
+          ordered: list.ordered,
+          start: list.start,
+          indent: list.indent,
+          items: list.items.map((item) => parseBlocks(item, inner)),
+        });
+      }
+      i = list.end;
+      continue;
+    }
+    if (startsTable(lines, i)) {
+      const raw: string[] = [];
+      while (i < lines.length && !blank(lines[i] ?? "") && (lines[i] ?? "").includes("|")) {
+        raw.push(lines[i] ?? "");
+        i++;
+      }
+      const head = cellsOf(raw[0] ?? "");
+      if (head.length > MAX_TABLE_COLUMNS) blocks.push({ t: "text", text: raw.join("\n") });
+      else {
+        const align = cellsOf(raw[1] ?? "").map(alignOf);
+        const rows = raw.slice(2).map((row) => head.map((_, column) => cellsOf(row)[column] ?? ""));
+        blocks.push({ t: "table", head, align, rows });
+      }
+      continue;
+    }
+    const para: string[] = [];
+    while (
+      i < lines.length &&
+      !blank(lines[i] ?? "") &&
+      (para.length === 0 || (!startsBlock(lines[i] ?? "") && !startsTable(lines, i)))
+    ) {
+      para.push((lines[i] ?? "").trim());
+      i++;
+    }
+    blocks.push({ t: "para", text: para.join(" ") });
+  }
+  return blocks;
+}
+
+/* ---------- Inlines ---------- */
+
+const ESCAPABLE = /[!-/:-@[-`{-~]/;
+const SPECIAL = /[\\`![*_~]/g;
+
+/** `[label](destination "title")` at `start` (on the `[`), or null when it is not one. */
+function linkAt(
+  s: string,
+  start: number,
+  lastParen: number,
+): { label: string; href: string; end: number } | null {
+  const limit = Math.min(s.length, start + LINK_WINDOW, lastParen + 1);
+  let nesting = 0;
+  let close = -1;
+  for (let j = start + 1; j < limit; j++) {
+    const ch = s[j];
+    if (ch === "\\") j++;
+    else if (ch === "[") nesting++;
+    else if (ch === "]") {
+      if (nesting === 0) {
+        close = j;
+        break;
+      }
+      nesting--;
+    }
+  }
+  if (close === -1 || s[close + 1] !== "(") return null;
+  let j = close + 2;
+  while (s[j] === " ") j++;
+  let href = "";
+  if (s[j] === "<") {
+    const end = s.indexOf(">", j);
+    if (end === -1 || end > limit) return null;
+    href = s.slice(j + 1, end);
+    j = end + 1;
+  } else {
+    let parens = 0;
+    const from = j;
+    while (j < limit) {
+      const ch = s[j] ?? "";
+      if (ch === "(") parens++;
+      else if (ch === ")") {
+        if (parens === 0) break;
+        parens--;
+      } else if (/\s/.test(ch)) break;
+      j++;
+    }
+    href = s.slice(from, j);
+  }
+  while (s[j] === " ") j++;
+  const quote = s[j];
+  if (quote === '"' || quote === "'") {
+    const end = s.indexOf(quote, j + 1);
+    if (end === -1 || end > limit) return null;
+    j = end + 1;
+    while (s[j] === " ") j++;
+  }
+  if (s[j] !== ")") return null;
+  return { label: s.slice(start + 1, close), href, end: j + 1 };
+}
+
+const wordChar = (ch: string | undefined) => ch !== undefined && /[\p{L}\p{N}]/u.test(ch);
+const space = (ch: string | undefined) => ch === undefined || /\s/.test(ch);
+
+function parseInline(s: string, depth: number, links = true): Inline[] {
+  const out: Inline[] = [];
+  let text = "";
+  const flush = () => {
+    if (text) out.push({ t: "text", v: text });
+    text = "";
+  };
+  // Bounds the work on hostile input: a delimiter known absent after a point is never searched again.
+  const absent = new Set<string>();
+  const find = (delim: string, from: number) => {
+    if (absent.has(delim)) return -1;
+    const at = s.indexOf(delim, from);
+    if (at === -1) absent.add(delim);
+    return at;
+  };
+  const lastParen = s.lastIndexOf(")");
+  let i = 0;
+  while (i < s.length) {
+    SPECIAL.lastIndex = i;
+    const next = SPECIAL.exec(s)?.index ?? s.length;
+    if (next > i) {
+      text += s.slice(i, next);
+      i = next;
+      continue;
+    }
+    const ch = s[i] ?? "";
+    if (ch === "\\" && ESCAPABLE.test(s[i + 1] ?? "")) {
+      text += s[i + 1] ?? "";
+      i += 2;
+      continue;
+    }
+    if (ch === "`") {
+      let run = 1;
+      while (s[i + run] === "`") run++;
+      const ticks = "`".repeat(run);
+      let close = find(ticks, i + run);
+      while (close !== -1 && s[close + run] === "`") {
+        let after = close;
+        while (s[after] === "`") after++;
+        close = s.indexOf(ticks, after);
+      }
+      if (close === -1) {
+        text += ticks;
+        i += run;
+        continue;
+      }
+      flush();
+      let code = s.slice(i + run, close);
+      if (code.length > 2 && code.startsWith(" ") && code.endsWith(" ")) code = code.slice(1, -1);
+      out.push({ t: "code", v: code });
+      i = close + run;
+      continue;
+    }
+    if ((ch === "!" && s[i + 1] === "[") || (ch === "[" && links)) {
+      const at = ch === "!" ? i + 1 : i;
+      const link =
+        depth < MAX_INLINE_DEPTH && find("](", at) !== -1 ? linkAt(s, at, lastParen) : null;
+      if (link) {
+        flush();
+        if (ch === "!")
+          out.push({
+            t: "image",
+            src: link.href,
+            alt: plainText(parseInline(link.label, depth + 1, false)),
+          });
+        else out.push({ t: "link", href: link.href, c: parseInline(link.label, depth + 1, false) });
+        i = link.end;
+        continue;
+      }
+      text += ch;
+      i++;
+      continue;
+    }
+    if (ch === "*" || ch === "_" || ch === "~") {
+      let run = 1;
+      while (s[i + run] === ch) run++;
+      const size = ch === "~" ? 2 : Math.min(run, 2);
+      const delim = ch.repeat(size);
+      const open =
+        (ch !== "~" || run >= 2) && !space(s[i + size]) && !(ch === "_" && wordChar(s[i - 1]));
+      const close = open && depth < MAX_INLINE_DEPTH ? find(delim, i + size + 1) : -1;
+      if (close !== -1 && !space(s[close - 1]) && !(ch === "_" && wordChar(s[close + size]))) {
+        flush();
+        const kind = ch === "~" ? "del" : size === 2 ? "strong" : "em";
+        out.push({ t: kind, c: parseInline(s.slice(i + size, close), depth + 1, links) });
+        i = close + size;
+        continue;
+      }
+      text += s.slice(i, i + run);
+      i += run;
+      continue;
+    }
+    text += ch;
+    i++;
+  }
+  flush();
+  return out;
+}
+
+function plainText(nodes: Inline[]): string {
+  return nodes
+    .map((node) => {
+      switch (node.t) {
+        case "text":
+        case "code":
+          return node.v;
+        case "image":
+          return node.alt;
+        default:
+          return plainText(node.c);
+      }
+    })
+    .join("");
+}
+
+/** The text a heading's source shows once rendered (inline marks and link targets dropped). */
+export function plainHeadingText(text: string): string {
+  return plainText(parseInline(text, 0));
+}
+
+/* ---------- Rendering ---------- */
+
+/** Where the note lives: its relative links resolve against this brain-relative path. */
+export interface NotePlace {
+  project: string;
+  path: string;
+}
+
+export interface MarkdownProps {
+  source: string;
+  note?: NotePlace | undefined;
+  /** Opens a note of the same brain in the app; without it the link is a plain in-app href. */
+  onBrainLink?: ((link: Extract<BrainLink, { kind: "brain" }>) => void) | undefined;
+  /** Asked first for each relative link: a link opened in the page, or null for the usual rules. */
+  localLink?: ((href: string) => LocalLink | null) | undefined;
+  /** Gives each top-level numbered list item the id `step-<n>`, counted through the body (P5). */
+  stepAnchors?: boolean | undefined;
+  /** The text is still arriving: a code block whose fence is not closed yet stays plain. */
+  streaming?: boolean | undefined;
+  className?: string | undefined;
+  /** Splits a run of text into text and refs (tickets, pull requests, files); null: none. */
+  refs?: ((text: string) => readonly (string | InlineRef)[] | null) | undefined;
+}
+
+/** A ref found in text by `MarkdownProps.refs`: a link to `href` (a new tab), or an action. */
+export interface InlineRef {
+  label: string;
+  href?: string | undefined;
+  open?: (() => void) | undefined;
+  title?: string | undefined;
+}
+
+/** A relative link resolved by the page: where it points (an in-page `#id`) and what opens it. */
+export interface LocalLink {
+  href: string;
+  open: () => void;
+}
+
+interface Ctx {
+  note: NotePlace | undefined;
+  onBrainLink: MarkdownProps["onBrainLink"];
+  localLink: MarkdownProps["localLink"];
+  ids: Map<string, number>;
+  /** The last step number given, or null when steps are not anchored. */
+  steps: number | null;
+  streaming: boolean;
+  refs: MarkdownProps["refs"];
+  /** Inside a link: its text is never split into refs. */
+  inLink: boolean;
+}
+
+/** True for a plain left click, which the page handles; other clicks keep the browser's default. */
+const plainClick = (event: MouseEvent<HTMLAnchorElement>) =>
+  event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
+
+const NEW_TAB = "(opens in a new tab)";
+
+function linkNode(href: string, children: ReactNode, key: number, ctx: Ctx): ReactNode {
+  const local = ctx.localLink && isRelativeHref(href) ? ctx.localLink(href) : null;
+  if (local) {
+    return (
+      <a
+        key={key}
+        href={local.href}
+        onClick={(event: MouseEvent<HTMLAnchorElement>) => {
+          if (!plainClick(event)) return;
+          event.preventDefault();
+          local.open();
+        }}
+      >
+        {children}
+      </a>
+    );
+  }
+  const link = resolveBrainLink(href, ctx.note?.path ?? null, ctx.note?.project ?? null);
+  switch (link.kind) {
+    case "external":
+      return (
+        <a key={key} href={link.href} target="_blank" rel="noopener noreferrer">
+          {children} <span className="ah-sr">{NEW_TAB}</span>
+        </a>
+      );
+    case "brain": {
+      const open = ctx.onBrainLink;
+      return (
+        <a
+          key={key}
+          href={link.route}
+          onClick={(event: MouseEvent<HTMLAnchorElement>) => {
+            if (!open || !plainClick(event)) return;
+            event.preventDefault();
+            open(link);
+          }}
+        >
+          {children}
+        </a>
+      );
+    }
+    case "outside":
+      return (
+        <span key={key} className="ah-md-outside" title={link.title}>
+          {children}
+        </span>
+      );
+    case "text":
+      return (
+        <span key={key} title={link.title}>
+          {children}
+        </span>
+      );
+  }
+}
+
+function refNode(ref: InlineRef, children: ReactNode, key: number): ReactNode {
+  if (ref.href) {
+    return (
+      <a key={key} href={ref.href} target="_blank" rel="noopener noreferrer" title={ref.title}>
+        {children} <span className="ah-sr">{NEW_TAB}</span>
+      </a>
+    );
+  }
+  return (
+    <button key={key} type="button" className="ah-md-ref" title={ref.title} onClick={ref.open}>
+      {children}
+    </button>
+  );
+}
+
+/** A run of text with its refs as links, when the page passes `refs`. */
+function textWithRefs(text: string, key: number, ctx: Ctx): ReactNode {
+  const parts = ctx.refs && !ctx.inLink ? ctx.refs(text) : null;
+  if (!parts) return text;
+  return (
+    <Fragment key={key}>
+      {parts.map((part, at) => (typeof part === "string" ? part : refNode(part, part.label, at)))}
+    </Fragment>
+  );
+}
+
+/** A code span, as a link when all of it is one ref (a path, a ticket, a pull request). */
+function codeWithRef(code: string, key: number, ctx: Ctx): ReactNode {
+  const parts = (ctx.refs && !ctx.inLink ? ctx.refs(code) : null)?.filter((part) => part !== "");
+  const only = parts?.length === 1 ? parts[0] : undefined;
+  if (only === undefined || typeof only === "string") return <code key={key}>{code}</code>;
+  return refNode(only, <code>{code}</code>, key);
+}
+
+function renderInline(nodes: Inline[], ctx: Ctx): ReactNode[] {
+  return nodes.map((node, key) => {
+    switch (node.t) {
+      case "text":
+        return textWithRefs(node.v, key, ctx);
+      case "code":
+        return codeWithRef(node.v, key, ctx);
+      case "strong":
+        return <strong key={key}>{renderInline(node.c, ctx)}</strong>;
+      case "em":
+        return <em key={key}>{renderInline(node.c, ctx)}</em>;
+      case "del":
+        return <del key={key}>{renderInline(node.c, ctx)}</del>;
+      case "link":
+        return linkNode(node.href, renderInline(node.c, { ...ctx, inLink: true }), key, ctx);
+      case "image":
+        return linkNode(node.src, `Image: ${node.alt || node.src}`, key, ctx);
+    }
+  });
+}
+
+function headingId(text: string, ctx: Ctx): string | undefined {
+  return uniqueAnchor(ctx.ids, text) ?? undefined;
+}
+
+/**
+ * The id of a list item: `step-<n>` for an item of a top-level ordered list at column 0 when
+ * steps are on (core's `STEP_LINE`, so the anchors match the structure's steps).
+ */
+function itemId(block: Extract<Block, { t: "list" }>, top: boolean, ctx: Ctx): string | undefined {
+  if (!top || !block.ordered || block.indent !== 0 || ctx.steps === null) return undefined;
+  ctx.steps += 1;
+  return stepAnchor(ctx.steps);
+}
+
+/** A code block's text: highlighted when `highlight` holds and the chunk has loaded, else plain. */
+function CodeText({ lang, text, highlight }: { lang: string; text: string; highlight: boolean }) {
+  const nodes = useHighlight(text, lang, highlight);
+  return (
+    <code data-lang={lang || undefined} className={nodes ? "hljs" : undefined}>
+      {nodes ?? text}
+    </code>
+  );
+}
+
+const HEADINGS = { 1: "h1", 2: "h2", 3: "h3", 4: "h4", 5: "h5", 6: "h6" } as const;
+
+function renderBlock(block: Block, key: number, ctx: Ctx, tight = false, top = false): ReactNode {
+  switch (block.t) {
+    case "heading": {
+      const Tag = HEADINGS[block.level];
+      const nodes = parseInline(block.text, 0);
+      return (
+        <Tag key={key} id={headingId(plainText(nodes), ctx)}>
+          {renderInline(nodes, ctx)}
+        </Tag>
+      );
+    }
+    case "para":
+      return tight ? (
+        renderInline(parseInline(block.text, 0), ctx)
+      ) : (
+        <p key={key}>{renderInline(parseInline(block.text, 0), ctx)}</p>
+      );
+    case "code":
+      // The info string is shown as text only (AC-234.23); Copy copies the code, not the label.
+      return (
+        <div
+          key={key}
+          className="ah-md-code"
+          role="group"
+          aria-label={block.lang ? `${block.lang} code` : "Code"}
+        >
+          <div className="ah-md-code-head">
+            {block.lang && <span className="ah-md-lang">{block.lang}</span>}
+            <CopyButton text={block.text} label="Copy code" className="ah-md-copy" />
+          </div>
+          {/* A block that scrolls sideways must be reachable by the keyboard (axe). */}
+          {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
+          <pre className="ah-md-pre" tabIndex={0}>
+            <CodeText
+              lang={block.lang}
+              text={block.text}
+              highlight={
+                block.lang !== "" && (block.closed || !ctx.streaming) && highlightable(block.text)
+              }
+            />
+          </pre>
+        </div>
+      );
+    case "quote":
+      return (
+        <blockquote key={key}>
+          {block.blocks.map((inner, i) => renderBlock(inner, i, ctx))}
+        </blockquote>
+      );
+    case "list": {
+      const items = block.items.map((item, i) => (
+        <li key={i} id={itemId(block, top, ctx)}>
+          {item.map((inner, j) => renderBlock(inner, j, ctx, j === 0))}
+        </li>
+      ));
+      return block.ordered ? (
+        <ol key={key} start={block.start === 1 ? undefined : block.start}>
+          {items}
+        </ol>
+      ) : (
+        <ul key={key}>{items}</ul>
+      );
+    }
+    case "table":
+      return (
+        // A wide table scrolls in its own keyboard-reachable region, not the page (axe).
+        // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+        <div key={key} className="ah-md-table" role="region" aria-label="Table" tabIndex={0}>
+          <table className="ah-table">
+            <thead>
+              <tr>
+                {block.head.map((cell, i) => (
+                  <th key={i} scope="col" style={{ textAlign: block.align[i] ?? undefined }}>
+                    {renderInline(parseInline(cell, 0), ctx)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {block.rows.map((row, i) => (
+                <tr key={i}>
+                  {row.map((cell, j) => (
+                    <td key={j} style={{ textAlign: block.align[j] ?? undefined }}>
+                      {renderInline(parseInline(cell, 0), ctx)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    case "hr":
+      return <hr key={key} />;
+    case "text":
+      return (
+        <div key={key} className="ah-md-text">
+          {block.text}
+        </div>
+      );
+  }
+}
+
+/** Renders a Markdown note safely; see the module comment for what is and is not rendered. */
+export function Markdown({
+  source,
+  note,
+  onBrainLink,
+  localLink,
+  stepAnchors,
+  streaming = false,
+  className,
+  refs,
+}: MarkdownProps) {
+  if (new TextEncoder().encode(source).length > MAX_MARKDOWN_BYTES) {
+    return (
+      <div className={cx("ah-md", className)}>
+        <p className="ah-small ah-muted">
+          This note is too large to format (over 256 KiB): its start is shown as plain text.
+        </p>
+        <pre className="ah-md-pre">{source.slice(0, MAX_MARKDOWN_BYTES)}</pre>
+      </div>
+    );
+  }
+  const lines = source.replace(/\r\n?/g, "\n").replace(/\t/g, "    ").split("\n");
+  const ctx: Ctx = {
+    note,
+    onBrainLink,
+    localLink,
+    ids: new Map(),
+    steps: stepAnchors ? 0 : null,
+    streaming,
+    refs,
+    inLink: false,
+  };
+  return (
+    <div className={cx("ah-md", className)}>
+      {parseBlocks(lines, { list: 0, quote: 0 }).map((block, key) =>
+        renderBlock(block, key, ctx, false, true),
+      )}
+    </div>
+  );
+}

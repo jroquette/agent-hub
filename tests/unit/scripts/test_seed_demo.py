@@ -1,0 +1,580 @@
+import json
+import re
+import subprocess
+from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
+from pathlib import Path, PurePosixPath
+from typing import Any
+
+import httpx
+import pytest
+
+from agent_hub.core.agent_sessions.agent_session import AgentSessionStatus
+from agent_hub.core.features.feature_evals import eval_coverage, eval_records
+from agent_hub.core.features.feature_record import FeatureRecordFile
+from agent_hub.core.features.feature_reviews import approved_tickets, review_records
+from agent_hub.core.features.feature_status import RecordHead
+from agent_hub.core.features.ticket_planning import ticket_board
+from agent_hub.core.hub_config.local_config import LocalConfig, check_local_document
+from agent_hub.core.scenarios.run_record import fold_records, record_lines
+from agent_hub.core.testing.transcript_lines import TRANSCRIPT_MODEL
+from agent_hub.generator.action_discovery import discover_actions
+from agent_hub.generator.scenario_discovery import discover_scenarios
+from scripts.seed_demo import (
+    ASK_SESSION,
+    BACKFILL_SESSION,
+    CHAT_SESSION,
+    DEMO_BRANCH,
+    DEMO_PROJECT,
+    FEATURE,
+    INBOX_NOTE,
+    ISSUE,
+    LIVE_SESSION,
+    ORDER_SCENARIO,
+    SCENARIO_ENV,
+    SERVICE_SCENARIO,
+    STUCK_SESSION,
+    ComposeTarget,
+    LocalTarget,
+    SeedError,
+    choose_target,
+    demo_chat,
+    demo_envelopes,
+    demo_transcript,
+    hub_files,
+    main,
+    scenario_files,
+    scenario_runs,
+    seed,
+    store_chat,
+)
+
+NOW = datetime(2026, 10, 11, 12, 0, tzinfo=UTC)
+URL = "http://127.0.0.1:7420"
+HUB = PurePosixPath("/data/demo/demo-hub")
+FOLDER = HUB / "brain" / "features" / FEATURE
+# When the demo hub's first background doctor run ended (AGH-608).
+CHECKED_AT = "2026-10-11T12:00:05.000Z"
+
+# What the seed did, in order, across the target and the server: ("write", path) or
+# (method, url path).
+type CallLog = list[tuple[str, str]]
+
+
+class FakeTarget:
+    """Records what the seed writes and the hub commands it runs; answers each command 0."""
+
+    def __init__(
+        self,
+        workdir: str = "/data/demo",
+        *,
+        init_stderr: str = "",
+        git_stderr: str = "",
+        log: CallLog | None = None,
+    ) -> None:
+        self.workdir = PurePosixPath(workdir)
+        self.files: dict[str, str] = {}
+        self.commands: list[list[str]] = []
+        self.python_runs: list[tuple[list[str], str]] = []
+        self.git_runs: list[list[str]] = []
+        self._init_stderr = init_stderr
+        self._git_stderr = git_stderr
+        self._log = [] if log is None else log
+
+    def write(self, path: PurePosixPath, text: str) -> None:
+        self.files[str(path)] = text
+        self._log.append(("write", str(path)))
+
+    def hub(self, arguments: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        self.commands.append(list(arguments))
+        if arguments[0] == "init" and self._init_stderr:
+            return subprocess.CompletedProcess(arguments, 1, "", self._init_stderr)
+        return subprocess.CompletedProcess(arguments, 0, "appended 1, duplicates 0\n", "")
+
+    def python(self, arguments: Sequence[str], stdin: str) -> subprocess.CompletedProcess[str]:
+        self.python_runs.append((list(arguments), stdin))
+        return subprocess.CompletedProcess(arguments, 0, "", "")
+
+    def git(self, arguments: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        self.git_runs.append(list(arguments))
+        code = 1 if self._git_stderr else 0
+        return subprocess.CompletedProcess(arguments, code, "", self._git_stderr)
+
+
+class FakeServer:
+    """The control plane's routes the seed calls, recording the posted bodies.
+
+    ``GET /api/v1/hubs`` lists each posted hub with the next of ``checks`` as its
+    ``checked_at`` (the last one repeats): by default the demo hub is checked.
+    """
+
+    def __init__(
+        self,
+        *,
+        hubs_status: int = 201,
+        checks: Sequence[str | None] = (CHECKED_AT,),
+        log: CallLog | None = None,
+    ) -> None:
+        self.hubs: list[dict[str, Any]] = []
+        self.hub_origins: list[str | None] = []
+        self.envelopes: list[dict[str, Any]] = []
+        self._hubs_status = hubs_status
+        self._checks = list(checks)
+        self._log = [] if log is None else log
+
+    def _listed_hubs(self) -> dict[str, Any]:
+        checked_at = self._checks.pop(0) if len(self._checks) > 1 else self._checks[0]
+        items = [
+            {"id": f"hub-{index}", "path": hub["path"], "project": DEMO_PROJECT}
+            | {"checked_at": checked_at}
+            for index, hub in enumerate(self.hubs)
+        ]
+        return {"items": items, "next_cursor": None, "total_estimate": len(items)}
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        self._log.append((request.method, path))
+        if request.method == "GET" and path == "/api/v1/collector/status":
+            return httpx.Response(200, json={"db_path": "/data/agent-hub.db"})
+        if request.method == "GET" and path == "/api/v1/hubs":
+            return httpx.Response(200, json=self._listed_hubs())
+        if request.method == "POST" and path == "/api/v1/hubs":
+            self.hubs.append(json.loads(request.content))
+            self.hub_origins.append(request.headers.get("origin"))
+            return httpx.Response(self._hubs_status, json={})
+        if request.method == "POST" and path == "/api/v1/events/hooks":
+            self.envelopes.append(json.loads(request.content))
+            return httpx.Response(202, json={})
+        return httpx.Response(404, json={})
+
+
+def test_sends_live_idle_and_waiting_sessions_when_envelopes_built() -> None:
+    envelopes = demo_envelopes(NOW)
+
+    by_session: dict[str, list[datetime]] = {}
+    for envelope in envelopes:
+        sent = datetime.fromisoformat(envelope["sent_at"])
+        by_session.setdefault(envelope["hook"]["session_id"], []).append(sent)
+    decisions = [envelope.get("decision") for envelope in envelopes]
+    suffix = "20261011120000"
+    assert set(by_session) == {
+        f"{LIVE_SESSION}-{suffix}",
+        f"{ASK_SESSION}-{suffix}",
+        f"{STUCK_SESSION}-{suffix}",
+    }
+    assert {"by": "guard", "kind": "deny", "rule": "push-to-main"} in decisions
+    assert {"by": "guard", "kind": "ask", "rule": "ask_before_edit"} in decisions
+    assert all(envelope["project"] == DEMO_PROJECT for envelope in envelopes)
+    # Live and waiting: active in the last 5 minutes; idle: quiet for 5 to 30 minutes.
+    for session, times in by_session.items():
+        oldest = (
+            timedelta(minutes=30) if session.startswith(STUCK_SESSION) else timedelta(minutes=5)
+        )
+        newest = timedelta(minutes=5) if session.startswith(STUCK_SESSION) else timedelta(0)
+        assert all(NOW - oldest < sent <= NOW - newest for sent in times), session
+
+
+def test_runs_feature_skill_subagent_and_recovered_check_when_live_session_built() -> None:
+    live = [
+        envelope["hook"]
+        for envelope in demo_envelopes(NOW)
+        if envelope["hook"]["session_id"].startswith(LIVE_SESSION)
+    ]
+
+    names = [hook["hook_event_name"] for hook in live]
+    tools = [hook.get("tool_name") for hook in live if hook["hook_event_name"] == "PreToolUse"]
+    assert live[1]["prompt"].startswith("/feature ")
+    assert tools[:3] == ["Skill", "Agent", "Grep"]
+    assert {"SubagentStart", "SubagentStop", "PostToolUseFailure"} <= set(names)
+    assert all(hook["cwd"].endswith("/.claude/worktrees/agh-7-demo-feature") for hook in live)
+    [failure] = [hook for hook in live if hook["hook_event_name"] == "PostToolUseFailure"]
+    retried = [hook for hook in live if hook.get("tool_input") == failure["tool_input"]]
+    assert [hook["hook_event_name"] for hook in retried] == [
+        "PreToolUse",
+        "PostToolUseFailure",
+        "PreToolUse",
+        "PostToolUse",
+    ]
+
+
+def test_keeps_priced_usage_and_recent_times_when_transcript_built() -> None:
+    lines = [json.loads(line) for line in demo_transcript(NOW).splitlines()]
+
+    models = {line["message"]["model"] for line in lines if line["type"] == "assistant"}
+    assert models == {TRANSCRIPT_MODEL}
+    assert all(
+        NOW - timedelta(hours=3) < datetime.fromisoformat(line["timestamp"]) for line in lines
+    )
+    tools = [
+        block["name"]
+        for line in lines
+        if line["type"] == "assistant"
+        for block in line["message"]["content"]
+        if block["type"] == "tool_use"
+    ]
+    assert tools == ["Read", "Edit", "Bash", "Write"]
+    assert {line["gitBranch"] for line in lines} == {DEMO_BRANCH}
+    assert lines[0]["message"]["content"].startswith("/feature ")
+
+
+def test_loads_every_screen_input_when_run_against_target(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    target = FakeTarget()
+    server = FakeServer()
+
+    code = main(["--url", URL], target=target, transport=httpx.MockTransport(server))
+
+    assert code == 0
+    hub = "/data/demo/demo-hub"
+    assert target.commands[0][:2] == ["init", DEMO_PROJECT]
+    assert target.commands[0][-2:] == ["--dir", hub]
+    folder = f"{hub}/brain/features/export-button"
+    for name in ("features.json", "spec.md", "plan.md", "eval.md", "evals/agh-7.md"):
+        assert f"{folder}/{name}" in target.files
+    assert f"{folder}/reviews/{ISSUE}.md" in target.files
+    assert target.files[f"{hub}/{INBOX_NOTE}"].startswith("---\nkind: team\n")
+    assert server.hubs == [{"path": hub}]
+    assert server.hub_origins == [URL]
+    assert len(server.envelopes) == len(demo_envelopes(NOW))
+    runs, transcript = target.commands[1], target.commands[2]
+    assert runs[:2] == ["collect", "--runs"]
+    assert runs[2] in target.files
+    assert transcript[:2] == ["collect", "--transcript"]
+    assert transcript[2].startswith(f"/data/demo/transcripts/{BACKFILL_SESSION}-")
+    for command in (runs, transcript):
+        assert command[-4:] == ["--project", DEMO_PROJECT, "--db", "/data/agent-hub.db"]
+    scenario_events = target.commands[3]
+    assert scenario_events == ["collect", "/data/demo/runs/scenario-runs.jsonl"] + [
+        "--db",
+        "/data/agent-hub.db",
+    ]
+    assert scenario_events[1] in target.files
+    assert f"{hub}/scenarios/demo/{ORDER_SCENARIO}.yaml" in target.files
+    assert f"{hub}/hub.local.json" in target.files
+    [(chat_arguments, chat)] = target.python_runs
+    assert chat_arguments[0] == "-c"
+    assert chat_arguments[-1] == "/data/agent-hub.db"
+    assert json.loads(chat)["session"]["id"] == CHAT_SESSION
+    assert f"demo data loaded: open {URL}" in capsys.readouterr().out
+
+
+def test_holds_ended_chat_with_its_digest_when_chat_built() -> None:
+    session, records = demo_chat(NOW)
+
+    kinds = [record.kind for record in records]
+    assert session.id == CHAT_SESSION
+    assert session.project == DEMO_PROJECT
+    assert session.status == AgentSessionStatus.ENDED
+    assert session.ended_at == records[-1].at
+    assert [record.seq for record in records] == list(range(1, len(records) + 1))
+    assert kinds[0] == "user.message"
+    assert {"text", "tool.call", "tool.result", "result", "close"} <= set(kinds)
+    assert session.last_prompt == "Why does the CSV export test fail? Fix it."
+    assert session.last_reply is not None
+    assert session.last_reply.startswith("Fixed:")
+    assert [item.path for item in session.changed_files] == ["/work/demo-api/src/export.py"]
+    assert all(record.text_bytes > 0 for record in records)
+
+
+def test_fails_naming_chat_when_storing_it_fails() -> None:
+    def runner(command: list[str], stdin: str | None) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 1, "", "sqlite3.OperationalError: locked")
+
+    with pytest.raises(SeedError, match="storing the demo chat failed: .*locked"):
+        store_chat(
+            LocalTarget(workdir=PurePosixPath("/x"), runner=runner), db_path="/x/a.db", now=NOW
+        )
+
+
+def _heads(files: dict[PurePosixPath, str], folder: str) -> list[RecordHead]:
+    return [
+        RecordHead(name=path.name, head=text.encode(), problem=None)
+        for path, text in sorted(files.items())
+        if path.parent == FOLDER / folder
+    ]
+
+
+def test_plans_blocked_tickets_with_evals_and_reviews_when_feature_files_built() -> None:
+    files = hub_files(HUB)
+    record = FeatureRecordFile.model_validate_json(files[FOLDER / "features.json"])
+    evals = eval_records(_heads(files, "evals"), files[FOLDER / "eval.md"].encode(), slug=FEATURE)
+    reviews = review_records(_heads(files, "reviews"), slug=FEATURE)
+
+    board = ticket_board(
+        record.tickets, record.acs, None, linear=record.linear, approved=approved_tickets(reviews)
+    )
+    coverage = eval_coverage(evals, record.acs, tickets=record.tickets)
+
+    assert record.linear == (ISSUE,)
+    assert [(t.key, t.id) for t in record.tickets] == [("T1", ISSUE), ("T2", None), ("T3", None)]
+    assert [t.blocked_by for t in record.tickets] == [(), ("T1",), ("T2",)]
+    assert all(ac.ticket is not None for ac in record.acs)
+    assert [row.ref for row in board.rows] == [ISSUE, "T2", "T3"]
+    assert board.plan.layers == ((ISSUE,), ("T2",), ("T3",))
+    assert board.plan.cycles == ()
+    assert [(e.delivery, e.verdict, e.problem) for e in evals] == [
+        ("legacy", "SHIP-WITH-OWNER-STEPS", None),
+        ("agh-7", "SHIP-WITH-OWNER-STEPS", None),
+    ]
+    assert coverage.covered == ("AC-7.1", "AC-7.2", "AC-7.3")
+    assert [(r.ticket, r.outcome, r.problem) for r in reviews] == [(ISSUE, "approved", None)]
+
+
+def test_keeps_going_when_hub_exists_and_is_registered(capsys: pytest.CaptureFixture[str]) -> None:
+    target = FakeTarget(init_stderr="hub.lock: this folder is already a hub; run hub sync\n")
+    server = FakeServer(hubs_status=409)
+
+    code = main(["--url", URL], target=target, transport=httpx.MockTransport(server))
+
+    assert code == 0
+    assert len(target.commands) == 4
+
+
+def test_makes_demo_hub_git_checkout_when_seeded(capsys: pytest.CaptureFixture[str]) -> None:
+    target = FakeTarget()
+    server = FakeServer()
+
+    code = main(["--url", URL], target=target, transport=httpx.MockTransport(server))
+
+    assert code == 0
+    assert target.git_runs == [["init", "-q", "/data/demo/demo-hub"]]
+
+
+def test_fails_naming_git_when_git_init_fails(capsys: pytest.CaptureFixture[str]) -> None:
+    target = FakeTarget(git_stderr="git: not found\n")
+
+    code = main(["--url", URL], target=target, transport=httpx.MockTransport(FakeServer()))
+
+    assert code == 1
+    assert "error: git init failed: git: not found" in capsys.readouterr().err
+
+
+def test_runs_git_init_when_local_target_runs_git() -> None:
+    calls: list[list[str]] = []
+
+    def runner(command: list[str], stdin: str | None) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    result = LocalTarget(workdir=PurePosixPath("/x"), runner=runner).git(
+        ["init", "-q", "/x/demo-hub"]
+    )
+
+    assert result.returncode == 0
+    assert calls == [["git", "init", "-q", "/x/demo-hub"]]
+
+
+def test_fails_naming_git_when_git_not_found() -> None:
+    calls: list[list[str]] = []
+
+    def runner(command: list[str], stdin: str | None) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        raise FileNotFoundError(command[0])
+
+    with pytest.raises(SeedError, match="^git init failed: git not found$"):
+        LocalTarget(workdir=PurePosixPath("/x"), runner=runner).git(["init", "-q", "/x/hub"])
+    assert calls == [["git", "init", "-q", "/x/hub"]]
+
+
+def test_runs_git_in_service_when_compose_target_runs_git() -> None:
+    calls: list[list[str]] = []
+
+    def runner(command: list[str], stdin: str | None) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    ComposeTarget(runner=runner).git(["init", "-q", "/data/demo/demo-hub"])
+
+    assert calls == [
+        ["docker", "compose", "exec", "-T", "agent-hub", "git", "init", "-q", "/data/demo/demo-hub"]
+    ]
+
+
+def test_fails_naming_command_when_hub_command_fails(capsys: pytest.CaptureFixture[str]) -> None:
+    target = FakeTarget(init_stderr="error: something else\n")
+
+    code = main(["--url", URL], target=target, transport=httpx.MockTransport(FakeServer()))
+
+    assert code == 1
+    assert "hub init failed: error: something else" in capsys.readouterr().err
+
+
+def test_fails_naming_url_when_no_server_answers(capsys: pytest.CaptureFixture[str]) -> None:
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=request)
+
+    code = main(["--url", URL], target=FakeTarget(), transport=httpx.MockTransport(refuse))
+
+    assert code == 1
+    assert f"no agent-hub answers at {URL}" in capsys.readouterr().err
+
+
+def test_picks_compose_when_service_running() -> None:
+    assert isinstance(
+        choose_target("auto", compose_running=True, db_path="/data/a.db"), ComposeTarget
+    )
+
+
+def test_picks_local_next_to_database_when_service_not_running(tmp_path: Path) -> None:
+    target = choose_target("auto", compose_running=False, db_path=str(tmp_path / "agent-hub.db"))
+
+    assert isinstance(target, LocalTarget)
+    assert target.workdir == PurePosixPath(tmp_path / "demo")
+
+
+def test_writes_files_under_workdir_when_local_target_writes(tmp_path: Path) -> None:
+    target = LocalTarget(workdir=PurePosixPath(tmp_path / "demo"))
+
+    target.write(target.workdir / "a" / "b.txt", "text")
+
+    assert (tmp_path / "demo" / "a" / "b.txt").read_text(encoding="utf-8") == "text"
+
+
+def test_runs_hub_in_service_when_compose_target_runs_command() -> None:
+    calls: list[tuple[list[str], str | None]] = []
+
+    def runner(command: list[str], stdin: str | None) -> subprocess.CompletedProcess[str]:
+        calls.append((command, stdin))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    target = ComposeTarget(runner=runner)
+    target.write(PurePosixPath("/data/demo/x.jsonl"), "line\n")
+    target.hub(["collect", "--runs", "/data/demo/x.jsonl"])
+    target.python(["-c", "pass", "/data/agent-hub.db"], "{}")
+
+    write, hub, python = calls
+    assert python == (
+        [
+            "docker",
+            "compose",
+            "exec",
+            "-T",
+            "agent-hub",
+            "python",
+            "-c",
+            "pass",
+            "/data/agent-hub.db",
+        ],
+        "{}",
+    )
+    assert write[0][:5] == ["docker", "compose", "exec", "-T", "agent-hub"]
+    assert write[0][-1] == "/data/demo/x.jsonl"
+    assert write[1] == "line\n"
+    assert hub[0] == [
+        "docker",
+        "compose",
+        "exec",
+        "-T",
+        "agent-hub",
+        "hub",
+        "collect",
+        "--runs",
+        "/data/demo/x.jsonl",
+    ]
+
+
+def test_ends_runs_passed_failed_and_one_running_when_scenario_runs_built() -> None:
+    events, records = scenario_runs()
+
+    statuses = {run: fold_records(lines).status for run, lines in records.items()}
+    assert set(statuses.values()) == {"done", "failed", None}
+    scenarios = {fold_records(lines).scenario for lines in records.values()}
+    assert scenarios == {SERVICE_SCENARIO, ORDER_SCENARIO}
+    assert {fold_records(lines).environment for lines in records.values()} == {SCENARIO_ENV}
+    ends = [event for event in events if event["type"] == "run.end"]
+    assert sorted(event["payload"]["status"] for event in ends) == ["done", "failed"]
+    assert {event["workflow"] for event in events} == {
+        f"scenario:{SERVICE_SCENARIO}",
+        f"scenario:{ORDER_SCENARIO}",
+    }
+
+
+def test_loads_scenarios_actions_and_environment_when_scenario_files_written(
+    tmp_path: Path,
+) -> None:
+    hub = tmp_path / "demo-hub"
+    for path, text in scenario_files(PurePosixPath(hub)).items():
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text(text, encoding="utf-8")
+
+    scenarios = discover_scenarios(hub)
+    actions = discover_actions(hub)
+
+    assert scenarios.problems == ()
+    assert [entry.name for entry in scenarios.workflows] == [ORDER_SCENARIO]
+    assert actions.problems == ()
+    assert sorted(entry.document.name for entry in actions.actions) == [
+        "demo-create-order",
+        "demo-order-status",
+    ]
+    local = check_local_document(json.loads((hub / "hub.local.json").read_text("utf-8")))
+    assert isinstance(local, LocalConfig)
+    for run in hub.glob(".agent-runs/workflows/*/records.jsonl"):
+        assert record_lines(run.read_bytes())
+
+
+class FakeClock:
+    """Monotonic seconds that move only when the seed sleeps."""
+
+    def __init__(self) -> None:
+        self.now = 100.0
+        self.slept: list[float] = []
+
+    def __call__(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        assert len(self.slept) < 1000, "the seed never stopped waiting"
+        self.slept.append(seconds)
+        self.now += seconds
+
+
+def test_waits_for_check_after_last_hub_write_when_seeding() -> None:
+    """AGH-608: every demo hub file is written before the hub is registered, so its first
+    background check reads them all; the seed ends once that check is seen."""
+    log: CallLog = []
+    target = FakeTarget(log=log)
+    server = FakeServer(checks=(None, CHECKED_AT), log=log)
+    clock = FakeClock()
+
+    with httpx.Client(base_url=URL, transport=httpx.MockTransport(server)) as client:
+        seed(client, target, db_path="/data/agent-hub.db", now=NOW, clock=clock, sleep=clock.sleep)
+
+    hub_paths = {str(path) for path in hub_files(HUB) | scenario_files(HUB)}
+    registered = log.index(("POST", "/api/v1/hubs"))
+    written = [
+        index for index, (kind, path) in enumerate(log) if kind == "write" and path in hub_paths
+    ]
+    polls = [index for index, call in enumerate(log) if call == ("GET", "/api/v1/hubs")]
+    assert {log[index][1] for index in written} == hub_paths
+    assert max(written) < registered
+    assert polls == [len(log) - 2, len(log) - 1]
+    assert polls[0] > registered
+    assert clock.slept != []
+
+
+def test_fails_naming_hub_when_no_check_follows_last_write() -> None:
+    server = FakeServer(checks=(None,))
+    clock = FakeClock()
+
+    with (
+        httpx.Client(base_url=URL, transport=httpx.MockTransport(server)) as client,
+        pytest.raises(SeedError, match=re.escape(str(HUB))),
+    ):
+        seed(
+            client,
+            FakeTarget(),
+            db_path="/data/agent-hub.db",
+            now=NOW,
+            clock=clock,
+            sleep=clock.sleep,
+            wait_seconds=60,
+        )
+
+    assert 60 <= clock.now - 100.0 <= 61
+
+
+def test_gives_same_scenario_events_when_seeded_again() -> None:
+    # hub collect refuses a known event key with other content: a rerun must repeat them.
+    assert scenario_runs() == scenario_runs()

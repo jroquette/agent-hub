@@ -1,0 +1,141 @@
+[importlinter]
+# The single namespace root; contracts name its subpackages (ADR 0001).
+root_packages =
+    agent_hub
+# Lets contracts name third-party packages (core must not use the adapter libraries).
+include_external_packages = True
+
+[importlinter:contract:core-independent]
+name = core imports nothing internal
+type = forbidden
+source_modules =
+    agent_hub.core
+# Sibling packages, and the adapter libraries (core stays Pydantic-only, ADR 0002; JSON Schema is
+# generator's, behind core's OutputValidator port, and YAML is generator's loader, ADR 0032).
+forbidden_modules =
+    agent_hub.storage
+    agent_hub.collector
+    agent_hub.generator
+    agent_hub.tracker_linear
+    agent_hub.hub_git
+    agent_hub.claude_sessions
+    agent_hub.cli
+    agent_hub.api
+    agent_hub.mcp_server
+    sqlalchemy
+    alembic
+    typer
+    fastapi
+    starlette
+    uvicorn
+    jsonschema
+    referencing
+    yaml
+    mcp
+
+# cli is the composition root (ADR 0008): it may import the adapters to wire them into core use cases, nothing
+# imports it, and the adapters below it stay independent of each other ("|"). api (Phase 2) is a second
+# composition root, one layer down: it wires the adapters for the web server and never imports cli.
+# mcp_server (hub mcp, ADR 0044) sits beside api, independent of it: it wires hub_git for its tools.
+[importlinter:contract:composition-root]
+name = cli is the composition root
+type = layers
+layers =
+    agent_hub.cli
+    agent_hub.api | agent_hub.mcp_server
+    agent_hub.storage | agent_hub.collector | agent_hub.generator | agent_hub.tracker_linear | agent_hub.hub_git | agent_hub.claude_sessions
+
+# `hub web` is the one command that starts the API server; every other cli module stays free of it.
+[importlinter:contract:cli-api-web-command]
+name = cli reaches api only through web_command
+type = forbidden
+source_modules =
+    agent_hub.cli
+forbidden_modules =
+    agent_hub.api
+ignore_imports =
+    agent_hub.cli.web_command -> agent_hub.api
+    agent_hub.cli.web_command -> agent_hub.api.**
+# web_command may import the package or its modules, so one of the two lines can stay unmatched.
+unmatched_ignore_imports_alerting = none
+
+# The Claude Agent SDK stays inside the claude_sessions adapter (ADR 0031): api wires that adapter, and
+# no other package, api and cli included, imports the SDK itself.
+[importlinter:contract:claude-agent-sdk-confined]
+name = only claude_sessions imports the Claude Agent SDK
+type = forbidden
+source_modules =
+    agent_hub.core
+    agent_hub.storage
+    agent_hub.collector
+    agent_hub.generator
+    agent_hub.tracker_linear
+    agent_hub.hub_git
+    agent_hub.cli
+    agent_hub.api
+    agent_hub.mcp_server
+forbidden_modules =
+    claude_agent_sdk
+# api reaches the SDK only through claude_sessions (composition's guarded import): indirect imports pass.
+allow_indirect_imports = True
+
+# Of hub_git, cli wires only the knowledge checkout (GitKnowledgeCheckout, for hub search, hub brain reindex and
+# hub mcp; AGH-393 AM-9): the learning decisions' pull requests stay api's and mcp_server's.
+[importlinter:contract:cli-hub-git-knowledge-checkout]
+name = cli imports only knowledge_checkout of hub_git
+type = forbidden
+source_modules =
+    agent_hub.cli
+forbidden_modules =
+    agent_hub.hub_git
+ignore_imports =
+    agent_hub.cli.** -> agent_hub.hub_git.knowledge_checkout
+# A cli that stops wiring the checkout leaves the line unmatched, and that is fine.
+unmatched_ignore_imports_alerting = none
+# mcp_command reaches the rest of hub_git through mcp_server, and knowledge_checkout its own helpers: indirect
+# imports pass; a direct import of any other hub_git module still breaks it.
+allow_indirect_imports = True
+
+# Driving sessions belongs to hub web (api); every cli module stays free of the session adapter.
+[importlinter:contract:cli-no-claude-sessions]
+name = cli never imports claude_sessions
+type = forbidden
+source_modules =
+    agent_hub.cli
+forbidden_modules =
+    agent_hub.claude_sessions
+# web_command reaches it only through api's composition.
+allow_indirect_imports = True
+
+# `hub mcp` is the one command that starts the MCP server; every other cli module stays free of it.
+[importlinter:contract:cli-mcp-server-mcp-command]
+name = cli reaches mcp_server only through mcp_command
+type = forbidden
+source_modules =
+    agent_hub.cli
+forbidden_modules =
+    agent_hub.mcp_server
+ignore_imports =
+    agent_hub.cli.mcp_command -> agent_hub.mcp_server
+    agent_hub.cli.mcp_command -> agent_hub.mcp_server.**
+# mcp_command may import the package or its modules, so one of the two lines can stay unmatched.
+unmatched_ignore_imports_alerting = none
+
+# The MCP SDK stays inside mcp_server (hub mcp, ADR 0044); no other package imports it itself.
+[importlinter:contract:mcp-sdk-confined]
+name = only mcp_server imports the MCP SDK
+type = forbidden
+source_modules =
+    agent_hub.core
+    agent_hub.storage
+    agent_hub.collector
+    agent_hub.generator
+    agent_hub.tracker_linear
+    agent_hub.hub_git
+    agent_hub.claude_sessions
+    agent_hub.cli
+    agent_hub.api
+forbidden_modules =
+    mcp
+# cli's mcp_command reaches the SDK only through mcp_server: indirect imports pass.
+allow_indirect_imports = True

@@ -1,0 +1,354 @@
+"""What a listed file becomes in the knowledge index (AGH-391, D-kind, D-meta, D-files,
+D-secret, AGH-696): its kind, title, frontmatter, and whether it is indexed (its text redacted
+with r1) or skipped and why."""
+
+import hashlib
+
+import pytest
+
+from agent_hub.core.knowledge.document_rules import (
+    MAX_DOCUMENT_BYTES,
+    MAX_LISTED_FILES,
+    MAX_LISTING_BYTES,
+    MAX_META_CHARS,
+    NOT_UTF8,
+    TOO_LARGE,
+    document_from,
+    document_meta,
+    document_text,
+    is_indexed_name,
+    kind_of,
+)
+from agent_hub.core.knowledge.knowledge_index import (
+    INDEX_VERSION,
+    KINDS,
+    MAX_BACKLINKS,
+    Fingerprint,
+    IndexedDocument,
+    Kind,
+    SkippedFile,
+)
+from agent_hub.core.knowledge.search_query import MAX_RESULTS, MAX_SNIPPET_CHARS
+from agent_hub.core.knowledge.sync_knowledge import sync_knowledge
+from agent_hub.core.testing.knowledge_fakes import FakeKnowledgeCheckout, InMemoryKnowledgeIndex
+
+
+def test_states_bounds_when_constants_read() -> None:
+    assert MAX_DOCUMENT_BYTES == 262_144
+    assert MAX_META_CHARS == 200
+    assert MAX_LISTED_FILES == 20_000
+    assert MAX_LISTING_BYTES == 64 * 1024 * 1024
+    assert INDEX_VERSION == 3
+    assert MAX_RESULTS == 50
+    assert MAX_SNIPPET_CHARS == 160
+    assert len(KINDS) == 10
+    assert (TOO_LARGE, NOT_UTF8) == ("larger than 256 KiB", "not UTF-8")
+
+
+@pytest.mark.parametrize(
+    ("path", "kind"),
+    [
+        ("brain/decisions/0001-worktrees.md", "decision"),
+        ("brain/domain/x.md", "domain"),
+        ("brain/learnings/gotchas/x.md", "learning"),
+        ("brain/playbooks/x.md", "playbook"),
+        ("brain/system/x.md", "system"),
+        ("brain/_inbox/x.md", "inbox"),
+        ("brain/features/x/spec.md", "feature"),
+        ("brain/journal/2026/10/x.md", "journal"),
+        ("demo-api/docs/adr/x.md", "adr"),
+        ("demo-api/docs/guide.md", "doc"),
+        ("demo-api/docs/design/x.md", "doc"),
+    ],
+)
+def test_names_kind_when_path_in_kind_folder(path: str, kind: Kind) -> None:
+    assert kind_of(path) == kind
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["brain/now.md", "brain/index.md", "brain/workflow/x.md", "brain/decisions.md"],
+)
+def test_names_doc_kind_when_brain_file_outside_kind_folders(path: str) -> None:
+    assert kind_of(path) == "doc"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "brain/x.txt",
+        "brain/s.jsonl",
+        "brain/auto/workspace/me.md",
+        "brain/AUTO/x.md",
+        "brain/notes.MD",
+        "brain/.md",
+    ],
+)
+def test_refuses_path_when_not_markdown_or_personal(path: str) -> None:
+    assert not is_indexed_name(path)
+
+
+@pytest.mark.parametrize(
+    "path", ["brain/now.md", "brain/automation/x.md", "demo-api/docs/auto/x.md"]
+)
+def test_accepts_path_when_markdown_outside_personal_folder(path: str) -> None:
+    assert is_indexed_name(path)
+
+
+def test_reads_title_and_frontmatter_when_note_has_both() -> None:
+    text = '---\nstatus: "draft"\nprovenance: agent\nsources: [a, b]\n---\n## Plan\n\nThe body.\n'
+
+    meta = document_meta(text, "plan.md")
+
+    assert (meta.title, meta.status, meta.provenance) == ("Plan", "draft", "agent")
+    assert meta.body == "## Plan\n\nThe body.\n"
+
+
+@pytest.mark.parametrize(
+    ("name", "text", "title"),
+    [
+        ("notes.md", "Just text, no heading.\n", "notes.md"),
+        ("notes.md", "#hashtag is not a heading\n", "notes.md"),
+    ],
+)
+def test_uses_file_name_as_title_when_note_has_no_heading(name: str, text: str, title: str) -> None:
+    meta = document_meta(text, name)
+
+    assert meta.title == title
+    assert (meta.status, meta.provenance) == (None, None)
+    assert meta.body == text
+
+
+@pytest.mark.parametrize(
+    ("name", "text", "title"),
+    [
+        ("x.md", "# Title\n\nText.\n", "Title"),
+        ("x.md", "Intro line.\n\n###   Deep heading ##\n", "Deep heading"),
+    ],
+)
+def test_reads_title_from_first_heading_when_note_has_one(name: str, text: str, title: str) -> None:
+    meta = document_meta(text, name)
+
+    assert meta.title == title
+    assert (meta.status, meta.provenance) == (None, None)
+    assert meta.body == text
+
+
+def test_reads_frontmatter_and_title_when_note_starts_with_byte_order_mark() -> None:
+    meta = document_meta("\ufeff---\nstatus: draft\n---\n# T\n", "bom.md")
+
+    assert (meta.title, meta.status) == ("T", "draft")
+    assert meta.body == "# T\n"
+
+
+def test_reads_title_when_note_starts_with_byte_order_mark_and_heading() -> None:
+    meta = document_meta("\ufeff# Title\n", "bom.md")
+
+    assert meta.title == "Title"
+    assert meta.body == "# Title\n"
+
+
+def test_ignores_frontmatter_when_block_not_at_start() -> None:
+    text = "Intro.\n---\nstatus: draft\nprovenance: agent\n---\n# Late\n"
+
+    meta = document_meta(text, "late.md")
+
+    assert (meta.title, meta.status, meta.provenance) == ("Late", None, None)
+    assert meta.body == text
+
+
+def test_ignores_frontmatter_value_when_not_text() -> None:
+    meta = document_meta("---\nstatus: [a, b]\nprovenance:\n---\nBody.\n", "x.md")
+
+    assert (meta.status, meta.provenance) == (None, None)
+
+
+def test_cuts_title_when_longer_than_limit() -> None:
+    long = "a" * 300
+    text = f"---\nstatus: {long}\nprovenance: {long}\n---\n# {long}\n"
+
+    meta = document_meta(text, "long.md")
+
+    assert meta.title == "a" * MAX_META_CHARS
+    assert meta.status == "a" * MAX_META_CHARS
+    assert meta.provenance == "a" * MAX_META_CHARS
+
+
+def _token() -> str:
+    """A GitHub token shape r1 matches, built from parts so no literal is a token."""
+    return "gh" + "p_" + "A1b2C3d4E5f6G7h8" * 2 + "xyzw"
+
+
+def _fingerprint(data: bytes) -> Fingerprint:
+    return Fingerprint(size=len(data), mtime_ns=1_700_000_000_000_000_000)
+
+
+def test_builds_document_when_file_eligible() -> None:
+    data = b"---\nstatus: accepted\n---\n# Worktrees from origin\n\nUse worktrees.\n"
+    path = "brain/decisions/0001-worktrees.md"
+
+    document = document_from(path, data, _fingerprint(data))
+
+    assert document == IndexedDocument(
+        path=path,
+        kind="decision",
+        title="Worktrees from origin",
+        status="accepted",
+        provenance=None,
+        fingerprint=_fingerprint(data),
+        sha256=hashlib.sha256(data).hexdigest(),
+        body="# Worktrees from origin\n\nUse worktrees.\n",
+    )
+
+
+def test_indexes_redacted_text_when_secret_rule_matches() -> None:
+    data = f"---\nstatus: {_token()}\n---\n# Push with {_token()}\n\nUse {_token()}.\n".encode()
+    path = "brain/_inbox/leak.md"
+
+    document = document_from(path, data, _fingerprint(data))
+
+    marker = "[redacted: github token]"
+    redacted = f"---\nstatus: {marker}\n---\n# Push with {marker}\n\nUse {marker}.\n"
+    assert document == IndexedDocument(
+        path=path,
+        kind="inbox",
+        title=f"Push with {marker}",
+        # The marker reads as a YAML flow list, not a text value: no status.
+        status=None,
+        provenance=None,
+        fingerprint=_fingerprint(data),
+        sha256=hashlib.sha256(redacted.encode()).hexdigest(),
+        body=f"# Push with {marker}\n\nUse {marker}.\n",
+    )
+    assert _token() not in repr(document)
+    assert document_text(path, data, _fingerprint(data)) == redacted
+
+
+# What SPEC.md, API.md and the brain hold today (AGH-696): placeholders and examples the rules
+# match. Each file is indexed; only the matched value becomes a marker, the words around it stay.
+@pytest.mark.parametrize(
+    ("line", "kept"),
+    [
+        (
+            "prints `http://127.0.0.1:<port>/?token=<token>` (a fresh session token)",
+            "prints `http://127.0.0.1:<port>/?token=[redacted: secret]",
+        ),
+        (
+            "(`scheme://user:pass@`) and `secret`",
+            "(`scheme://[redacted: url credentials]@`) and `secret`",
+        ),
+        (
+            "tokenize='porter unicode61 remove_diacritics 2'",
+            "tokenize='[redacted: secret]'",
+        ),
+        ("export GH_TOKEN=<fine-grained token>", "export GH_TOKEN=[redacted: secret]"),
+    ],
+    ids=["spec-session-url", "spec-url-credentials", "fts5-tokenizer", "playbook-gh-token"],
+)
+def test_indexes_doc_when_placeholder_matches_secret_rule(line: str, kept: str) -> None:
+    data = f"# Spec\n\nmarker {line}\n".encode()
+    path = "demo/docs/SPEC.md"
+
+    document = document_from(path, data, _fingerprint(data))
+
+    assert isinstance(document, IndexedDocument)
+    assert document.title == "Spec"
+    assert document.body.startswith(f"# Spec\n\nmarker {kept}")
+    assert "[redacted: " in document.body
+
+
+def test_hashes_file_bytes_when_no_rule_matches() -> None:
+    data = "# Café\n\nNo secret here.\n".encode()
+
+    document = document_from("brain/now.md", data, _fingerprint(data))
+
+    assert isinstance(document, IndexedDocument)
+    assert document.sha256 == hashlib.sha256(data).hexdigest()
+    assert document_text("brain/now.md", data, _fingerprint(data)) == data.decode()
+
+
+def test_skips_file_when_not_utf8() -> None:
+    data = b"marker \xe9"
+
+    skipped = document_from("brain/latin.md", data, _fingerprint(data))
+
+    assert skipped == SkippedFile(
+        path="brain/latin.md", fingerprint=_fingerprint(data), reason=NOT_UTF8
+    )
+
+
+def test_skips_file_when_larger_than_limit() -> None:
+    exact = b"marker " + b"x" * (MAX_DOCUMENT_BYTES - len(b"marker "))
+    over = exact + b"x"
+
+    indexed = document_from("brain/exact.md", exact, _fingerprint(exact))
+    skipped = document_from("brain/big.md", over, _fingerprint(over))
+
+    assert isinstance(indexed, IndexedDocument)
+    assert len(indexed.body) == MAX_DOCUMENT_BYTES
+    assert skipped == SkippedFile(
+        path="brain/big.md", fingerprint=_fingerprint(over), reason=TOO_LARGE
+    )
+
+
+def test_keeps_links_when_hub_folder_given() -> None:
+    data = b"# Cleanup\n\nSee [now](../now.md) and [the guide](https://example.com/guide.md).\n"
+    path = "brain/playbooks/cleanup.md"
+
+    linked = document_from(path, data, _fingerprint(data), hub_folder="demo-hub")
+    unlinked = document_from(path, data, _fingerprint(data))
+
+    assert isinstance(linked, IndexedDocument)
+    assert linked.links == ("brain/now.md",)
+    assert isinstance(unlinked, IndexedDocument)
+    assert unlinked.links == ()
+
+
+def test_keeps_links_when_secret_rule_matches() -> None:
+    data = f"[now](../now.md) before {_token()}\n".encode()
+
+    document = document_from("brain/_inbox/leak.md", data, _fingerprint(data), hub_folder="h")
+
+    assert isinstance(document, IndexedDocument)
+    assert document.links == ("brain/now.md",)
+
+
+def test_keeps_no_links_when_file_skipped() -> None:
+    link = b"[now](../now.md)\n"
+    latin = link + b"caf\xe9\n"
+    big = link + b"x" * MAX_DOCUMENT_BYTES
+
+    skipped = [
+        document_from(path, data, _fingerprint(data), hub_folder="demo-hub")
+        for path, data in (("brain/_inbox/latin.md", latin), ("brain/_inbox/big.md", big))
+    ]
+
+    assert skipped == [
+        SkippedFile(path="brain/_inbox/latin.md", fingerprint=_fingerprint(latin), reason=NOT_UTF8),
+        SkippedFile(path="brain/_inbox/big.md", fingerprint=_fingerprint(big), reason=TOO_LARGE),
+    ]
+    # Where links could leak: files that linked before are skipped by the next sync.
+    hub, paths = "/w/demo-hub", ("brain/_inbox/big.md", "brain/_inbox/latin.md")
+    index, checkout = InMemoryKnowledgeIndex(), FakeKnowledgeCheckout()
+    for path in paths:
+        checkout.write(path, link)
+    sync_knowledge(index, checkout, hub)
+    linked = [item.path for item in index.backlinks(hub, "brain/now.md", limit=MAX_BACKLINKS).items]
+    checkout.write("brain/_inbox/latin.md", latin)
+    checkout.write("brain/_inbox/big.md", big)
+
+    report = sync_knowledge(index, checkout, hub)
+
+    assert linked == list(paths)
+    assert [file.reason for file in report.skipped] == [TOO_LARGE, NOT_UTF8]
+    backlinks = index.backlinks(hub, "brain/now.md", limit=MAX_BACKLINKS)
+    assert (backlinks.items, backlinks.total) == ((), 0)
+
+
+def test_reads_title_in_linear_time_when_heading_holds_long_space_run() -> None:
+    # A backtracking heading pattern takes minutes on this line; the bound is the file's size.
+    line = "# a" + " " * (MAX_DOCUMENT_BYTES - 8) + "b ##"
+
+    meta = document_meta(line, "spaces.md")
+
+    assert meta.title == "a" + " " * (MAX_META_CHARS - 1)

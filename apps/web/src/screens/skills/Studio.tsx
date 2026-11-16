@@ -1,0 +1,1320 @@
+/* The Studio: create a skill, agent or hook with Claude, or change one the hub has. A conversation
+ * on the left (a session `hub web` drives in the hub folder), the draft it writes previewed live on
+ * the right, and Publish once the owner has reviewed it. Nothing is published before that click. */
+import "./Skills.css";
+import "./SkillDetail.css";
+import "./Studio.css";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
+import { useNavigate, useParams } from "react-router";
+
+import {
+  AppLink,
+  Banner,
+  Button,
+  ConfirmDialog,
+  EmptyState,
+  HighlightedCode,
+  Icon,
+  languageOfPath,
+  Markdown,
+  SegmentedControl,
+  Skeleton,
+} from "../../components";
+import type { components } from "../../api/schema";
+import { ApiProblem } from "../../lib/api";
+import { useNow } from "../../lib/clock";
+import { Breadcrumbs } from "../../shell/Breadcrumbs";
+import { useLaunchCookie } from "../../shell/queries";
+import { Redirect } from "../../shell/routeLoading";
+import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "../agent-session/Composer";
+import { DiscussChatView } from "../agent-session/DiscussChat";
+import { unifiedDiff, type PermissionMode } from "../agent-session/model";
+import { DiffText } from "../agent-session/ToolCallCard";
+import { useAgentSessionCommands, useAgentTranscript } from "../agent-session/queries";
+import { sessionControlUnavailable } from "../sessions-list/control";
+import { useAgentCapabilities, useCreateAgentSession, useWorkdirs } from "../sessions-list/queries";
+import {
+  confirmedReply,
+  destination,
+  discardPrompt,
+  draftDir,
+  draftKind,
+  draftWrites,
+  editDestination,
+  editMainFile,
+  editPrompt,
+  hookFileText,
+  newDraftId,
+  projectPluginDir,
+  studioPrompt,
+  summarize,
+  type DraftFile,
+  type DraftSummary,
+  type DraftWrites,
+  type EditBaseline,
+} from "./draft";
+import { KINDS, KIND_HELP, type ItemKind } from "./filters";
+import { FrontmatterTable } from "./FrontmatterTable";
+import {
+  skillRoute,
+  spentBy,
+  usePublishDraft,
+  useSkillCatalog,
+  useSkillDetail,
+  type ItemWriteResult,
+  type SkillRef,
+} from "./queries";
+import { KIND_ICON, KIND_NAME, SkillCard } from "./SkillCard";
+import { forgetDraft, openEditDraft, patchDraft, saveDraft, storedDraft } from "./studioDrafts";
+
+type CatalogItem = components["schemas"]["CatalogItem"];
+type SkillDetail = components["schemas"]["SkillDetail"];
+
+const DEFAULT_MODELS = ["default", "opus", "fable", "sonnet", "haiku"];
+
+/** S9's warning, in Publish's words: shown before a managed item is published over. */
+export const PUBLISH_MANAGED_WARNING =
+  "This file is managed by hub.lock: the next hub sync rewrites it. Publish anyway?";
+/** The Publish dialog's verb once the managed warning shows. */
+const PUBLISH_ANYWAY = "Publish anyway";
+/** What a reopened spent draft says when it stored no detail of its own. */
+const SPENT_DETAIL = "This draft was already published; discard it.";
+
+/** Where an edit or new draft stands once it is past drafting: published (its folder is gone)
+ * or spent (published, its folder kept until discarded). */
+type Settled = "published" | "spent" | null;
+
+/** What a publish the server answered did, for the Studio's status line (AGH-295); `result`
+ * is null when the Studio reopens on a draft published earlier. */
+export function publishedWords(result: ItemWriteResult | null): { title: string; rest: string } {
+  if (result && !result.changed)
+    return {
+      title: "Nothing changed.",
+      rest: "The item already matches the draft: nothing was written, and the draft is removed.",
+    };
+  if (result && !result.versioned) {
+    const why =
+      result.reason === "secret"
+        ? "the file matches a secret rule."
+        : result.reason === "script_only"
+          ? "only the hook's scripts were written, and scripts keep no history."
+          : "the item is past the size its history keeps.";
+    return { title: "Published.", rest: `Not versioned: ${why}` };
+  }
+  return { title: "Published.", rest: "" };
+}
+
+/** The route of a draft in the Studio. */
+export function studioRoute(project: string, draftId: string): string {
+  return `/projects/${encodeURIComponent(project)}/skills/drafts/${encodeURIComponent(draftId)}`;
+}
+
+/** The route that starts a new draft of `kind`. */
+export function newDraftRoute(project: string, kind: ItemKind): string {
+  return `/projects/${encodeURIComponent(project)}/skills/new/${kind}`;
+}
+
+/** What one can ask for, to start from a blank page. */
+const STARTERS: Record<ItemKind, string[]> = {
+  skill: [
+    "A /changelog skill that writes the release notes of the merged PRs since the last tag",
+    "A skill the model loads when a migration is touched, with our Alembic rules",
+    "A /pr-summary skill that drafts a PR body from the branch diff and the ticket",
+  ],
+  agent: [
+    "A read-only security reviewer that checks a diff for secrets and injection",
+    "A test-writer agent that adds missing tests with our factories and fixtures",
+    "A docs agent that keeps docs/ in step with the code it is given",
+  ],
+  hook: [
+    "Block any Bash command that touches production profiles or .env files",
+    "Run the formatter on every file Claude writes or edits",
+    "Log every prompt with a timestamp to .hub/prompts.log at session end",
+  ],
+};
+
+/** What one can ask to change, to start an edit. */
+const EDIT_STARTERS: Record<ItemKind, string[]> = {
+  skill: [
+    "Tighten the description so the model loads it at the right moments, and only then",
+    "Shorten the body: keep the steps, cut what repeats the rest of the hub",
+    "Check the steps against the hub as it is today and fix what drifted",
+  ],
+  agent: [
+    "Tighten the description so the main session delegates to it at the right moments",
+    "Narrow its tools to what its prompt actually needs",
+    "Check the system prompt against the hub as it is today and fix what drifted",
+  ],
+  hook: [
+    "Narrow the matcher so it only runs on the tools it is meant for",
+    "Make the command fail loudly with a clear message instead of silently",
+    "Add a timeout so a slow command cannot hold the session",
+  ],
+};
+
+/** What each kind is made of, shown before anything is written. */
+const ANATOMY: Record<ItemKind, { file: string; what: string }[]> = {
+  skill: [
+    {
+      file: "SKILL.md",
+      what: "Frontmatter (name, description, who invokes it) and the instructions.",
+    },
+    { file: "references/", what: "Longer material the skill links to and loads on demand." },
+    { file: "scripts/", what: "Helpers the instructions run, when a step is mechanical." },
+  ],
+  agent: [
+    {
+      file: "<name>.md",
+      what: "Frontmatter (name, description, tools, model) and its system prompt.",
+    },
+  ],
+  hook: [
+    { file: "hooks.json", what: "The lifecycle event, the tool matcher and the command to run." },
+    { file: "scripts/", what: "The script the command calls, when it is more than one line." },
+  ],
+};
+
+/** The route that starts (or reopens) an edit of an existing item with Claude. */
+export function editDraftRoute(project: string, item: SkillRef): string {
+  return `${skillRoute(project, item)}/edit`;
+}
+
+/** `/projects/:project/skills/:kind/:source/:name/edit`: opens the item's edit draft in the
+ * Studio, the one already open for it when there is one. */
+export function EditDraftScreen() {
+  const { project = "", kind = "", source = "", name = "" } = useParams();
+  const valid = KINDS.find((k) => k === kind);
+  const [draftId] = useState(() => {
+    if (!valid) return null;
+    const target: SkillRef = { kind: valid, source, name };
+    const open = openEditDraft(project, target);
+    if (open) return open.draftId;
+    const id = newDraftId(valid);
+    saveDraft(id, { project, kind: valid }, { target, name });
+    return id;
+  });
+  if (draftId === null) return <Redirect to={`/projects/${encodeURIComponent(project)}/skills`} />;
+  return <Redirect to={studioRoute(project, draftId)} />;
+}
+
+/** `/projects/:project/skills/new/:kind`: issues a draft id and opens it in the Studio. */
+export function NewDraftScreen() {
+  const { project = "", kind = "" } = useParams();
+  const valid = KINDS.find((k) => k === kind);
+  const [draftId] = useState(() => (valid ? newDraftId(valid) : null));
+  if (!valid || draftId === null)
+    return <Redirect to={`/projects/${encodeURIComponent(project)}/skills`} />;
+  return <Redirect to={studioRoute(project, draftId)} />;
+}
+
+/** `/projects/:project/skills/drafts/:draftId`: one draft, its conversation and its preview. */
+export function StudioScreen() {
+  const { project = "", draftId = "" } = useParams();
+  const kind = draftKind(draftId);
+  const [target] = useState(() => storedDraft(draftId)?.target ?? null);
+  const label = target
+    ? `Edit ${target.name}`
+    : kind
+      ? `New ${KIND_NAME[kind].toLowerCase()}`
+      : "Draft";
+  return (
+    <div className="ah-page ah-studio-page">
+      <Breadcrumbs
+        items={[
+          { label: "Portfolio", href: "/" },
+          { label: project, href: `/projects/${encodeURIComponent(project)}` },
+          { label: "Toolkit", href: `/projects/${encodeURIComponent(project)}/skills` },
+          { label },
+        ]}
+      />
+      {kind && target ? (
+        <EditStudio key={draftId} project={project} draftId={draftId} target={target} />
+      ) : kind ? (
+        <Studio key={draftId} project={project} kind={kind} draftId={draftId} edit={null} />
+      ) : (
+        <div className="ah-card">
+          <EmptyState icon="file-x" title="This is not a Studio draft.">
+            Start one from the Toolkit with Create.
+          </EmptyState>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The existing item an edit draft changes, as the hub has it now. */
+interface EditContext {
+  target: SkillRef;
+  sourcePath: string;
+  /** The draft's main file (`SKILL.md`, `<name>.md`, `hooks.json`). */
+  mainPath: string;
+  /** Where Publish writes: the item's folder or file. */
+  to: string;
+  /** For a hook: its own hooks.json text, the draft's starting point. */
+  hookText: string | null;
+  baseline: EditBaseline;
+}
+
+function editContext(target: SkillRef, detail: SkillDetail): EditContext {
+  const hookText = detail.hook ? hookFileText(detail.hook) : null;
+  return {
+    target,
+    sourcePath: detail.source_path,
+    mainPath: editMainFile(target.kind, detail.source_path),
+    to: editDestination(target.kind, detail.source_path),
+    hookText,
+    baseline: {
+      name: detail.name,
+      original: target.kind === "hook" ? hookText : (detail.raw ?? null),
+      managed: detail.origin === "managed",
+    },
+  };
+}
+
+/** A published edit draft's context when its item is gone under the old name: what the draft
+ * stored. Its original text is not known any more, and is only read while drafting. */
+function storedEditContext(target: SkillRef, sourcePath: string): EditContext {
+  return {
+    target,
+    sourcePath,
+    mainPath: editMainFile(target.kind, sourcePath),
+    to: editDestination(target.kind, sourcePath),
+    hookText: null,
+    baseline: { name: target.name, original: null, managed: false },
+  };
+}
+
+/** An edit draft: loads the item as it is now, then opens the Studio on it. */
+function EditStudio({
+  project,
+  draftId,
+  target,
+}: {
+  project: string;
+  draftId: string;
+  target: SkillRef;
+}) {
+  const detail = useSkillDetail(project, target);
+  const loaded = useMemo(
+    () => (detail.data ? editContext(target, detail.data) : null),
+    [detail.data, target],
+  );
+  // Once the draft is published (or spent), the item may be gone under its old name (a rename):
+  // the Studio stays on what it last read, or on what the draft stored, instead of the 404.
+  // Before that, a 404 is a real deletion. A failed read again keeps `data` (TanStack Query),
+  // so the error is checked first.
+  const [kept, setKept] = useState<EditContext | null>(null);
+  if (loaded && loaded !== kept) setKept(loaded);
+  useEffect(() => {
+    // In place, its time and order kept; only when it changed.
+    if (loaded && storedDraft(draftId)?.sourcePath !== loaded.sourcePath)
+      patchDraft(draftId, { sourcePath: loaded.sourcePath });
+  }, [loaded, draftId]);
+  const stored = storedDraft(draftId);
+  const done = stored?.published === true || stored?.spent === true;
+  const fromStore = stored?.sourcePath ? storedEditContext(target, stored.sourcePath) : null;
+  const edit = detail.isError ? (done ? (kept ?? fromStore) : null) : (loaded ?? kept);
+  if (detail.isError && !edit) {
+    return (
+      <div className="ah-card">
+        <EmptyState icon="file-x" title={`${target.name} is not in the catalog any more.`}>
+          {detail.error.detail ?? detail.error.title}
+        </EmptyState>
+      </div>
+    );
+  }
+  if (!edit) return <Skeleton lines={8} />;
+  return <Studio project={project} kind={target.kind} draftId={draftId} edit={edit} />;
+}
+
+interface StudioContext {
+  project: string;
+  kind: ItemKind;
+  draftId: string;
+  items: readonly CatalogItem[];
+  pluginDir: string | null;
+  taken: ReadonlySet<string>;
+  edit: EditContext | null;
+}
+
+function Studio({
+  project,
+  kind,
+  draftId,
+  edit,
+}: {
+  project: string;
+  kind: ItemKind;
+  draftId: string;
+  edit: EditContext | null;
+}) {
+  const catalog = useSkillCatalog(project);
+  const [sessionId, setSessionId] = useState<string | null>(
+    () => storedDraft(draftId)?.sessionId ?? null,
+  );
+  const items = useMemo(() => catalog.data?.items ?? [], [catalog.data]);
+  const context: StudioContext = useMemo(
+    () => ({
+      project,
+      kind,
+      draftId,
+      items,
+      pluginDir: projectPluginDir(items),
+      taken: new Set(items.filter((item) => item.kind === kind).map((item) => item.name)),
+      edit,
+    }),
+    [project, kind, draftId, items, edit],
+  );
+  const { refetch } = catalog;
+  const refresh = useCallback(() => {
+    void refetch();
+  }, [refetch]);
+  const forget = useCallback(() => {
+    saveDraft(draftId, { project, kind }, { sessionId: null });
+    setSessionId(null);
+  }, [draftId, project, kind]);
+
+  if (catalog.isPending) return <Skeleton lines={8} />;
+  return sessionId ? (
+    <StudioSession context={context} sessionId={sessionId} onGone={forget} onRefresh={refresh} />
+  ) : (
+    <StudioStart
+      context={context}
+      onStarted={(id) => {
+        saveDraft(draftId, { project, kind }, { sessionId: id });
+        setSessionId(id);
+      }}
+    />
+  );
+}
+
+function StudioHeader({
+  context,
+  summary,
+  actions,
+  settled = null,
+}: {
+  context: StudioContext;
+  summary: DraftSummary | null;
+  actions?: ReactNode;
+  settled?: Settled;
+}) {
+  const { kind, edit } = context;
+  return (
+    <header className="ah-studio-head">
+      <span className="ah-studio-kind" data-kind={kind}>
+        <Icon name={KIND_ICON[kind]} />
+      </span>
+      <div className="ah-studio-title">
+        <h1 className="ah-h1">
+          {summary?.name || edit ? (
+            <span className="ah-mono">{summary?.name ?? edit?.baseline.name}</span>
+          ) : (
+            `New ${KIND_NAME[kind].toLowerCase()}`
+          )}
+        </h1>
+        <span className="ah-small ah-muted">
+          <span className="ah-studio-chip">
+            <Icon name={settled ? "circle-check" : "file-pen"} size="sm" />
+            {settled ? "Published" : edit ? "Editing" : "Draft"}
+          </span>{" "}
+          {settled === "published" ? (
+            <>
+              Published from <span className="ah-mono">{draftDir(context.draftId)}/</span>, which is
+              removed
+            </>
+          ) : settled === "spent" ? (
+            <>
+              Published from <span className="ah-mono">{draftDir(context.draftId)}/</span>, which
+              stays until you discard it
+            </>
+          ) : edit ? (
+            <>
+              <span className="ah-mono">{edit.sourcePath}</span> in{" "}
+              <span className="ah-mono">{draftDir(context.draftId)}/</span> · the original is
+              unchanged until you click Publish
+            </>
+          ) : (
+            <>
+              in <span className="ah-mono">{draftDir(context.draftId)}/</span> · nothing is
+              published until you click Publish
+            </>
+          )}
+        </span>
+      </div>
+      <span className="ah-grow" />
+      {actions}
+    </header>
+  );
+}
+
+function StudioStart({
+  context,
+  onStarted,
+}: {
+  context: StudioContext;
+  onStarted: (id: string) => void;
+}) {
+  const { project, kind, draftId, pluginDir, taken, edit } = context;
+  const capabilities = useAgentCapabilities();
+  const unavailable = sessionControlUnavailable(capabilities.error, capabilities.data);
+  const canDrive = capabilities.data !== undefined && unavailable === null;
+  const workdirs = useWorkdirs(project, canDrive);
+  const hub = workdirs.data?.items.find((w) => w.kind === "hub") ?? null;
+  const create = useCreateAgentSession();
+  const [mode, setMode] = useState<PermissionMode>("acceptEdits");
+  const [model, setModel] = useState<string | null>(null);
+  const reason = unavailable
+    ? `${unavailable.title}.`
+    : !canDrive
+      ? "Checking whether this machine can drive Claude…"
+      : workdirs.isPending
+        ? "Looking for the hub folder…"
+        : hub === null
+          ? `Project ${project} has no hub folder to work in.`
+          : null;
+  const start = async (text: string) => {
+    if (!hub) return;
+    const session = await create.mutateAsync({
+      project,
+      workdir_id: hub.workdir_id,
+      mode,
+      fork: false,
+      ...(model && model !== "default" ? { model } : {}),
+      prompt: edit
+        ? editPrompt(
+            {
+              project,
+              kind,
+              draftId,
+              name: edit.baseline.name,
+              sourcePath: edit.sourcePath,
+              managed: edit.baseline.managed,
+              hookText: edit.hookText,
+            },
+            text,
+          )
+        : studioPrompt({ project, kind, draftId, pluginDir, taken: [...taken] }, text),
+    });
+    onStarted(session.id);
+  };
+  return (
+    <div className="ah-studio">
+      <StudioHeader context={context} summary={null} />
+      <div className="ah-studio-split">
+        <section className="ah-studio-chat" aria-label="Conversation with Claude">
+          <div className="ah-studio-intro">
+            {edit ? (
+              <>
+                <h2 className="ah-h3">What should change in {edit.baseline.name}?</h2>
+                <p className="ah-small ah-muted">
+                  Claude copies the {KIND_NAME[kind].toLowerCase()} into a draft, changes the copy
+                  and shows the changes on the right as it writes. Ask for more until it reads
+                  right; <span className="ah-mono">{edit.sourcePath}</span> stays as it is until you
+                  publish.
+                </p>
+                {edit.baseline.managed && (
+                  <Banner tone="warning" boxed>
+                    <b>Managed by hub.lock.</b> The next hub sync overwrites a local edit of it;
+                    Claude can tell you where the change should live instead.
+                  </Banner>
+                )}
+              </>
+            ) : (
+              <>
+                <h2 className="ah-h3">Describe the {KIND_NAME[kind].toLowerCase()} you want</h2>
+                <p className="ah-small ah-muted">
+                  {KIND_HELP[kind]} Claude reads the hub's existing items, writes a draft beside
+                  them and shows it on the right as it writes. Ask for changes until it reads right.
+                </p>
+              </>
+            )}
+            {unavailable && (
+              <Banner tone="warning" boxed>
+                <b>{unavailable.title}.</b> {unavailable.detail}
+              </Banner>
+            )}
+            <ul className="ah-studio-starters" aria-label="Ideas to start from">
+              {(edit ? EDIT_STARTERS : STARTERS)[kind].map((starter) => (
+                <li key={starter}>
+                  <button
+                    type="button"
+                    disabled={reason !== null || create.isPending}
+                    onClick={() => void start(starter)}
+                  >
+                    <Icon name="lightbulb" size="sm" />
+                    {starter}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="ah-grow" />
+          <footer className="as-footer">
+            <div className="as-column">
+              <Composer
+                status={null}
+                mode={mode}
+                model={model}
+                models={capabilities.data?.models ?? DEFAULT_MODELS}
+                onSend={start}
+                onInterrupt={() => undefined}
+                onSettings={(change) => {
+                  if (change.mode) setMode(change.mode);
+                  if (change.model) setModel(change.model);
+                  return undefined;
+                }}
+                maxBytes={DEFAULT_MESSAGE_MAX_BYTES}
+                draftId={`studio.${draftId}`}
+                focusOnOpen
+                disabledReason={reason ?? (create.isPending ? "Starting the session…" : null)}
+              />
+              {create.error instanceof ApiProblem && (
+                <p className="ah-small as-error" role="alert">
+                  {create.error.detail ?? create.error.title}
+                </p>
+              )}
+            </div>
+          </footer>
+        </section>
+        <section className="ah-studio-preview" aria-label="Draft preview">
+          {edit ? (
+            <CurrentVersion kind={kind} edit={edit} />
+          ) : (
+            <div className="ah-studio-empty">
+              <Icon name={KIND_ICON[kind]} />
+              <h2 className="ah-h3">The draft appears here as Claude writes it</h2>
+              <p className="ah-small ah-muted">A {KIND_NAME[kind].toLowerCase()} is made of:</p>
+              <ul className="ah-studio-anatomy">
+                {ANATOMY[kind].map((part) => (
+                  <li key={part.file}>
+                    <code>{part.file}</code>
+                    <span>{part.what}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="ah-small ah-muted">
+                Publishes to <span className="ah-mono">{destination(kind, null, pluginDir)}</span>
+              </p>
+            </div>
+          )}
+        </section>
+      </div>
+    </div>
+  );
+}
+
+type Phase = "drafting" | "published" | "discarding" | "discarded";
+
+interface Notice {
+  tone: "error" | "warning";
+  text: string;
+  /** The draft is spent (published, its folder kept): offer to discard it (A20). */
+  discard?: boolean;
+  /** Announced by the page's live region (or static on reopen): its banner is not live too. */
+  quiet?: boolean;
+}
+
+function StudioSession({
+  context,
+  sessionId,
+  onGone,
+  onRefresh,
+}: {
+  context: StudioContext;
+  sessionId: string;
+  onGone: () => void;
+  onRefresh: () => void;
+}) {
+  const { project, kind, draftId, pluginDir, taken, items, edit } = context;
+  const navigate = useNavigate();
+  const transcript = useAgentTranscript(sessionId);
+  const commands = useAgentSessionCommands(sessionId);
+  const { state } = transcript;
+  const writes = useMemo(() => draftWrites(state, draftId), [state, draftId]);
+  const [phase, setPhase] = useState<Phase>(() =>
+    storedDraft(draftId)?.published ? "published" : "drafting",
+  );
+  // Before publishing, a name in the catalog is a clash; after, it is the published item.
+  const summary = useMemo(
+    () =>
+      summarize(
+        kind,
+        writes.files,
+        phase === "drafting" ? taken : new Set(),
+        edit && phase === "drafting" ? edit.baseline : null,
+      ),
+    [kind, writes.files, taken, phase, edit],
+  );
+  const [confirm, setConfirm] = useState<"publish" | "discard" | null>(null);
+  const busy = state.turnOpen || state.sending.length > 0;
+  const to = edit ? edit.to : destination(kind, summary.name, pluginDir);
+
+  useEffect(() => {
+    // Only a new name is saved: opening a draft keeps its time and its place in the list.
+    if (summary.name && storedDraft(draftId)?.name !== summary.name)
+      saveDraft(draftId, { project, kind }, { name: summary.name });
+  }, [summary.name, draftId, project, kind]);
+
+  // The Discard message once accepted, and how far the transcript was when it went.
+  const [request, setRequest] = useState<{ text: string; from: number } | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(() => {
+    const stored = storedDraft(draftId);
+    return stored?.spent
+      ? { tone: "warning", text: stored.spentDetail ?? SPENT_DETAIL, discard: true, quiet: true }
+      : null;
+  });
+  // The server publishes (AGH-295): what it answered, and whether the draft is spent (A20).
+  const publish = usePublishDraft(project, draftId);
+  const publishing = publish.isPending;
+  // Publishing writes into the hub: it needs the launch cookie.
+  const { lock } = useLaunchCookie();
+  const [outcome, setOutcome] = useState<ItemWriteResult | null>(null);
+  const [spent, setSpent] = useState(() => storedDraft(draftId)?.spent === true);
+  // The server may know the item is managed when the detail did not (hub.lock changed since).
+  const [managed, setManaged] = useState(edit?.baseline.managed ?? false);
+  // The server asked for the managed confirmation: said in the dialog, focus on its verb.
+  const [asked, setAsked] = useState(false);
+  // One request per press, also for two presses in one tick (before isPending is read).
+  const sending = useRef(false);
+  // What the page's live region says, and where focus goes once a publish settles.
+  const [announcement, setAnnouncement] = useState("");
+  // Each settle counts, so a second identical failure takes focus again.
+  const [focusOn, setFocusOn] = useState<{ on: "result" | "notice"; n: number } | null>(null);
+  const focus = (on: "result" | "notice") => {
+    setFocusOn((last) => ({ on, n: (last?.n ?? 0) + 1 }));
+  };
+  const resultRef = useRef<HTMLDivElement>(null);
+  const noticeRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (focusOn?.on === "result") resultRef.current?.focus();
+    if (focusOn?.on === "notice") {
+      const node = noticeRef.current;
+      (node?.querySelector<HTMLButtonElement>("button:not(:disabled)") ?? node)?.focus();
+    }
+  }, [focusOn]);
+  useEffect(() => {
+    if (!asked || publishing) return;
+    const buttons = dialogRef.current?.closest('[role="alertdialog"]')?.querySelectorAll("button");
+    [...(buttons ?? [])].find((b) => b.textContent === PUBLISH_ANYWAY)?.focus();
+  }, [asked, publishing]);
+  // A discard settles when its turn has ended, on Claude's confirmation only (adjusted while
+  // rendering).
+  if (request && !busy && phase === "discarding") {
+    const confirmed = confirmedReply(state.entries, request.text, request.from, "DISCARDED");
+    if (confirmed !== null) {
+      setRequest(null);
+      setPhase(confirmed ? "discarded" : "drafting");
+      if (!confirmed) {
+        setNotice({
+          tone: "warning",
+          text: "Claude did not confirm the discard. Read its reply and check the hub folder before you try again.",
+        });
+      }
+    }
+  }
+  // A publish is stored on the draft by usePublishDraft, which still runs once this is gone.
+  useEffect(() => {
+    if (phase === "discarded") {
+      forgetDraft(draftId);
+      void navigate(`/projects/${encodeURIComponent(project)}/skills`);
+    }
+  }, [phase, draftId, navigate, project]);
+
+  const words = publishedWords(outcome);
+  const settled: Settled = phase === "published" ? "published" : spent ? "spent" : null;
+  // Written but not stored: the warning tone, with its own icon (status is icon and label).
+  const unversioned = outcome !== null && outcome.changed && !outcome.versioned;
+  // Where the item is now: the draft folder is gone, and a renamed edit moved elsewhere.
+  const renamed = edit !== null && summary.name !== null && summary.name !== edit.baseline.name;
+  const place = renamed || to.includes("<") ? null : to;
+  const published =
+    phase === "published" && summary.name
+      ? (items.find((item) => item.kind === kind && item.name === summary.name) ?? null)
+      : null;
+
+  const send = (text: string) => transcript.send(text, commands.send);
+  const confirmPublish = () => {
+    if (sending.current || publish.isPending) return;
+    sending.current = true;
+    setNotice(null);
+    setAsked(false);
+    // Said from the page, outside the dialog, which is busy (aria-busy) meanwhile.
+    setAnnouncement("Publishing…");
+    publish.mutate(
+      { target: edit?.target ?? null, confirmManaged: managed },
+      {
+        onSettled: () => {
+          sending.current = false;
+        },
+        onSuccess: (result) => {
+          setConfirm(null);
+          setOutcome(result);
+          setPhase("published");
+          const said = publishedWords(result);
+          setAnnouncement(`Publish finished. ${said.title} ${said.rest}`.trim());
+          focus("result");
+        },
+        onError: (problem) => {
+          // The dialog stays open on S9's warning, and its next confirm sends the flag.
+          if (problem.code === "managed_confirmation_required") {
+            setManaged(true);
+            setAsked(true);
+            // The dialog's own region says it, now that the dialog is not busy.
+            setAnnouncement("");
+            return;
+          }
+          // Anything else keeps the draft and the session. A spent draft (already published,
+          // or published with its folder kept) can only be discarded.
+          setConfirm(null);
+          const isSpent = spentBy(problem);
+          if (isSpent) setSpent(true);
+          const text = problem.detail ?? problem.title;
+          setNotice({
+            tone: problem.published ? "warning" : "error",
+            text,
+            discard: isSpent,
+            quiet: true,
+          });
+          setAnnouncement(`Publish stopped. ${text}`);
+          focus("notice");
+        },
+      },
+    );
+  };
+  const ask = async (next: "discarding", text: string) => {
+    setConfirm(null);
+    setNotice(null);
+    setPhase(next);
+    const from = state.entries.length;
+    try {
+      await send(text);
+      setRequest({ text, from });
+    } catch (cause) {
+      setPhase("drafting");
+      setNotice({
+        tone: "error",
+        text:
+          cause instanceof ApiProblem
+            ? (cause.detail ?? cause.title)
+            : "The message did not reach Claude. Try again.",
+      });
+    }
+  };
+  const actions =
+    phase === "published" ? null : (
+      <div className="ah-row" style={{ gap: 8 }}>
+        <Button
+          variant="ghost"
+          icon="file-x"
+          disabled={busy || publishing || phase !== "drafting"}
+          onClick={() => {
+            setConfirm("discard");
+          }}
+        >
+          Discard
+        </Button>
+        <Button
+          variant="primary"
+          icon="check"
+          disabled={
+            busy ||
+            publishing ||
+            spent ||
+            phase !== "drafting" ||
+            !summary.publishable ||
+            lock !== null
+          }
+          title={
+            lock !== null
+              ? `${lock.title}. ${lock.detail}`
+              : busy
+                ? "Claude is still working"
+                : spent
+                  ? "This draft was already published; discard it"
+                  : !summary.publishable
+                    ? "Nothing to publish yet"
+                    : `Publish to ${to}`
+          }
+          onClick={() => {
+            setAsked(false);
+            setConfirm("publish");
+          }}
+        >
+          {publishing ? "Publishing…" : "Publish"}
+        </Button>
+      </div>
+    );
+
+  return (
+    <div className="ah-studio">
+      {/* Mounted with the session, so what a publish did is announced when it settles. */}
+      <div className="ah-sr" aria-live="polite" aria-atomic="true">
+        {announcement}
+      </div>
+      <StudioHeader context={context} summary={summary} actions={actions} settled={settled} />
+      {notice && (
+        <div
+          ref={noticeRef}
+          tabIndex={-1}
+          className="ah-studio-result"
+          role="region"
+          aria-label="Publish problem"
+        >
+          <Banner
+            tone={notice.tone}
+            live={!notice.quiet}
+            boxed
+            action={
+              notice.discard ? (
+                <Button
+                  size="sm"
+                  icon="file-x"
+                  disabled={busy || phase !== "drafting"}
+                  onClick={() => {
+                    setConfirm("discard");
+                  }}
+                >
+                  Discard draft
+                </Button>
+              ) : undefined
+            }
+          >
+            {notice.text}
+          </Banner>
+        </div>
+      )}
+      {phase === "published" && (
+        <div
+          ref={resultRef}
+          tabIndex={-1}
+          className="ah-studio-result"
+          role="region"
+          aria-label="Publish result"
+        >
+          <Banner
+            tone={unversioned ? "warning" : "info"}
+            live={false}
+            boxed
+            icon={unversioned ? undefined : "circle-check"}
+          >
+            <b>{words.title}</b>
+            {words.rest !== "" && <> {words.rest}</>}{" "}
+            {published ? (
+              <>
+                It is in the catalog now:{" "}
+                <AppLink href={skillRoute(project, published)}>open {published.name}</AppLink>.
+              </>
+            ) : (
+              <>
+                {place ? (
+                  <>
+                    The item is in <span className="ah-mono">{place}</span>;{" "}
+                  </>
+                ) : null}
+                it shows in the catalog once the hub's files are read again.{" "}
+                <Button size="sm" variant="ghost" icon="refresh-cw" onClick={onRefresh}>
+                  Check again
+                </Button>
+              </>
+            )}{" "}
+            Review the change in the hub with git before you commit it.
+          </Banner>
+        </div>
+      )}
+      <div className="ah-studio-split">
+        <section className="ah-studio-chat" aria-label="Conversation with Claude">
+          <DiscussChatView agentSessionId={sessionId} onGone={onGone} transcript={transcript} />
+        </section>
+        <section className="ah-studio-preview" aria-label="Draft preview">
+          <DraftPreview
+            project={project}
+            draftId={draftId}
+            kind={kind}
+            writes={writes}
+            summary={summary}
+            to={to}
+            busy={busy}
+            edit={edit}
+            settled={settled}
+          />
+        </section>
+      </div>
+      {confirm === "publish" && (
+        <ConfirmDialog
+          title={
+            edit
+              ? `Publish the changes to ${edit.baseline.name}?`
+              : `Publish ${summary.name ?? `this ${kind}`}?`
+          }
+          tone="primary"
+          confirmLabel={publishing ? "Publishing…" : managed ? PUBLISH_ANYWAY : "Publish"}
+          pending={publishing}
+          consequences={[
+            edit && kind === "hook" ? (
+              <>
+                The hub replaces this hook in <span className="ah-mono">{edit.sourcePath}</span> and
+                keeps the others.
+              </>
+            ) : (
+              <>
+                The hub writes the draft {edit ? "over" : "to"}{" "}
+                <span className="ah-mono">{to}</span>.
+              </>
+            ),
+            <>
+              A version records it in the item's history, unless the file matches a secret rule or
+              is past the size its history keeps. Then{" "}
+              <span className="ah-mono">{draftDir(draftId)}/</span> is deleted. Claude is not asked
+              to do it.
+            </>,
+            ...(edit
+              ? []
+              : [
+                  kind === "hook"
+                    ? "The hook runs in every session of this hub once it is synced; check its command."
+                    : "Sessions of this hub can use it from their next start.",
+                ]),
+            "Nothing is committed: you review and commit the change in the hub.",
+          ]}
+          onCancel={() => {
+            setConfirm(null);
+          }}
+          onConfirm={confirmPublish}
+        >
+          <div ref={dialogRef}>
+            {managed && (
+              <Banner tone="warning" boxed live={false}>
+                {PUBLISH_MANAGED_WARNING}
+              </Banner>
+            )}
+            {/* Mounted with the dialog, so the server's managed answer is announced. */}
+            <div className="ah-sr" aria-live="polite" aria-atomic="true">
+              {asked && !publishing ? `Confirmation needed. ${PUBLISH_MANAGED_WARNING}` : ""}
+            </div>
+          </div>
+        </ConfirmDialog>
+      )}
+      {confirm === "discard" && (
+        <ConfirmDialog
+          title="Discard this draft?"
+          confirmLabel="Discard"
+          consequences={[
+            <>
+              Claude deletes <span className="ah-mono">{draftDir(draftId)}/</span>; the conversation
+              stays in Sessions.
+            </>,
+          ]}
+          onCancel={() => {
+            setConfirm(null);
+          }}
+          onConfirm={() => {
+            void ask("discarding", discardPrompt(draftId));
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+type PreviewTab = "preview" | "changes" | "files";
+
+function DraftPreview({
+  project,
+  draftId,
+  kind,
+  writes,
+  summary,
+  to,
+  busy,
+  edit,
+  settled,
+}: {
+  project: string;
+  draftId: string;
+  kind: ItemKind;
+  writes: DraftWrites;
+  summary: DraftSummary;
+  to: string;
+  busy: boolean;
+  edit: EditContext | null;
+  settled: Settled;
+}) {
+  const now = useNow(60_000);
+  const [tab, setTab] = useState<PreviewTab>(edit ? "changes" : "preview");
+  const [openPath, setOpenPath] = useState<string | null>(null);
+  const shown = writes.files.find((f) => f.path === openPath) ?? writes.files[0] ?? null;
+
+  if (writes.files.length === 0) {
+    return (
+      <div className="ah-studio-empty">
+        <Icon name={busy ? "loader" : KIND_ICON[kind]} />
+        <h2 className="ah-h3">{busy ? "Claude is reading the hub…" : "No draft yet"}</h2>
+        <p className="ah-small ah-muted">
+          Files appear here as soon as Claude writes them into{" "}
+          <span className="ah-mono">{draftDir(draftId)}/</span>.
+        </p>
+        {writes.outside.length > 0 && <OutsideWarning paths={writes.outside} />}
+      </div>
+    );
+  }
+
+  return (
+    <div className="ah-studio-preview-body">
+      {summary.card && (
+        <div className="ah-studio-block">
+          <h2 className="ah-studio-label">In the catalog</h2>
+          <ul className="ah-skills-grid ah-studio-card">
+            <SkillCard
+              item={summary.card}
+              project={project}
+              now={now}
+              usageDays={30}
+              linked={false}
+            />
+          </ul>
+        </div>
+      )}
+      {/* Once published, the checks and the destination belong to the past: the banner says where it is. */}
+      {settled === null && (
+        <div className="ah-studio-block">
+          <h2 className="ah-studio-label">
+            {edit ? "Before publishing the changes" : "Before publishing"}
+          </h2>
+          <ul className="ah-studio-checks">
+            {summary.checks.map((check) => (
+              <li key={check.id} data-state={check.state}>
+                <Icon
+                  name={
+                    check.state === "ok"
+                      ? "circle-check"
+                      : check.state === "warn"
+                        ? "triangle-alert"
+                        : "circle-dashed"
+                  }
+                  size="sm"
+                />
+                {check.label}
+              </li>
+            ))}
+            <li data-state="info">
+              <Icon name="folder-open" size="sm" />
+              Publishes to <span className="ah-mono">{to}</span>
+            </li>
+          </ul>
+          {writes.outside.length > 0 && <OutsideWarning paths={writes.outside} />}
+        </div>
+      )}
+      {settled !== null && writes.outside.length > 0 && <OutsideWarning paths={writes.outside} />}
+      <div className="ah-studio-block ah-grow">
+        <div className="ah-row ah-wrap" style={{ gap: 8 }}>
+          <SegmentedControl
+            label="Preview view"
+            value={tab}
+            onChange={(id) => {
+              setTab(id === "files" ? "files" : id === "changes" ? "changes" : "preview");
+            }}
+            options={[
+              ...(edit ? [{ id: "changes", label: "Changes", icon: "git-compare" as const }] : []),
+              { id: "preview", label: "Preview", icon: "scan-eye" },
+              { id: "files", label: `Files ${String(writes.files.length)}`, icon: "folder" },
+            ]}
+          />
+          <span className="ah-grow" />
+          {busy && (
+            <span className="ah-small ah-muted ah-studio-live">
+              <Icon name="loader" size="sm" />
+              Updating live
+            </span>
+          )}
+        </div>
+        {tab === "changes" && edit ? (
+          <DraftChanges files={writes.files} edit={edit} settled={settled} />
+        ) : tab === "preview" ? (
+          <RenderedDraft kind={kind} summary={summary} />
+        ) : (
+          <div className="ah-studio-files">
+            <ul className="ah-studio-tree" aria-label="Draft files">
+              {writes.files.map((file) => (
+                <li key={file.path}>
+                  <button
+                    type="button"
+                    aria-current={shown?.path === file.path ? true : undefined}
+                    onClick={() => {
+                      setOpenPath(file.path);
+                    }}
+                  >
+                    <Icon name={file.path.includes("/") ? "file" : "file-text"} size="sm" />
+                    <span className="ah-mono ah-grow">{file.path}</span>
+                    {file.pending && <Icon name="loader" size="sm" />}
+                  </button>
+                </li>
+              ))}
+            </ul>
+            {shown && <FileText file={shown} />}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Each draft file against the item as it is now: the main file as a diff, the others as new. */
+function DraftChanges({
+  files,
+  edit,
+  settled,
+}: {
+  files: readonly DraftFile[];
+  edit: EditContext;
+  settled: Settled;
+}) {
+  return (
+    <div className="ah-stack" style={{ gap: 12 }}>
+      {files.map((file) => {
+        const isMain = file.path === edit.mainPath;
+        const before = isMain ? edit.baseline.original : null;
+        if (isMain && before === null && settled !== null) {
+          return (
+            <p key={file.path} className="ah-small ah-muted">
+              The item's earlier text is in its history; see Files for what was published.
+            </p>
+          );
+        }
+        if (isMain && before === null) {
+          return (
+            <p key={file.path} className="ah-small ah-muted">
+              The hub did not send the current text of{" "}
+              <span className="ah-mono">{edit.sourcePath}</span>; see Files for the draft.
+            </p>
+          );
+        }
+        return (
+          <DiffText
+            key={file.path}
+            diff={unifiedDiff(file.path, before ?? "", file.content)}
+            label={`Changes to ${file.path}`}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+/** Before the first message of an edit: the item as it is now. */
+function CurrentVersion({ kind, edit }: { kind: ItemKind; edit: EditContext }) {
+  const summary = useMemo(
+    () =>
+      summarize(
+        kind,
+        edit.baseline.original === null
+          ? []
+          : [
+              {
+                path: edit.mainPath,
+                content: edit.baseline.original,
+                partial: false,
+                pending: false,
+              },
+            ],
+      ),
+    [kind, edit],
+  );
+  return (
+    <div className="ah-studio-preview-body">
+      <div className="ah-studio-block">
+        <h2 className="ah-studio-label">Current version</h2>
+        <p className="ah-small ah-muted">
+          <span className="ah-mono">{edit.sourcePath}</span> · Claude's changes show here as a diff
+          while it writes.
+        </p>
+      </div>
+      <div className="ah-studio-block ah-grow">
+        {summary.main ? (
+          <RenderedDraft kind={kind} summary={summary} />
+        ) : (
+          <p className="ah-small ah-muted">The hub did not send the current text.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function OutsideWarning({ paths }: { paths: readonly string[] }) {
+  return (
+    <Banner tone="warning" boxed>
+      Claude also wrote outside the draft folder:{" "}
+      {paths.map((p, i) => (
+        <span key={p}>
+          {i > 0 && ", "}
+          <span className="ah-mono">{p}</span>
+        </span>
+      ))}
+      . Those changes are already on disk; review them in the hub.
+    </Banner>
+  );
+}
+
+function FileText({ file }: { file: DraftFile }) {
+  return (
+    <pre className="ah-studio-code" aria-label={file.path}>
+      <HighlightedCode text={file.content} lang={languageOfPath(file.path)} />
+    </pre>
+  );
+}
+
+function RenderedDraft({ kind, summary }: { kind: ItemKind; summary: DraftSummary }) {
+  if (kind === "hook") {
+    if (summary.hooks.length === 0) {
+      return (
+        <p className="ah-small ah-muted">
+          {summary.hooksError ?? "hooks.json declares no hook yet."}
+        </p>
+      );
+    }
+    return (
+      <div className="ah-table-wrap">
+        <table className="ah-table">
+          <caption className="ah-sr">Hooks in the draft</caption>
+          <thead>
+            <tr>
+              <th scope="col">Event</th>
+              <th scope="col">Matcher</th>
+              <th scope="col">Command</th>
+              <th scope="col">Timeout</th>
+            </tr>
+          </thead>
+          <tbody>
+            {summary.hooks.map((hook, i) => (
+              <tr key={i}>
+                <td className="ah-mono">{hook.event}</td>
+                <td className="ah-mono">{hook.matcher ?? "any"}</td>
+                <td>
+                  <code className="ah-studio-command">{hook.command ?? `(${hook.type})`}</code>
+                </td>
+                <td>{hook.timeout === null ? "default" : `${String(hook.timeout)} s`}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+  const document = summary.document;
+  if (!document) return null;
+  return (
+    <div className="ah-stack" style={{ gap: 12 }}>
+      {document.pairs.length > 0 && <FrontmatterTable pairs={document.pairs} />}
+      <article className="ah-card ah-pad ah-studio-body">
+        {document.body.trim() === "" ? (
+          <p className="ah-small ah-muted">The body is empty so far.</p>
+        ) : (
+          <Markdown source={document.body} />
+        )}
+      </article>
+    </div>
+  );
+}

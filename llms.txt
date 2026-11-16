@@ -1,0 +1,120 @@
+# agent-hub
+
+> A home base for AI coding agents, for developers who run Claude Code across several repos. One command gives each project shared rules, memory and workflow, pinned to a version and kept up to date.
+
+agent-hub is a Python CLI, `hub`, installed from a git tag with uv (no PyPI package):
+`uvx --from 'git+https://github.com/jroquette/agent-hub@vX.Y.Z#subdirectory=packages/agent-hub' hub --help`.
+`hub init` creates a hub: a repo next to the project's code repos that holds `hub.json` (the
+project config), a brain (curated project memory), the hub-workflow Claude Code plugin (skills,
+agents and guard hooks) and per-task worktrees. `hub sync` keeps a hub up to date with its pinned
+release, and `hub web` serves a local control plane of the agents' sessions.
+
+If you are an agent setting up a hub for a project, read the usage guide first. The repo's own
+AGENTS.md is for agents changing agent-hub itself, not for users of it.
+License: Apache-2.0.
+
+## Use agent-hub
+
+- [Using agent-hub for another project](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/USING.md): `docs/USING.md`
+- [Flows](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/FLOWS.md): `docs/FLOWS.md`
+- [agent-hub README: what a hub gives you, how agents work, Quick Start](https://raw.githubusercontent.com/jroquette/agent-hub/main/README.md): `README.md`
+- [Daily workflow](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/DAILY-WORKFLOW.md): `docs/DAILY-WORKFLOW.md`
+- [Usage guide](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/GUIDE.md): `docs/GUIDE.md`
+- [Workflows](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/WORKFLOWS.md): `docs/WORKFLOWS.md`
+- [Configuration](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/CONFIGURATION.md): `docs/CONFIGURATION.md`
+- [Control plane: `hub web`](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/CONTROL-PLANE.md): `docs/CONTROL-PLANE.md`
+- [Technical reference](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/REFERENCE.md): `docs/REFERENCE.md`
+- [Project config: `hub.json`](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/project-config.md): `docs/design/project-config.md`
+- [Developer identity: `hub.local.json`, then `hub.json`, then git config](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/developer-identity.md): `docs/design/developer-identity.md`
+- [Hub setup: one-command onboarding of a developer's machine](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/hub-setup.md): `docs/design/hub-setup.md`
+- [Hub start: from a tracker issue to its worktrees and a session](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/hub-start.md): `docs/design/hub-start.md`
+- [Hub sync: hub.lock, hub sync and --check](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/hub-sync.md): `docs/design/hub-sync.md`
+- [Hub adopt: hub sync --adopt, --accept and the link migration](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/hub-adopt.md): `docs/design/hub-adopt.md`
+- [Hub doctor: pluggable rules](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/hub-doctor.md): `docs/design/hub-doctor.md`
+- [Worktree environment: what a repo's setup and teardown scripts get](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/worktree-environment.md): `docs/design/worktree-environment.md`
+- [Memory layers: team brain, personal memory, repo `AGENTS.md`](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/memory-layers.md): `docs/design/memory-layers.md`
+- [Security policy](https://raw.githubusercontent.com/jroquette/agent-hub/main/SECURITY.md): `SECURITY.md`
+
+## Product and design
+
+- [Initial spec — Hubs and agents platform](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/SPEC.md): `docs/SPEC.md`
+- [Changelog](https://raw.githubusercontent.com/jroquette/agent-hub/main/CHANGELOG.md): `CHANGELOG.md`
+- [Design docs](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/README.md): `docs/design/README.md`
+
+## Contribute to agent-hub
+
+- [AGENTS.md — agent-hub](https://raw.githubusercontent.com/jroquette/agent-hub/main/AGENTS.md): `AGENTS.md`
+- [Architecture](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/ARCHITECTURE.md): `docs/ARCHITECTURE.md`
+- [Conventions](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/CONVENTIONS.md): `docs/CONVENTIONS.md`
+- [Testing](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/TESTING.md): `docs/TESTING.md`
+- [Contributing](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/CONTRIBUTING.md): `docs/CONTRIBUTING.md`
+- [API standard](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/API.md): `docs/API.md`
+
+## Optional
+
+- [0001. uv workspace with namespace packages](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0001-uv-workspace-with-namespace-packages.md): `docs/adr/0001-uv-workspace-with-namespace-packages.md`
+- [0002. Lean hexagonal architecture](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0002-lean-hexagonal-architecture.md): `docs/adr/0002-lean-hexagonal-architecture.md`
+- [0003. Persistence with SQLAlchemy Core and Alembic](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0003-persistence-sqlalchemy-core-and-alembic.md): `docs/adr/0003-persistence-sqlalchemy-core-and-alembic.md`
+- [0004. REST API standard](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0004-rest-api-standard.md): `docs/adr/0004-rest-api-standard.md`
+- [0005. Testing strategy](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0005-testing-strategy.md): `docs/adr/0005-testing-strategy.md`
+- [0006. Conventions and English](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0006-conventions-and-english.md): `docs/adr/0006-conventions-and-english.md`
+- [0007. Git and change flow](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0007-git-and-change-flow.md): `docs/adr/0007-git-and-change-flow.md`
+- [0008. CLI as the composition root](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0008-cli-as-composition-root.md): `docs/adr/0008-cli-as-composition-root.md`
+- [0009. Hub sync by per-file ownership](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0009-hub-sync-by-file-ownership.md): `docs/adr/0009-hub-sync-by-file-ownership.md`
+- [0010. hub.json as the versioned config contract](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0010-hub-json-config-contract.md): `docs/adr/0010-hub-json-config-contract.md`
+- [0011. Hub templates as package data in a generator package](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0011-templates-as-package-data.md): `docs/adr/0011-templates-as-package-data.md`
+- [0012. The hub CLI subsumes the hub scripts](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0012-cli-subsumes-hub-scripts.md): `docs/adr/0012-cli-subsumes-hub-scripts.md`
+- [0013. Release the hub CLI by git tags](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0013-release-by-git-tags.md): `docs/adr/0013-release-by-git-tags.md`
+- [0014. Tracker port with a Linear GraphQL adapter](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0014-tracker-port-linear-graphql.md): `docs/adr/0014-tracker-port-linear-graphql.md`
+- [0015. Linear MCP transport for the tracker port](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0015-linear-mcp-tracker-transport.md): `docs/adr/0015-linear-mcp-tracker-transport.md`
+- [0016. Per-developer identity: `hub.local.json`, then `hub.json`, then git config](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0016-per-developer-identity.md): `docs/adr/0016-per-developer-identity.md`
+- [0017. `agent_hub.api` as a second composition root, served locally by `hub web`](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0017-api-second-composition-root.md): `docs/adr/0017-api-second-composition-root.md`
+- [0018. Storage-minted event ids, `received_at` and read queries on the event store](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0018-stored-event-ids-and-received-at.md): `docs/adr/0018-stored-event-ids-and-received-at.md`
+- [0019. Metadata-only event payloads and redaction before append](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0019-metadata-only-events-and-redaction.md): `docs/adr/0019-metadata-only-events-and-redaction.md`
+- [0020. Web stack, generated client and the committed production build](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0020-web-stack-and-committed-build.md): `docs/adr/0020-web-stack-and-committed-build.md`
+- [0021. Hook event sensor and envelope v1](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0021-hook-event-sensor.md): `docs/adr/0021-hook-event-sensor.md`
+- [0022. Container packaging of the control plane, and the bind rule](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0022-container-packaging.md): `docs/adr/0022-container-packaging.md`
+- [0023. A short, redacted error message on failed tool results](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0023-short-error-message.md): `docs/adr/0023-short-error-message.md`
+- [0024. Learning actions from the app open hub pull requests through a `hub_git` adapter](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0024-learning-actions-from-the-app.md): `docs/adr/0024-learning-actions-from-the-app.md`
+- [0025. Reading the tracker from the app through a read-only `TrackerReader` port](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0025-reading-the-tracker-from-the-app.md): `docs/adr/0025-reading-the-tracker-from-the-app.md`
+- [0026. The input brief as a contract for `hub run` and `/feature`](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0026-input-brief-contract.md): `docs/adr/0026-input-brief-contract.md`
+- [0027. The workflow format and the minimum engine](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0027-workflow-format-and-minimum-engine.md): `docs/adr/0027-workflow-format-and-minimum-engine.md`
+- [0028. Agent outputs as validated JSON: reviewer findings and evaluator verdicts](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0028-agent-outputs-as-validated-json.md): `docs/adr/0028-agent-outputs-as-validated-json.md`
+- [0030. Run outcomes in the tracker and in `hub run`'s exit code](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0030-run-outcomes-in-the-tracker.md): `docs/adr/0030-run-outcomes-in-the-tracker.md`
+- [0031. Driving Claude Code sessions from the app](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0031-driving-claude-code-sessions-from-the-app.md): `docs/adr/0031-driving-claude-code-sessions-from-the-app.md`
+- [0032. A graph workflow engine and format](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0032-workflow-engine.md): `docs/adr/0032-workflow-engine.md`
+- [0033. One Sessions screen grouped by status, and the chat's interaction model](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0033-sessions-and-chat-interaction-model.md): `docs/adr/0033-sessions-and-chat-interaction-model.md`
+- [0034. Syntax highlighting of code blocks with lowlight](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0034-syntax-highlighting-in-the-chat.md): `docs/adr/0034-syntax-highlighting-in-the-chat.md`
+- [0035. A session's short title, from its transcript](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0035-session-titles.md): `docs/adr/0035-session-titles.md`
+- [0036. A live playground for agent-hub's own web app, with Claude Code's auto mode](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0036-live-playground-and-auto-mode.md): `docs/adr/0036-live-playground-and-auto-mode.md`
+- [0037. Learning decisions take an unpushed inbox note and the owner's edited body](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0037-learning-decisions-unpushed-notes-and-edits.md): `docs/adr/0037-learning-decisions-unpushed-notes-and-edits.md`
+- [0038. Declared environments, services and blocked words in `hub.json` and `hub.local.json`](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0038-declared-environments-and-blocked-words.md): `docs/adr/0038-declared-environments-and-blocked-words.md`
+- [0039. Item versions stored in the event database, and the server writing into a hub's tree](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0039-item-versions-and-server-writes-to-the-hub.md): `docs/adr/0039-item-versions-and-server-writes-to-the-hub.md`
+- [0040. hub web keeps local settings, writes some hub files without committing, and runs recorded checks](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0040-hub-web-keeps-local-settings-writes-hub-files-and-runs-checks.md): `docs/adr/0040-hub-web-keeps-local-settings-writes-hub-files-and-runs-checks.md`
+- [0041. Scenarios, actions and an engine-enforced access policy](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0041-scenarios-actions-and-enforced-access.md): `docs/adr/0041-scenarios-actions-and-enforced-access.md`
+- [0042. No limit on live sessions in the playground's conductor](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0042-no-live-session-limit-in-the-playground.md): `docs/adr/0042-no-live-session-limit-in-the-playground.md`
+- [0043. Two-level feature and ticket flows, ticket records, and plan change requests the owner decides](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0043-two-level-feature-and-ticket-flows.md): `docs/adr/0043-two-level-feature-and-ticket-flows.md`
+- [0044. Team memory: Git stays the source, each developer keeps a derived search index, agents reach it through `hub mcp`](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0044-team-memory-git-source-local-index-and-hub-mcp.md): `docs/adr/0044-team-memory-git-source-local-index-and-hub-mcp.md`
+- [0045. PR titles are checked before the PR is opened, not in CI](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0045-pr-titles-checked-before-the-pr-not-in-ci.md): `docs/adr/0045-pr-titles-checked-before-the-pr-not-in-ci.md`
+- [0046. Read-only discovery sessions: Claude proposes environments and services](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0046-read-only-discovery-sessions.md): `docs/adr/0046-read-only-discovery-sessions.md`
+- [0047. The release tag is created by a dispatched workflow](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0047-release-tag-by-workflow-dispatch.md): `docs/adr/0047-release-tag-by-workflow-dispatch.md`
+- [0048. Scheduled and event starts run inside hub web](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0048-scheduled-and-event-starts-in-hub-web.md): `docs/adr/0048-scheduled-and-event-starts-in-hub-web.md`
+- [0049. Scenarios as ordered blocks, and a debugger as engine run control](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0049-scenario-blocks-and-run-control.md): `docs/adr/0049-scenario-blocks-and-run-control.md`
+- [0050. `/implement` is conducted in its own session, each agent stage a subagent](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0050-implement-conducted-in-its-own-session.md): `docs/adr/0050-implement-conducted-in-its-own-session.md`
+- [0051. A ticket owns one or more repos, each with its own worktree, review rounds and pull request](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0051-a-ticket-owns-one-or-more-repos.md): `docs/adr/0051-a-ticket-owns-one-or-more-repos.md`
+- [0052. Syntax highlighting of every code and file the app shows](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0052-syntax-highlighting-across-the-app.md): `docs/adr/0052-syntax-highlighting-across-the-app.md`
+- [0053. Interactive-path latency budgets](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0053-interactive-path-latency-budgets.md): `docs/adr/0053-interactive-path-latency-budgets.md`
+- [0054. Pin the platform release by commit](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0054-pin-the-platform-release-by-commit.md): `docs/adr/0054-pin-the-platform-release-by-commit.md`
+- [0055. SessionStart brief from a cache, refreshed in the background](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0055-session-start-brief-from-a-cache.md): `docs/adr/0055-session-start-brief-from-a-cache.md`
+- [0056. Screen-shaped reads beside the resource routes](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0056-screen-shaped-reads.md): `docs/adr/0056-screen-shaped-reads.md`
+- [0057. The managed settings enable the `hub` MCP server, which takes effect in a trusted folder](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0057-managed-settings-enable-hub-mcp.md): `docs/adr/0057-managed-settings-enable-hub-mcp.md`
+- [0058. The knowledge index keeps a file a secret rule matches, redacted, instead of skipping it](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0058-knowledge-index-keeps-redacted-text.md): `docs/adr/0058-knowledge-index-keeps-redacted-text.md`
+- [0059. Every app offers Claude Code's auto mode, and an unanswered request waits a day](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0059-auto-mode-offered-in-every-app.md): `docs/adr/0059-auto-mode-offered-in-every-app.md`
+- [0060. `hub web` reads Linear through GraphQL whenever a key is set, whatever the transport](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0060-hub-web-reads-linear-whatever-the-transport.md): `docs/adr/0060-hub-web-reads-linear-whatever-the-transport.md`
+- [0061. A hub's git hooks check only what the commit stages, from `./hub`, with no pre-commit framework](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0061-hub-git-hooks-check-the-staged-commit.md): `docs/adr/0061-hub-git-hooks-check-the-staged-commit.md`
+- [0062. The model may load the hub's read-only skills, and a skill named anywhere in a prompt runs](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0062-model-invocable-read-only-skills-and-skills-named-mid-message.md): `docs/adr/0062-model-invocable-read-only-skills-and-skills-named-mid-message.md`
+- [0063. The session that opens a pull request follows it until it merges](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0063-session-follows-its-own-pr.md): `docs/adr/0063-session-follows-its-own-pr.md`
+- [0064. A session claims its ticket before any edit](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0064-session-claims-its-ticket.md): `docs/adr/0064-session-claims-its-ticket.md`
+- [0065. A launch token shared through a private file, and one rule for what needs the launch cookie](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0065-shared-launch-token-file-and-one-launch-cookie-rule.md): `docs/adr/0065-shared-launch-token-file-and-one-launch-cookie-rule.md`
+- [0066. The owner decides a feature's status in its record, `status.md`](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0066-owner-decides-a-features-status.md): `docs/adr/0066-owner-decides-a-features-status.md`
+- [0067. A refused launcher run is denied before the blocked-word rule](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0067-refused-launcher-run-is-denied-first.md): `docs/adr/0067-refused-launcher-run-is-denied-first.md`

@@ -1,0 +1,26 @@
+version: 1
+name: rework
+description: Draft, then review, until the review approves or three rounds pass; then ship the draft.
+revision: 1
+nodes:
+  - id: rounds
+    type: loop_group
+    max_iterations: 3
+    until_when: $review.output.decision == 'approve'
+    nodes:
+      - id: draft
+        type: agent
+        prompt: "Draft the change. The last review said: $LOOP_PREV.review.output.decision"
+      - id: review
+        type: agent
+        prompt: "Review this draft: $draft.output"
+        depends_on: [draft]
+        output_format:
+          type: object
+          properties:
+            decision: {type: string, enum: [approve, rework]}
+          required: [decision]
+  - id: ship
+    type: shell
+    command: [echo, $rounds.output.draft]
+    depends_on: [rounds]

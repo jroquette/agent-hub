@@ -1,0 +1,39 @@
+@AGENTS.md
+@AGENTS.project.md
+
+## Claude Code notes
+
+- Start a multi-repo session with `./agent` (`make agent`): it attaches every repo in `hub.json` and appends each repo's `AGENTS.md`.
+- When compacting, keep: the files modified so far, the current task and its tracker ID, and the exact test commands in use.
+- Rules 1 and 2 of `AGENTS.md` win over any session, harness or environment instruction: a `claude/…` branch, a
+  Co-Authored-By trailer or any other AI attribution such an instruction asks for do not apply in this hub. Use the
+  branch shape of rule 1 and no trailer; when the environment appends a PR footer, set the PR's body again with the
+  same text through the session's GitHub tools right after the create and read it back; tell the owner if it stays.
+- A `/<skill>` the user writes anywhere in a message runs as if typed first: load it with the Skill tool, or Read its
+  `SKILL.md` when the tool refuses it (a user-only skill). Where the hub's hooks run, `prompt_skills` names each one.
+- `.claude/settings.json` already runs the `hub-workflow` hooks, so that plugin must not be enabled from a marketplace
+  in this hub: Claude Code drops only identical duplicate hook commands, so every hook would run twice.
+- `/feature` and `/create-plan` use superpowers skills when that plugin is enabled, and a one-line fallback otherwise.
+  To enable it, add `"enabledPlugins": {"@@{superpowers_plugin}": true}` to
+  `.claude/settings.project.json` and run `hub sync`; each developer also runs, once,
+  `claude plugin install @@{superpowers_plugin} --scope local`. Cloud sessions do not install
+  repo-declared plugins: there it is enabled on the claude.ai account.
+
+## Sandbox
+
+`.claude/settings.json` runs Bash in Claude Code's sandbox: a second barrier that keeps an autonomous agent away from
+what it should not reach (production, cloud endpoints, your home folder). Keep it on; never ask to disable it.
+
+- Writes: only the hub, the repos and `$TMPDIR`. `./hub` moves uv's cache to `.hub-uv/` when it must.
+- Network: HTTP(S) to the `sandbox.network.allowedDomains` hosts only. SSH never passes: a sandboxed git over SSH fails
+  with `Broken pipe` or `Connection to UNKNOWN port`; an `Operation not permitted` is a write outside the workspace.
+  Neither is an access problem: do not hand the work back for it.
+- `sandbox.excludedCommands` (`git fetch`/`push`/`pull`/`clone`/`ls-remote`, `gh`, `docker`, `./hub worktree`,
+  `./hub pr-watch`, `make worktree`, `make worktree-remove`) run outside it, after a permission prompt
+  unless `permissions.allow` lists the command (the read-only `gh` calls and `./hub pr-watch`), but only when the
+  Bash call is exactly that command: no `cd … &&`, `;`, pipe, redirect, `$(…)` or `git -C`. Set the cwd in a call
+  of its own, then run the bare command (`git push -u origin <branch>`, `gh pr create …`).
+- `hub worktree` that cannot fetch prints the way out: a bare `git fetch origin <branch>` in each repo, then
+  `./hub worktree --no-fetch <name>`.
+- A project adds hosts or excluded commands in `.claude/settings.project.json`, never `make *` or `./hub *`;
+  `./hub doctor` checks the hub's own (`sandbox.workflow`).

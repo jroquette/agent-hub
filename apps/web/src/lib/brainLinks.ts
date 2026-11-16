@@ -1,0 +1,188 @@
+/**
+ * Where a link inside a brain note goes (AC-201.36): another note of the same brain opens in the app,
+ * an absolute http(s) URL opens in a new tab through `safeHref`, a path leaving `brain/` is plain text
+ * with the tooltip "outside the brain", and anything else is plain text.
+ */
+import { safeHref } from "./safeHref";
+
+export const OUTSIDE_BRAIN = "outside the brain";
+/** Where the knowledge index's brain notes live; any other indexed path is a repo's doc. */
+export const BRAIN_PREFIX = "brain/";
+const NOT_A_LINK = "Link not shown: only http(s) links and brain notes are opened";
+const NOT_A_NOTE = "Link not shown: only Markdown notes of the brain open in the app";
+const NO_PLACE = "Link not shown: this note's place in the brain is unknown";
+
+/**
+ * Why a `brain/` path the note route refuses (`isServedNote`) is listed but not opened (AM-8): the
+ * Brain's knowledge rows and the learning trail's Note step say it in their tooltip.
+ */
+export const UNSERVED_NOTE_REASON =
+  "The app does not open notes at this path (not a .md file, a hidden name, under auto/, too long or deep, or with an empty part or characters the app does not serve)";
+/** The words a row or step that is not opened adds, the same for repo docs and refused notes. */
+export const NOT_OPENED_HERE = "not opened here";
+
+/** The server's note bounds (S8): longer or deeper paths are never served, so never linked. */
+const MAX_PATH_CHARS = 512;
+const MAX_SEGMENTS = 16;
+// eslint-disable-next-line no-control-regex -- control characters are exactly what is rejected
+const CONTROL_OR_BACKSLASH = /[\u0000-\u001f\u007f\\]/;
+const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+
+export type BrainLink =
+  | { kind: "brain"; path: string; anchor: string | null; route: string }
+  | { kind: "external"; href: string }
+  | { kind: "outside"; title: string }
+  | { kind: "text"; title: string };
+
+/** The in-app route of a brain note: `/projects/<project>/brain/<path>[#anchor]`, each part encoded. */
+export function brainRoute(project: string, path: string, anchor: string | null = null): string {
+  const segments = path.split("/").map(encodeURIComponent).join("/");
+  const hash = anchor ? `#${encodeURIComponent(anchor)}` : "";
+  return `/projects/${encodeURIComponent(project)}/brain/${segments}${hash}`;
+}
+
+/**
+ * `route` with the Brain search's query kept as `?q=` before any `#anchor` (AGH-393: every link
+ * inside the Brain keeps the search open); unchanged without a query.
+ */
+export function withBrainQuery(route: string, query: string | null): string {
+  if (!query) return route;
+  const search = `?${new URLSearchParams({ q: query }).toString()}`;
+  const hash = route.indexOf("#");
+  return hash < 0 ? route + search : route.slice(0, hash) + search + route.slice(hash);
+}
+
+/**
+ * Whether the note route serves `path` (under `brain/`, without the prefix): at most 16 segments
+ * and 512 characters, `.md`, not under `auto/`, no empty or hidden segment (AM-8).
+ */
+export function isServedNote(path: string): boolean {
+  const segments = path.split("/");
+  return (
+    segments.length <= MAX_SEGMENTS &&
+    path.length <= MAX_PATH_CHARS &&
+    path.endsWith(".md") &&
+    !CONTROL_OR_BACKSLASH.test(path) &&
+    segments[0]?.toLowerCase() !== "auto" &&
+    !segments.some((segment) => segment === "" || segment.startsWith("."))
+  );
+}
+
+/** A GitHub-style heading slug: lower case, letters, digits, `-` and `_`, spaces as `-`. */
+export function headingSlug(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s_-]/gu, "")
+    .replace(/\s/g, "-");
+}
+
+/** The element id of a heading or anchor: prefixed so a note's ids cannot clobber page globals. */
+export function anchorId(fragment: string): string {
+  return `md-${headingSlug(fragment)}`;
+}
+
+/**
+ * The unique element id of a heading with this text: the first `md-<slug>`, then `md-<slug>-1`, …
+ * (`ids` counts the slugs already given). Null when the text has no slug; then nothing is counted.
+ * Markdown names its headings with it, and `tocAnchors` names a table of contents the same way.
+ */
+export function uniqueAnchor(ids: Map<string, number>, text: string): string | null {
+  const slug = headingSlug(text);
+  if (!slug) return null;
+  const seen = ids.get(slug) ?? 0;
+  ids.set(slug, seen + 1);
+  return anchorId(seen === 0 ? slug : `${slug}-${String(seen)}`);
+}
+
+/** A table of contents entry and the id of its heading in the rendered body (or null). */
+export interface TocAnchor {
+  level: number;
+  text: string;
+  anchor: string | null;
+}
+
+/**
+ * The anchors of a body's headings, in order, as Markdown names them (P5): `plain` turns a heading's
+ * source text into the text Markdown shows (inline marks removed) before it is slugged.
+ */
+export function tocAnchors(
+  toc: readonly { level: number; text: string }[],
+  plain: (text: string) => string = (text) => text,
+): TocAnchor[] {
+  const ids = new Map<string, number>();
+  return toc.map(({ level, text }) => ({ level, text, anchor: uniqueAnchor(ids, plain(text)) }));
+}
+
+/** The element id of the n-th numbered step of a skill body (1-based), `#step-<n>` (P5). */
+export function stepAnchor(index: number): string {
+  return `step-${String(index)}`;
+}
+
+/** True for a link relative to the document (`a.md`, `./b/c.md#x`, `#x`): no scheme, no root. */
+export function isRelativeHref(href: string): boolean {
+  return (
+    href !== "" &&
+    href === href.trim() &&
+    !CONTROL_OR_BACKSLASH.test(href) &&
+    !SCHEME.test(href) &&
+    !href.startsWith("/")
+  );
+}
+
+function decode(value: string): string | null {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+}
+
+/** Resolve `href` written in the note at brain-relative `notePath` of `project`. */
+export function resolveBrainLink(
+  href: string,
+  notePath: string | null,
+  project: string | null,
+): BrainLink {
+  if (href === "" || href !== href.trim() || CONTROL_OR_BACKSLASH.test(href)) {
+    return { kind: "text", title: NOT_A_LINK };
+  }
+  if (/^https?:\/\//i.test(href)) {
+    const safe = safeHref(href);
+    return safe === null ? { kind: "text", title: NOT_A_LINK } : { kind: "external", href: safe };
+  }
+  if (SCHEME.test(href) || href.startsWith("//") || href.includes("?")) {
+    return { kind: "text", title: NOT_A_LINK };
+  }
+  if (href.startsWith("/")) return { kind: "outside", title: OUTSIDE_BRAIN };
+  if (notePath === null || project === null) return { kind: "text", title: NO_PLACE };
+
+  const hashAt = href.indexOf("#");
+  const rawPath = hashAt === -1 ? href : href.slice(0, hashAt);
+  const rawAnchor = hashAt === -1 ? "" : href.slice(hashAt + 1);
+  const path = decode(rawPath);
+  const anchor = decode(rawAnchor);
+  if (path === null || anchor === null) return { kind: "text", title: NOT_A_LINK };
+
+  const resolved = path === "" ? notePath.split("/") : notePath.split("/").slice(0, -1);
+  if (path !== "") {
+    for (const segment of path.split("/")) {
+      if (segment === "" || segment === ".") continue;
+      if (segment === "..") {
+        if (resolved.length === 0) return { kind: "outside", title: OUTSIDE_BRAIN };
+        resolved.pop();
+      } else resolved.push(segment);
+    }
+  }
+  const full = resolved.join("/");
+  if (resolved.length === 0 || !isServedNote(full)) {
+    return { kind: "text", title: NOT_A_NOTE };
+  }
+  const fragment = anchor === "" ? null : anchor;
+  return {
+    kind: "brain",
+    path: full,
+    anchor: fragment,
+    route: brainRoute(project, full, fragment),
+  };
+}

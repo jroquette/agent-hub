@@ -1,0 +1,10 @@
+# No run in the window: no agent, no gate; the retro ends with nothing to change.
+workflow: retro
+inputs: {since: 7}
+stubs:
+  metrics:
+    output: {days: 7, since: "YYYY-MM-08", until: "YYYY-MM-15", runs: 0, nothing: true, metrics: {}, idle: {skills: [], agents: []}, sources: [{name: runs, status: ok, reason: ""}], left_out: [], summary: "No run in the window: nothing to change."}
+  drafts:
+    output: {outcome: nothing to change, kept: 0, path: "", summary: "Nothing to change: no run in the window; no draft written."}
+expect: {status: done, outcome: nothing to change}
+reached: [metrics, drafts]

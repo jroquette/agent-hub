@@ -1,0 +1,1318 @@
+"""The engine: layers, trigger rules, skip causes, retries, outputs, resume, status, outcome."""
+
+import dataclasses
+import threading
+from collections.abc import Callable, Mapping
+from datetime import timedelta
+from typing import Any
+
+import pytest
+
+import agent_hub.core.scenarios.investigation as investigation_module
+import agent_hub.core.testing.workflow_fakes as workflow_fakes
+import agent_hub.core.workflows.nodes as workflow_nodes
+from agent_hub.core.json_form import JsonValue
+from agent_hub.core.testing.workflow_fakes import (
+    AnswerBook,
+    FakeClock,
+    KeysOutputs,
+    ListRecorder,
+    ScriptedRunner,
+    a_plan,
+)
+from agent_hub.core.workflows import engine as engine_module
+from agent_hub.core.workflows import plan as plan_module
+from agent_hub.core.workflows.engine import (
+    MAX_PARALLEL,
+    EnginePorts,
+    WorkflowEngineError,
+    run_workflow,
+)
+from agent_hub.core.workflows.failures import NodeFailedError, RetryRecord
+from agent_hub.core.workflows.gates import GateAnswer
+from agent_hub.core.workflows.plan import WorkflowPlan
+from agent_hub.core.workflows.ports import CheckoutProbe, NodeCall, NodeReply
+from agent_hub.core.workflows.run_state import RunReport, RunState
+from agent_hub.core.workflows.substitution import NodeResult
+
+INPUTS = {"mode": {"default": "off"}, "issue": {}}
+# Skips its node with cause ``condition``: ``mode`` is ``off`` unless a test gives it.
+NEVER = "$INPUTS.mode == 'on'"
+
+
+def plan_of(*nodes: dict[str, object], **top: object) -> WorkflowPlan:
+    return a_plan(*nodes, **({"inputs": INPUTS} | top))
+
+
+def shell(node_id: str, *depends_on: str, **keys: object) -> dict[str, object]:
+    return {
+        "id": node_id,
+        "type": "shell",
+        "command": ["true"],
+        "depends_on": list(depends_on),
+    } | keys
+
+
+def agent(node_id: str, *depends_on: str, **keys: object) -> dict[str, object]:
+    node = {"id": node_id, "type": "agent", "prompt": "Go.", "depends_on": list(depends_on)}
+    return node | keys
+
+
+OBJECT = {
+    "type": "object",
+    "properties": {"ok": {"type": "boolean"}, "delivery": {"type": "string", "enum": ["a", "b"]}},
+    "required": ["ok", "delivery"],
+}
+
+
+class Run:
+    """One run of ``plan`` over the fakes, and what it recorded."""
+
+    def __init__(
+        self,
+        plan: WorkflowPlan,
+        runner: ScriptedRunner | None = None,
+        *,
+        inputs: Mapping[str, JsonValue] | None = None,
+        prior: RunState | None = None,
+        checkout: CheckoutProbe | None = None,
+        max_parallel: int = MAX_PARALLEL,
+        gates: AnswerBook | None = None,
+    ) -> None:
+        self.runner = runner or ScriptedRunner()
+        self.recorder = ListRecorder()
+        self.clock = FakeClock()
+        ports = EnginePorts(
+            self.runner,
+            self.recorder,
+            self.clock,
+            KeysOutputs(),
+            lambda: 0.5,
+            checkout,
+            max_parallel,
+            gates=gates or AnswerBook(),
+        )
+        self.report: RunReport = run_workflow(plan, inputs or {}, ports, prior=prior)
+
+    def status_of(self, node: str) -> tuple[str, str | None, str | None, str | None]:
+        end = self.recorder.end_of(node)
+        return end.status, end.skip_cause, end.origin, end.failure_kind
+
+
+def fails(kind: str = "exec_failed") -> NodeFailedError:
+    return NodeFailedError(kind, "boom")  # type: ignore[arg-type]
+
+
+def test_runs_layers_in_order_when_graph_has_layers() -> None:
+    plan = plan_of(shell("c", "a", "b"), shell("a"), shell("b"), shell("d", "c"))
+
+    run = Run(plan)
+
+    # a and b share a layer and run concurrently; their records keep declaration order.
+    assert sorted(run.runner.ran()[:2]) == ["a", "b"]
+    assert run.runner.ran()[2:] == ["c", "d"]
+    assert [start.node for start in run.recorder.starts] == ["a", "b", "c", "d"]
+    assert run.report.status == "done"
+
+
+@pytest.mark.parametrize(
+    ("rule", "upstream", "expected"),
+    [
+        ("all_success", ["ok", "ok"], "ok"),
+        ("all_success", ["ok", "skip"], "skipped"),
+        ("all_success", ["ok", "fail"], "skipped"),
+        ("one_success", ["fail", "ok"], "ok"),
+        ("one_success", ["fail", "skip"], "skipped"),
+        ("none_failed_min_one_success", ["ok", "skip"], "ok"),
+        ("none_failed_min_one_success", ["ok", "fail"], "skipped"),
+        ("none_failed_min_one_success", ["skip", "skip"], "skipped"),
+        ("all_done", ["fail", "skip"], "ok"),
+    ],
+)
+def test_applies_trigger_rule_when_upstream_ends_vary(
+    rule: str, upstream: list[str], expected: str
+) -> None:
+    nodes = []
+    replies: dict[str, list[object]] = {}
+    for index, end in enumerate(upstream):
+        node_id = f"u{index}"
+        nodes.append(shell(node_id, when=NEVER) if end == "skip" else shell(node_id))
+        if end == "fail":
+            replies[node_id] = [fails()]
+    nodes.append(shell("join", "u0", "u1", trigger_rule=rule))
+
+    run = Run(plan_of(*nodes), ScriptedRunner(replies))  # type: ignore[arg-type]
+
+    assert run.status_of("join")[0] == expected
+
+
+def test_carries_the_failed_origin_down_the_chain_when_a_node_fails() -> None:
+    plan = plan_of(
+        shell("a"), shell("b", "a"), shell("c", "b"), shell("d", "c", trigger_rule="one_success")
+    )
+
+    run = Run(plan, ScriptedRunner({"a": [fails()]}))
+
+    assert run.status_of("b") == ("skipped", "upstream_failed", "a", None)
+    assert run.status_of("c") == ("skipped", "upstream_failed", "a", None)
+    assert run.status_of("d") == ("skipped", "upstream_failed", "a", None)
+
+
+def test_carries_the_skipped_origin_down_the_chain_when_a_condition_skips() -> None:
+    plan = plan_of(shell("a", when=NEVER), shell("b", "a"), shell("c", "b"))
+
+    run = Run(plan)
+
+    assert run.status_of("a") == ("skipped", "condition", None, None)
+    assert run.status_of("b") == ("skipped", "upstream_skipped", "a", None)
+    assert run.status_of("c") == ("skipped", "upstream_skipped", "a", None)
+
+
+def test_prefers_upstream_failed_when_upstreams_failed_and_skipped() -> None:
+    plan = plan_of(shell("s", when=NEVER), shell("f"), shell("j", "s", "f"))
+
+    run = Run(plan, ScriptedRunner({"f": [fails()]}))
+
+    assert run.status_of("j") == ("skipped", "upstream_failed", "f", None)
+
+
+def test_runs_later_layers_when_a_node_fails() -> None:
+    plan = plan_of(shell("a"), shell("b"), shell("c", "b"))
+
+    run = Run(plan, ScriptedRunner({"a": [fails()]}))
+
+    assert sorted(run.runner.ran()[:2]) == ["a", "b"]
+    assert run.runner.ran()[2] == "c"
+    assert run.report.status == "failed"
+    assert run.report.reason == "a"
+
+
+def test_skips_with_a_cause_when_condition_is_false_or_does_not_parse() -> None:
+    plan = plan_of(shell("a", when="$INPUTS.mode == 'x'"), shell("b", when="$INPUTS.mode < 3"))
+
+    run = Run(plan, inputs={"mode": "y"})
+
+    assert run.status_of("a") == ("skipped", "condition", None, None)
+    assert run.status_of("b") == ("skipped", "condition_parse_error", None, None)
+    assert run.recorder.starts == []
+    assert run.report.status == "done"
+
+
+def test_fails_config_when_condition_reads_a_failed_producer() -> None:
+    plan = plan_of(shell("a"), shell("b", "a", trigger_rule="all_done", when="$a.output == 'x'"))
+
+    run = Run(plan, ScriptedRunner({"a": [fails()]}))
+
+    assert run.status_of("b") == ("failed", None, None, "config")
+    assert run.runner.ran() == ["a"]
+    assert [(start.node, start.attempt) for start in run.recorder.starts] == [("a", 1), ("b", 1)]
+
+
+def test_renders_references_when_a_node_reads_upstream_outputs() -> None:
+    plan = plan_of(
+        agent("plan", output_format=OBJECT),
+        shell("use", "plan", command=["echo", "$plan.output.delivery", "$INPUTS.issue"]),
+    )
+    runner = ScriptedRunner({"plan": ['{"ok": true, "delivery": "b"}']})
+
+    run = Run(plan, runner, inputs={"issue": "AGH-1"})
+
+    assert runner.calls[1].argv == ("echo", "b", "AGH-1")
+    assert run.recorder.end_of("plan").output == {"ok": True, "delivery": "b"}
+
+
+def test_retries_and_records_each_retry_when_failure_is_transient() -> None:
+    plan = plan_of(shell("a", retry={"max_attempts": 2, "delay": "3s"}))
+    runner = ScriptedRunner({"a": [fails("transient"), fails("timeout"), "done"]})
+
+    run = Run(plan, runner)
+
+    assert [(end.attempt, end.status, end.failure_kind) for end in run.recorder.ends] == [
+        (1, "failed", "transient"),
+        (2, "failed", "timeout"),
+        (3, "ok", None),
+    ]
+    assert run.recorder.retries == [
+        ("a", RetryRecord(1, "transient", timedelta(seconds=3))),
+        ("a", RetryRecord(2, "timeout", timedelta(seconds=6))),
+    ]
+    assert run.clock.sleeps == [timedelta(seconds=3), timedelta(seconds=6)]
+    assert run.report.status == "done"
+
+
+@pytest.mark.parametrize("kind", ["config", "auth", "cancelled", "fatal", "exec_failed"])
+def test_never_retries_when_kind_is_not_retried_by_default(kind: str) -> None:
+    run = Run(plan_of(shell("a")), ScriptedRunner({"a": [fails(kind), "late"]}))
+
+    assert run.runner.ran() == ["a"]
+    assert run.recorder.retries == []
+    assert run.status_of("a") == ("failed", None, None, kind)
+
+
+def test_fails_output_contract_without_retry_when_stdout_is_not_json() -> None:
+    plan = plan_of(shell("a", output_format=OBJECT, retry={"on_error": "all"}))
+
+    run = Run(plan, ScriptedRunner({"a": ["not json", "{}"]}))
+
+    assert run.status_of("a") == ("failed", None, None, "output_contract")
+    assert run.runner.ran() == ["a"]
+
+
+def test_retries_output_contract_when_agent_opts_in() -> None:
+    plan = plan_of(agent("a", output_format=OBJECT, retry={"on_error": "all"}))
+
+    run = Run(plan, ScriptedRunner({"a": ['{"ok": true}', '{"ok": true, "delivery": "a"}']}))
+
+    assert [end.failure_kind for end in run.recorder.ends] == ["output_contract", None]
+
+
+def test_refuses_a_non_finite_number_when_output_is_parsed() -> None:
+    plan = plan_of(agent("a", output_format={"type": "number"}))
+
+    run = Run(plan, ScriptedRunner({"a": ["NaN"]}))
+
+    assert run.status_of("a") == ("failed", None, None, "output_contract")
+
+
+def test_passes_the_resumed_session_when_context_names_an_upstream_agent() -> None:
+    plan = plan_of(agent("a"), agent("b", "a", context={"resume": "a"}), agent("c", "b"))
+    runner = ScriptedRunner({"a": [NodeReply("x", session="s-a")]})
+
+    Run(plan, runner)
+
+    assert [call.resume_session for call in runner.calls] == [None, "s-a", None]
+
+
+def test_reuses_completed_nodes_and_keeps_counting_attempts_when_resumed() -> None:
+    plan = plan_of(shell("a"), shell("b", "a"), shell("c", "b", always_run=True))
+    prior = RunState(
+        nodes={
+            "a": NodeResult("completed", "A"),
+            "b": NodeResult("failed"),
+            "c": NodeResult("completed", "C"),
+        },
+        attempts={"a": 1, "b": 2, "c": 1},
+    )
+
+    run = Run(plan, ScriptedRunner({"b": ["B"]}), prior=prior)
+
+    assert run.runner.ran() == ["b", "c"]
+    assert run.status_of("a") == ("skipped", "prior_success", None, None)
+    assert [(end.node, end.attempt) for end in run.recorder.ends] == [("a", 2), ("b", 3), ("c", 2)]
+    assert run.report.state.nodes["a"] == NodeResult("completed", "A")
+    assert run.report.state.attempts == {"a": 2, "b": 3, "c": 2}
+    assert run.report.status == "done"
+
+
+def test_runs_a_cached_node_again_when_its_dependency_changed_on_resume() -> None:
+    plan = plan_of(shell("a", always_run=True), shell("b", "a"), shell("c"))
+    prior = RunState(
+        nodes={n: NodeResult("completed", n.upper()) for n in ("a", "b", "c")},
+        attempts={"a": 1, "b": 1, "c": 1},
+    )
+
+    run = Run(plan, ScriptedRunner({"a": ["changed"]}), prior=prior)
+
+    assert run.runner.ran() == ["a", "b"]
+    assert run.status_of("c")[1] == "prior_success"
+
+
+def test_keeps_the_cache_when_a_rerun_dependency_gives_the_same_value() -> None:
+    plan = plan_of(shell("a", always_run=True), shell("b", "a"))
+    prior = RunState(nodes={"a": NodeResult("completed", "A"), "b": NodeResult("completed", "B")})
+
+    run = Run(plan, ScriptedRunner({"a": ["A"]}), prior=prior)
+
+    assert run.runner.ran() == ["a"]
+
+
+def test_reports_status_apart_from_outcome_when_returns_node_completes() -> None:
+    plan = plan_of(
+        agent("report", output_format=OBJECT),
+        shell("after", "report"),
+        returns="report",
+        outcome_field="delivery",
+    )
+    runner = ScriptedRunner({"report": ['{"ok": false, "delivery": "b"}'], "after": [fails()]})
+
+    run = Run(plan, runner)
+
+    assert (run.report.status, run.report.outcome) == ("failed", "b")
+    end = run.recorder.run_ends[0]
+    assert (end.status, end.outcome, end.reason) == ("failed", "b", "after")
+
+
+def test_reads_a_boolean_outcome_when_outcome_field_is_boolean() -> None:
+    plan = plan_of(agent("r", output_format=OBJECT), returns="r", outcome_field="ok")
+
+    run = Run(plan, ScriptedRunner({"r": ['{"ok": false, "delivery": "a"}']}))
+
+    assert (run.report.status, run.report.outcome) == ("done", False)
+
+
+def test_leaves_no_outcome_when_returns_node_did_not_complete() -> None:
+    plan = plan_of(agent("r", output_format=OBJECT, when=NEVER), returns="r", outcome_field="ok")
+
+    run = Run(plan)
+
+    assert (run.report.status, run.report.outcome) == ("done", None)
+
+
+def test_ends_cancelled_without_running_later_nodes_when_halt_is_reached() -> None:
+    plan = plan_of(
+        shell("a"),
+        {"id": "stop", "type": "halt", "reason": "Stopped on $a.output", "depends_on": ["a"]},
+        shell("b", "stop"),
+        shell("c", "a"),
+    )
+
+    run = Run(plan, ScriptedRunner({"a": ["red"]}))
+
+    assert run.runner.ran() == ["a"]
+    assert run.recorder.end_of("stop").detail == "Stopped on red"
+    assert (run.report.status, run.report.reason) == ("cancelled", "stop")
+    assert [end.node for end in run.recorder.ends] == ["a", "stop"]
+
+
+def test_pauses_then_resumes_past_the_gate_when_an_approval_gets_its_decision() -> None:
+    gate = {"id": "gate", "type": "approval", "message": "Ok?", "depends_on": ["a"]}
+    plan = plan_of(shell("a"), gate, shell("b", "gate"), shell("c", "a"))
+
+    paused = Run(plan, ScriptedRunner())
+    answers = AnswerBook({("gate", 1): GateAnswer("approve")})
+    resumed = Run(plan, ScriptedRunner(), prior=paused.report.state, gates=answers)
+
+    assert (paused.report.status, paused.report.outcome) == ("paused", None)
+    assert paused.runner.ran() == ["a", "c"]
+    assert paused.recorder.run_ends == []
+    assert resumed.report.status == "done"
+    assert resumed.runner.ran() == ["b"]
+    assert resumed.status_of("a")[:2] == ("skipped", "prior_success")
+    assert resumed.recorder.end_of("gate").attempt == 1
+    assert resumed.report.state.gates == {}
+
+
+def test_fills_defaults_when_inputs_are_left_out() -> None:
+    plan = plan_of(
+        shell("a", command=["echo", "$INPUTS.mode"]),
+        inputs={"mode": {"default": "fast"}},
+    )
+
+    run = Run(plan)
+
+    assert run.runner.calls[0].argv == ("echo", "fast")
+
+
+@pytest.mark.parametrize(
+    ("given", "message"),
+    [
+        ({}, 'the input "issue" is required'),
+        ({"issue": "x", "other": 1}, 'no input is named "other"'),
+    ],
+)
+def test_refuses_to_start_when_inputs_do_not_fit(given: dict[str, JsonValue], message: str) -> None:
+    plan = plan_of(shell("a"), inputs={"issue": {"required": True}})
+
+    with pytest.raises(WorkflowEngineError, match=message):
+        Run(plan, inputs=given)
+
+
+def test_resolves_with_values_when_an_agent_binds_upstream_outputs() -> None:
+    plan = plan_of(
+        shell("a"),
+        shell("s", when=NEVER),
+        agent(
+            "b",
+            "a",
+            "s",
+            trigger_rule="all_done",
+            prompt="Use $WITH.got and $WITH.missing!",
+            **{
+                "with": {
+                    "got": {"from": "$a.output"},
+                    "missing": {"from": "$s.output", "if_skipped": "none"},
+                    "issue": ["for $INPUTS.issue"],
+                    "limits": {"n": 2, "who": "$INPUTS.issue"},
+                }
+            },
+        ),
+    )
+    runner = ScriptedRunner({"a": ["A"]})
+
+    Run(plan, runner, inputs={"issue": "AGH-1"})
+
+    call = runner.calls[1]
+    assert call.context.with_values == {
+        "got": "A",
+        "missing": "none",
+        "issue": ["for AGH-1"],
+        "limits": {"n": 2, "who": "AGH-1"},
+    }
+    assert call.prompt == "Use A and none!"
+
+
+def test_fails_config_without_running_when_argv_reads_a_failed_producer() -> None:
+    plan = plan_of(
+        shell("a"), shell("b", "a", trigger_rule="all_done", command=["echo", "$a.output"])
+    )
+    runner = ScriptedRunner({"a": [fails()]})
+
+    run = Run(plan, runner)
+
+    assert run.status_of("b") == ("failed", None, None, "config")
+    assert runner.ran() == ["a"]
+
+
+def test_records_the_error_as_detail_when_a_halt_reason_cannot_render() -> None:
+    plan = plan_of(
+        shell("a"),
+        {
+            "id": "stop",
+            "type": "halt",
+            "reason": "On $a.output",
+            "depends_on": ["a"],
+            "trigger_rule": "all_done",
+        },
+    )
+
+    run = Run(plan, ScriptedRunner({"a": [fails()]}))
+
+    assert "its producer failed" in run.recorder.end_of("stop").detail
+    assert run.report.status == "cancelled"
+
+
+def test_runs_the_node_when_its_condition_holds() -> None:
+    run = Run(plan_of(shell("a", when="$INPUTS.mode == 'off'")))
+
+    assert run.runner.ran() == ["a"]
+
+
+def test_ends_the_step_unknown_and_the_run_failed_when_a_port_raises() -> None:
+    plan = plan_of(shell("a"), shell("b"))
+    runner = ScriptedRunner({"a": [OSError("the output text")]})
+
+    run = Run(plan, runner)
+
+    assert run.status_of("a") == ("failed", None, None, "unknown")
+    assert run.recorder.end_of("a").detail == "OSError"
+    assert sorted(run.runner.ran()) == ["a", "b"]
+    assert [end.status for end in run.recorder.run_ends] == ["failed"]
+    assert run.report.state.attempts == {"a": 1, "b": 1}
+
+
+def test_runs_a_cached_node_again_when_an_ancestor_it_reads_changed() -> None:
+    plan = plan_of(
+        shell("a", always_run=True),
+        shell("b", "a"),
+        shell("c", "b", command=["echo", "$a.output"]),
+    )
+    prior = RunState(nodes={n: NodeResult("completed", n.upper()) for n in ("a", "b", "c")})
+
+    run = Run(plan, ScriptedRunner({"a": ["NEW"], "b": ["B"]}), prior=prior)
+
+    assert run.runner.ran() == ["a", "b", "c"]
+    assert run.runner.calls[2].argv == ("echo", "NEW")
+
+
+def test_skips_a_join_when_an_upstream_was_skipped_for_a_failure() -> None:
+    plan = plan_of(
+        shell("f"),
+        shell("s", "f"),
+        shell("ok"),
+        shell("j", "s", "ok", trigger_rule="none_failed_min_one_success"),
+    )
+
+    run = Run(plan, ScriptedRunner({"f": [fails()]}))
+
+    assert run.status_of("j") == ("skipped", "upstream_failed", "f", None)
+
+
+def test_ends_cancelled_when_a_halt_follows_a_failed_node() -> None:
+    plan = plan_of(
+        shell("a"),
+        {
+            "id": "stop",
+            "type": "halt",
+            "reason": "Stop.",
+            "depends_on": ["a"],
+            "trigger_rule": "all_done",
+        },
+    )
+
+    run = Run(plan, ScriptedRunner({"a": [fails()]}))
+
+    assert (run.report.status, run.report.reason) == ("cancelled", "stop")
+
+
+def completed(*node_ids: str) -> RunState:
+    return RunState(nodes={n: NodeResult("completed", n.upper()) for n in node_ids})
+
+
+def test_reruns_only_what_follows_a_change_when_a_chain_resumes() -> None:
+    plan = plan_of(
+        shell("a"), shell("b", "a", always_run=True), shell("c", "b"), shell("d", "c"), shell("e")
+    )
+
+    run = Run(plan, ScriptedRunner({"b": ["NEW"]}), prior=completed("a", "b", "c", "d", "e"))
+
+    assert run.runner.ran() == ["b", "c", "d"]
+    assert [n for n in "ae" if run.status_of(n)[1] == "prior_success"] == ["a", "e"]
+
+
+@pytest.mark.parametrize(
+    ("changed_value", "expected"),
+    [("B", ["b"]), ("NEW", ["b", "d"])],
+    ids=["same-value", "new-value"],
+)
+def test_reruns_the_join_only_when_a_branch_changed_when_a_diamond_resumes(
+    changed_value: str, expected: list[str]
+) -> None:
+    plan = plan_of(
+        shell("a"), shell("b", "a", always_run=True), shell("c", "a"), shell("d", "b", "c")
+    )
+
+    run = Run(plan, ScriptedRunner({"b": [changed_value]}), prior=completed("a", "b", "c", "d"))
+
+    assert run.runner.ran() == expected
+
+
+def test_fails_the_node_and_ends_the_run_when_jitter_raises() -> None:
+    plan = plan_of(shell("a"), shell("b"))
+    recorder = ListRecorder()
+
+    def broken() -> float:
+        raise RuntimeError
+
+    runner = ScriptedRunner({"a": [fails("rate_limited"), "late"]})
+    ports = EnginePorts(runner, recorder, FakeClock(), KeysOutputs(), broken)
+    report = run_workflow(plan, {}, ports)
+
+    assert sorted(runner.ran()) == ["a", "b"]
+    assert (report.status, report.reason) == ("failed", "a")
+    assert [end.status for end in recorder.run_ends] == ["failed"]
+    assert recorder.retries == []
+
+
+def test_fails_the_node_and_ends_the_run_when_the_clock_cannot_sleep() -> None:
+    class StuckClock(FakeClock):
+        def sleep(self, delay: timedelta) -> None:
+            raise OSError
+
+    plan = plan_of(shell("a"))
+    recorder = ListRecorder()
+    runner = ScriptedRunner({"a": [fails("transient"), "late"]})
+    report = run_workflow(
+        plan, {}, EnginePorts(runner, recorder, StuckClock(), KeysOutputs(), lambda: 0.5)
+    )
+
+    assert runner.ran() == ["a"]
+    assert report.status == "failed"
+    assert [end.status for end in recorder.run_ends] == ["failed"]
+
+
+# Concurrent layers (task 8.3): threads, declaration-order records, the checkout check.
+
+
+class GatedRunner(ScriptedRunner):
+    """``first`` answers only once ``second`` has run: they can only both end concurrently."""
+
+    def __init__(self, first: str, second: str, wait: float = 5.0) -> None:
+        super().__init__()
+        self.first, self.second, self.wait = first, second, wait
+        self.second_ran = threading.Event()
+
+    def run(self, call: NodeCall) -> NodeReply:
+        if call.node.id == self.first and not self.second_ran.wait(timeout=self.wait):
+            raise TimeoutError
+        try:
+            return super().run(call)
+        finally:
+            if call.node.id == self.second:
+                self.second_ran.set()
+
+
+def test_records_each_node_as_it_ends_when_parallel_nodes_end_out_of_order() -> None:
+    runner = GatedRunner("a", "b")
+
+    run = Run(plan_of(shell("a"), shell("b"), shell("c", "a", "b")), runner)
+
+    assert runner.ran() == ["b", "a", "c"]
+    assert {start.node for start in run.recorder.starts[:2]} == {"a", "b"}
+    assert [end.node for end in run.recorder.ends] == ["b", "a", "c"]
+    assert run.report.status == "done"
+
+
+def test_runs_one_node_at_a_time_when_a_parallel_layer_holds_a_halt() -> None:
+    halt = {"id": "stop", "type": "halt", "reason": "Stop."}
+
+    run = Run(plan_of(halt, shell("b")))
+
+    assert run.runner.ran() == []
+    assert run.report.status == "cancelled"
+
+
+def test_runs_one_node_at_a_time_when_parallel_is_bounded_to_one() -> None:
+    runner = GatedRunner("a", "b", wait=0.05)
+
+    run = Run(plan_of(shell("a"), shell("b")), runner, max_parallel=1)
+
+    assert run.status_of("a") == ("failed", None, None, "unknown")
+    assert run.recorder.end_of("a").detail == "TimeoutError"
+    assert run.status_of("b") == ("ok", None, None, None)
+
+
+class Checkout:
+    """A checkout probe answering from a list, one status per call."""
+
+    def __init__(self, *statuses: str) -> None:
+        self.statuses = list(statuses)
+
+    def status(self) -> str:
+        return self.statuses.pop(0)
+
+
+def run_read_only(checkout: CheckoutProbe | None) -> Run:
+    return Run(plan_of(shell("r", mutates_checkout=False)), checkout=checkout)
+
+
+def test_passes_a_read_only_node_when_the_checkout_status_is_unchanged() -> None:
+    run = run_read_only(Checkout(" M a.py", " M a.py"))
+
+    assert run.status_of("r") == ("ok", None, None, None)
+
+
+def test_fails_config_without_retry_when_a_read_only_node_changes_the_checkout() -> None:
+    run = run_read_only(Checkout("", "?? new.py"))
+
+    assert run.status_of("r") == ("failed", None, None, "config")
+    assert "mutates_checkout" in run.recorder.end_of("r").detail
+    assert run.report.status == "failed"
+
+
+def test_fails_config_when_a_read_only_node_runs_without_a_checkout_probe() -> None:
+    run = run_read_only(None)
+
+    assert run.status_of("r") == ("failed", None, None, "config")
+
+
+def test_splits_a_parallel_layer_when_read_only_and_writing_nodes_share_it() -> None:
+    plan = plan_of(
+        shell("r1", mutates_checkout=False), shell("w"), shell("r2", mutates_checkout=False)
+    )
+
+    assert plan.layers == (("r1", "r2"), ("w",))
+
+
+def test_splits_a_parallel_layer_when_two_agents_resume_one_session() -> None:
+    plan = plan_of(
+        agent("plan"),
+        agent("a", "plan", context={"resume": "plan"}),
+        agent("b", "plan", context={"resume": "plan"}),
+        agent("c", "plan"),
+    )
+
+    assert plan.layers == (("plan",), ("a", "c"), ("b",))
+
+
+def test_names_the_first_failed_node_in_declaration_order_when_parallel_nodes_fail() -> None:
+    runner = GatedRunner("a", "b")
+    runner.replies = {"a": [fails()], "b": [fails()]}
+
+    run = Run(plan_of(shell("a"), shell("b")), runner)
+
+    assert (run.report.status, run.report.reason) == ("failed", "a")
+
+
+def a_group(*body: dict[str, object], **keys: object) -> dict[str, object]:
+    group = {"id": "g", "type": "loop_group", "max_iterations": 1, "nodes": list(body)}
+    return group | {"until_when": "$INPUTS.mode == 'off'"} | keys
+
+
+def test_runs_one_node_at_a_time_when_a_parallel_layer_holds_a_group_with_a_halt() -> None:
+    halt = {"id": "stop", "type": "halt", "reason": "Stop."}
+
+    run = Run(plan_of(a_group(halt), shell("b")))
+
+    assert run.runner.ran() == []
+    assert run.report.status == "cancelled"
+
+
+def test_splits_a_parallel_layer_when_a_group_reads_and_a_node_writes() -> None:
+    plan = plan_of(shell("w"), a_group(shell("r", mutates_checkout=False)))
+
+    assert plan.layers == (("w",), ("g",))
+
+
+class Counting(ScriptedRunner):
+    """Keeps the most calls that ran at once."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.lock = threading.Lock()
+        self.active = self.most = 0
+
+    def run(self, call: NodeCall) -> NodeReply:
+        with self.lock:
+            self.active += 1
+            self.most = max(self.most, self.active)
+        try:
+            threading.Event().wait(0.05)
+            return super().run(call)
+        finally:
+            with self.lock:
+                self.active -= 1
+
+
+def test_runs_at_most_the_bound_at_once_when_parallel_groups_nest() -> None:
+    runner = Counting()
+    body = [shell(f"b{index}") for index in range(4)]
+    plan = plan_of(*(shell(f"n{index}") for index in range(6)), a_group(*body))
+
+    Run(plan, runner)
+
+    assert len(runner.calls) == 10
+    assert runner.most == MAX_PARALLEL
+
+
+def test_interrupts_running_nodes_when_a_parallel_layer_is_interrupted() -> None:
+    stopped = threading.Event()
+
+    class Interrupted(ScriptedRunner):
+        def run(self, call: NodeCall) -> NodeReply:
+            if call.node.id == "a":
+                raise KeyboardInterrupt
+            if not stopped.wait(timeout=5):
+                raise TimeoutError
+            return super().run(call)
+
+    ports = EnginePorts(
+        Interrupted(),
+        ListRecorder(),
+        FakeClock(),
+        KeysOutputs(),
+        lambda: 0.5,
+        interrupt=stopped.set,
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        run_workflow(plan_of(shell("a"), shell("b")), {}, ports)
+
+    assert stopped.is_set()
+
+
+def test_splits_a_wide_layer_in_linear_work_when_read_only_and_writing_nodes_alternate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = []
+    find = plan_module._Skips.find
+
+    def counted(skips: object, index: int) -> int:
+        calls.append(1)
+        return find(skips, index)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(plan_module._Skips, "find", counted)
+    nodes = [shell(f"n{i}", mutates_checkout=bool(i % 2)) for i in range(4000)]
+
+    plan = plan_of(*nodes)
+
+    assert len(plan.layers) == 2
+    assert len(calls) <= 2 * len(nodes)
+
+
+class WakingClock(FakeClock):
+    """A clock whose backoff really waits, and wakes as soon as the run stops."""
+
+    def sleep(self, delay: timedelta, stop: threading.Event | None = None) -> None:
+        super().sleep(delay)
+        if stop is not None:
+            stop.wait(delay.total_seconds())
+
+
+def test_starts_no_attempt_after_an_interrupt_when_a_parallel_layer_is_stopped() -> None:
+    interrupted = threading.Event()
+    late: list[str] = []
+
+    class Stopping(ScriptedRunner):
+        def run(self, call: NodeCall) -> NodeReply:
+            if interrupted.is_set():
+                late.append(call.node.id)
+            if call.node.id == "a":
+                threading.Event().wait(0.1)
+                raise KeyboardInterrupt
+            if call.node.id == "r":
+                raise fails("transient")
+            threading.Event().wait(0.02)
+            return super().run(call)
+
+    body = [shell(f"b{index}") for index in range(4)]
+    group = a_group(*body, max_iterations=3, until_when="$b0.output == 'never'")
+    plan = plan_of(shell("a"), shell("b"), shell("c"), group, shell("r", retry={"delay": "2s"}))
+    ports = EnginePorts(
+        Stopping(),
+        ListRecorder(),
+        WakingClock(),
+        KeysOutputs(),
+        lambda: 0.5,
+        interrupt=interrupted.set,
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        run_workflow(plan, {}, ports)
+
+    assert interrupted.is_set()
+    assert late == []
+
+
+def test_splits_a_wide_layer_in_linear_work_when_many_agents_resume_one_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = []
+    find = plan_module._Skips.find
+
+    def counted(skips: object, index: int) -> int:
+        calls.append(1)
+        return find(skips, index)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(plan_module._Skips, "find", counted)
+    resumers = [agent(f"a{i}", "plan", context={"resume": "plan"}) for i in range(2000)]
+
+    plan = plan_of(agent("plan"), *resumers)
+
+    assert len(plan.layers) == 1 + len(resumers)
+    assert len(calls) <= 2 * len(resumers)
+
+
+def test_splits_in_linear_work_when_readers_follow_session_writers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    made: list[plan_module._Skips] = []
+
+    class Counted(plan_module._Skips):
+        def __init__(self) -> None:
+            super().__init__()
+            made.append(self)
+
+    monkeypatch.setattr(plan_module, "_Skips", Counted)
+    readers = [agent(f"r{i}", "plan", mutates_checkout=False) for i in range(500)]
+    writers = [agent(f"w{i}", "plan", context={"resume": "plan"}) for i in range(1000)]
+    # Each second reader of a session skips every writer batch to a batch of its own kind.
+    pairs = [
+        agent(
+            f"p{i}",
+            "plan",
+            "s" + str(i // 2),
+            mutates_checkout=False,
+            context={"resume": f"s{i // 2}"},
+        )
+        for i in range(1000)
+    ]
+    sessions = [agent(f"s{i}") for i in range(500)]
+
+    plan = plan_of(agent("plan"), *sessions, *readers, *writers, *pairs)
+
+    placed = len(readers) + len(writers) + len(pairs)
+    assert sum(len(layer) for layer in plan.layers) == 1 + len(sessions) + placed
+    assert sum(skips.hops for skips in made) <= 4 * placed
+
+
+# One test per stop point: node ``k`` raises Ctrl-C once ``fire`` is set, at a known step of
+# another node; ``late`` holds every attempt that starts after the interrupt.
+
+
+class Stops:
+    """The events of one stop test, and a runner that answers through them."""
+
+    def __init__(self) -> None:
+        self.fire, self.interrupted = threading.Event(), threading.Event()
+        self.late: list[str] = []
+
+    def ports(self, runner: ScriptedRunner, clock: FakeClock | None = None) -> EnginePorts:
+        return EnginePorts(
+            runner,
+            ListRecorder(),
+            clock or FakeClock(),
+            KeysOutputs(),
+            lambda: 0.5,
+            interrupt=self.interrupted.set,
+        )
+
+    def runner(self, answer: Callable[[NodeCall], NodeReply | None]) -> ScriptedRunner:
+        stops = self
+
+        class Answering(ScriptedRunner):
+            def run(self, call: NodeCall) -> NodeReply:
+                if stops.interrupted.is_set():
+                    stops.late.append(call.node.id)
+                if call.node.id == "k":
+                    stops.fire.wait(5)
+                    raise KeyboardInterrupt
+                reply = answer(call)
+                return super().run(call) if reply is None else reply
+
+        return Answering()
+
+    def run(self, plan: WorkflowPlan, ports: EnginePorts) -> EnginePorts:
+        with pytest.raises(KeyboardInterrupt):
+            run_workflow(plan, {}, ports)
+        assert self.interrupted.is_set()
+        return ports
+
+
+def signalling(waiting: threading.Event) -> type:
+    """A ``BoundedSemaphore`` that sets ``waiting`` when an acquire has to wait."""
+    bounded = threading.BoundedSemaphore
+
+    class Signalling(bounded):  # type: ignore[misc, valid-type]
+        def acquire(self, blocking: bool = True, timeout: float | None = None) -> bool:  # noqa: FBT001, FBT002
+            if super().acquire(blocking=False):
+                return True
+            waiting.set()
+            return super().acquire(blocking, timeout)
+
+        __enter__ = acquire
+
+    return Signalling
+
+
+class RaisingClock(FakeClock):
+    """k's backoff holds no permit: it raises Ctrl-C once another node waits for one."""
+
+    def __init__(self, waiting: threading.Event) -> None:
+        super().__init__()
+        self.waiting = waiting
+
+    def sleep(self, delay: timedelta, stop: threading.Event | None = None) -> None:
+        self.waiting.wait(5)
+        raise KeyboardInterrupt
+
+
+class Holding(ScriptedRunner):
+    """k fails once (into its backoff); h1 and h2 hold the two permits until the interrupt."""
+
+    def __init__(self, stops: Stops) -> None:
+        super().__init__()
+        self.stops = stops
+        self.holding = {"h1": threading.Event(), "h2": threading.Event()}
+
+    def run(self, call: NodeCall) -> NodeReply:
+        if self.stops.interrupted.is_set():
+            self.stops.late.append(call.node.id)
+        if call.node.id == "k":
+            raise fails("transient")
+        if call.node.id in self.holding:
+            self.holding[call.node.id].set()
+            self.stops.interrupted.wait(5)
+        return super().run(call)
+
+
+def test_starts_no_attempt_when_the_stop_lands_while_a_node_waits_for_its_permit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stops, waiting = Stops(), threading.Event()
+    runner = Holding(stops)
+    step = engine_module._Run._step
+
+    def ordered(run: Any, node: Any, attempt: Any) -> Any:
+        if node.id == "x":  # x asks for a permit only once h1 and h2 hold both
+            for event in runner.holding.values():
+                event.wait(5)
+        return step(run, node, attempt)
+
+    monkeypatch.setattr(threading, "BoundedSemaphore", signalling(waiting))
+    monkeypatch.setattr(engine_module._Run, "_step", ordered)
+    plan = plan_of(shell("k"), shell("h1"), shell("h2"), shell("x"))
+    ports = stops.ports(runner, RaisingClock(waiting))
+
+    stops.run(plan, dataclasses.replace(ports, max_parallel=2))
+
+    assert stops.late == []
+
+
+def test_schedules_no_retry_when_the_stop_lands_before_a_backoff() -> None:
+    stops = Stops()
+
+    def answer(call: NodeCall) -> NodeReply | None:
+        stops.fire.set()
+        stops.interrupted.wait(5)
+        raise fails("transient")
+
+    ports = stops.run(plan_of(shell("k"), shell("r")), stops.ports(stops.runner(answer)))
+
+    assert ports.recorder.retries == []  # type: ignore[attr-defined]
+    assert ports.clock.sleeps == []  # type: ignore[attr-defined]
+
+
+def test_starts_no_attempt_when_the_stop_lands_during_a_backoff() -> None:
+    stops = Stops()
+
+    class Firing(FakeClock):
+        def sleep(self, delay: timedelta, stop: threading.Event | None = None) -> None:
+            super().sleep(delay)
+            stops.fire.set()
+            stops.interrupted.wait(5)
+
+    tried: list[str] = []
+
+    def answer(call: NodeCall) -> NodeReply | None:
+        tried.append(call.node.id)
+        raise fails("transient")
+
+    stops.run(plan_of(shell("k"), shell("r")), stops.ports(stops.runner(answer), Firing()))
+
+    assert tried == ["r"]
+    assert stops.late == []
+
+
+def body_firing(stops: Stops) -> Callable[[NodeCall], NodeReply | None]:
+    def answer(call: NodeCall) -> NodeReply | None:
+        if call.node.id == "g__b0":
+            stops.fire.set()
+            stops.interrupted.wait(5)
+        return None
+
+    return answer
+
+
+def test_runs_no_until_bash_or_iteration_when_the_stop_lands_in_a_group_body() -> None:
+    stops = Stops()
+    runner = stops.runner(body_firing(stops))
+    group = a_group(shell("b0"), max_iterations=3, until_when=None, until_bash=["true"])
+    del group["until_when"]
+
+    stops.run(plan_of(shell("k"), group), stops.ports(runner))
+
+    assert runner.until_calls == []
+    assert runner.ran() == ["g__b0"]
+
+
+def test_visits_no_later_body_layer_when_the_stop_lands_in_a_group_body() -> None:
+    stops = Stops()
+    group = a_group(shell("b0"), shell("b1", "b0", when=NEVER))
+
+    ports = stops.run(plan_of(shell("k"), group), stops.ports(stops.runner(body_firing(stops))))
+
+    ends = ports.recorder.ends  # type: ignore[attr-defined]
+    assert [end.node for end in ends] == ["g__b0"]
+
+
+def test_renders_cwd_when_agent_node_reads_upstream_path() -> None:
+    plan = plan_of(
+        shell("tree", output_format={"type": "object", "properties": {"path": {"type": "string"}}}),
+        agent("work", "tree", cwd="$tree.output.path"),
+    )
+    runner = ScriptedRunner({"tree": ['{"path": "/ws/api/.claude/worktrees/agh-1"}']})
+
+    Run(plan, runner, inputs={"issue": "AGH-1"})
+
+    assert runner.calls[1].cwd == "/ws/api/.claude/worktrees/agh-1"
+
+
+def test_renders_stdin_when_shell_node_reads_upstream_output() -> None:
+    plan = plan_of(
+        agent("plan", output_format=OBJECT),
+        shell("read", "plan", stdin="$plan.output"),
+        shell("fixed", stdin="literal\x00text"),
+    )
+    runner = ScriptedRunner({"plan": ['{"ok": true, "delivery": "b"}']})
+
+    Run(plan, runner, inputs={"issue": "AGH-1"})
+
+    stdins = {call.node.id: call.stdin for call in runner.calls}
+    assert stdins == {
+        "plan": None,
+        "read": '{"delivery":"b","ok":true}',
+        "fixed": "literal\x00text",
+    }
+
+
+def action(node_id: str, *depends_on: str, **keys: object) -> dict[str, object]:
+    node = {"id": node_id, "type": "action", "action": "send-queue-message"}
+    return node | {"depends_on": list(depends_on)} | keys
+
+
+def test_runs_action_with_rendered_inputs_when_action_node_visited() -> None:
+    sent = {"ref": "$INPUTS.issue", "note": "for $INPUTS.issue", "count": "$INPUTS.count"}
+    sent |= {"fixed": 3, "items": ["$INPUTS.issue", {"at": "$INPUTS.count"}]}
+    plan = plan_of(
+        action("send", **{"with": sent}),
+        action("check", "send", **{"with": {"id": "$send.output.message_id"}}),
+        inputs=INPUTS | {"count": {"type": "integer", "default": 2}},
+    )
+    runner = ScriptedRunner({"send": ['{"message_id": "m-1"}'], "check": ["[1, 2]"]})
+
+    run = Run(plan, runner, inputs={"issue": "AGH-1"})
+
+    send, check = runner.calls
+    assert send.inputs == {
+        "ref": "AGH-1",
+        "note": "for AGH-1",
+        "count": 2,
+        "fixed": 3,
+        "items": ["AGH-1", {"at": 2}],
+    }
+    assert check.inputs == {"id": "m-1"}
+    assert run.recorder.end_of("send").output == {"message_id": "m-1"}
+    assert run.recorder.end_of("check").output == [1, 2]
+    assert run.report.status == "done"
+
+
+@pytest.mark.parametrize("text", ["not json", "", '{"a": 1} trailing', "NaN"])
+def test_fails_output_contract_when_action_output_not_json(text: str) -> None:
+    runner = ScriptedRunner({"send": [text, '{"a": 1}']})
+
+    run = Run(plan_of(action("send")), runner)
+
+    assert run.status_of("send") == ("failed", None, None, "output_contract")
+    assert runner.ran() == ["send"]
+    assert run.report.status == "failed"
+
+
+def expect(node_id: str, *depends_on: str, **keys: object) -> dict[str, object]:
+    node = {"id": node_id, "type": "expect", "action": "get-order", "every": "10s"}
+    node |= {"timeout": "1m", "until_when": "$self.output.status == 'ON_HOLD'"}
+    return node | {"depends_on": list(depends_on)} | keys
+
+
+@dataclasses.dataclass
+class Traced:
+    """A run of ``plan`` whose trace (polls and captures) is kept."""
+
+    report: RunReport
+    recorder: ListRecorder
+    clock: FakeClock
+    trace: workflow_fakes.ListTrace
+
+
+def traced(plan: WorkflowPlan, runner: ScriptedRunner, *, prior: RunState | None = None) -> Traced:
+    recorder, clock, trace = ListRecorder(), FakeClock(), workflow_fakes.ListTrace()
+    ports = EnginePorts(runner, recorder, clock, KeysOutputs(), lambda: 0.5, trace=trace)
+    return Traced(run_workflow(plan, {}, ports, prior=prior), recorder, clock, trace)
+
+
+def pending(count: int) -> list[str]:
+    return ['{"status": "PENDING"}'] * count
+
+
+def test_ends_ok_after_three_polls_when_expect_node_holds() -> None:
+    held = '{"status": "ON_HOLD", "order_id": "o-7"}'
+    plan = plan_of(expect("wait", capture={"order_id": "$self.output.order_id"}))
+    runner = ScriptedRunner({"wait": [*pending(2), held]})
+
+    run = traced(plan, runner)
+    trace = run.trace
+
+    assert [call.poll for call in runner.calls] == [1, 2, 3]
+    assert {call.attempt for call in runner.calls} == {1}
+    assert [(poll.poll, poll.held) for poll in trace.polls] == [(1, False), (2, False), (3, True)]
+    assert [(c.node, c.name, c.value) for c in trace.captures] == [("wait", "order_id", "o-7")]
+    assert run.clock.sleeps == [timedelta(seconds=10)] * 2
+    assert run.recorder.end_of("wait").output == {"status": "ON_HOLD", "order_id": "o-7"}
+    assert run.report.status == "done"
+
+
+def test_fails_timeout_when_expect_node_never_holds() -> None:
+    runner = ScriptedRunner({"wait": pending(20)})
+
+    run = traced(plan_of(expect("wait", capture={"id": "$self.output.status"})), runner)
+
+    # Polls at 0s, 10s, ... 60s: the window is one minute; no implicit retry.
+    assert len(runner.calls) == 7
+    end = run.recorder.end_of("wait")
+    assert (end.status, end.failure_kind) == ("failed", "timeout")
+    assert end.detail.startswith("expect_timeout: ")
+    assert run.trace.captures == []
+    assert run.report.status == "failed"
+
+
+def test_stops_at_max_polls_when_expect_node_timeout_long() -> None:
+    runner = ScriptedRunner({"wait": pending(1001)})
+
+    run = Run(plan_of(expect("wait", every="5s", timeout="24h")), runner)
+
+    assert len(runner.calls) == engine_module.MAX_EXPECT_POLLS
+    assert run.status_of("wait") == ("failed", None, None, "timeout")
+
+
+def test_states_scenario_limits_when_constants_read() -> None:
+    assert workflow_nodes.MIN_EXPECT_EVERY_SECONDS == 5
+    assert workflow_nodes.MAX_EXPECT_TIMEOUT_SECONDS == 24 * 3600
+    assert workflow_nodes.MAX_ACTION_TIMEOUT_SECONDS == 3600
+    assert engine_module.MAX_EXPECT_POLLS == 1000
+    # AGH-360: investigations per scenario run, proposals per investigation (owner, Q7).
+    assert investigation_module.MAX_INVESTIGATIONS == 10
+    assert investigation_module.MAX_PROPOSALS == 10
+
+
+def test_resolves_ctx_after_resume_when_run_context_from_prior() -> None:
+    plan = plan_of(
+        expect("wait", capture={"order_id": "$self.output.order_id"}),
+        action("use", "wait", **{"with": {"id": "$CTX.order_id", "note": "order $CTX.order_id"}}),
+        kind="scenario",
+    )
+    held = '{"status": "ON_HOLD", "order_id": "o-7"}'
+    first = ScriptedRunner({"wait": [held], "use": [fails()]})
+
+    failed = traced(plan, first)
+    second = ScriptedRunner({"use": ["{}"]})
+    resumed = traced(plan, second, prior=failed.report.state)
+
+    assert failed.report.status == "failed"
+    assert [call.inputs for call in first.calls if call.node.id == "use"] == [
+        {"id": "o-7", "note": "order o-7"}
+    ]
+    assert [call.inputs for call in second.calls] == [{"id": "o-7", "note": "order o-7"}]
+    assert resumed.recorder.end_of("wait").skip_cause == "prior_success"
+    assert resumed.trace.polls == []
+    [use] = [start for start in resumed.recorder.starts if start.node == "use"]
+    assert use.attempt == 2
+    assert resumed.report.status == "done"
+
+
+def test_renders_text_when_run_context_tokens_in_plain_workflow() -> None:
+    plan = plan_of(
+        shell("self", command=["echo", "cost $CTX"]),
+        shell("b", "self", command=["echo", "$self.output"]),
+    )
+    runner = ScriptedRunner({"self": ["ten"]})
+
+    run = Run(plan, runner)
+
+    assert [call.argv for call in runner.calls] == [("echo", "cost $CTX"), ("echo", "ten")]
+    assert run.report.status == "done"
+
+
+def test_counts_polls_across_attempts_when_expect_node_retried() -> None:
+    # One hour every 5s is 721 polls an attempt; the retry gets only what is left of 1000.
+    node = expect("wait", every="5s", timeout="1h", retry={"max_attempts": 2})
+    runner = ScriptedRunner({"wait": pending(2200)})
+
+    run = Run(plan_of(node), runner)
+
+    assert len(runner.calls) == engine_module.MAX_EXPECT_POLLS
+    assert {call.attempt for call in runner.calls} == {1, 2}
+    assert run.status_of("wait") == ("failed", None, None, "timeout")
+
+
+def test_waits_until_ctx_when_run_context_wait_in_scenario() -> None:
+    source = action("source", capture={"deadline": "$self.output.at"})
+    wait = {"id": "hold", "type": "wait", "until": "$CTX.deadline", "depends_on": ["source"]}
+    runner = ScriptedRunner({"source": ['{"at": "2026-10-16T09:00:00+00:00"}']})
+
+    run = Run(plan_of(source, wait, kind="scenario"), runner)
+
+    assert run.report.status == "paused"
+    assert [gate.due.isoformat() for gate in run.recorder.gates if gate.due] == [
+        "2026-10-16T09:00:00+00:00"
+    ]
+
+
+def test_keeps_poll_budget_when_expect_node_resumed() -> None:
+    plan = plan_of(expect("wait", every="5s", timeout="24h"))
+    first = Run(plan, ScriptedRunner({"wait": pending(1001)}))
+    again = ScriptedRunner({"wait": pending(10)})
+
+    resumed = Run(plan, again, prior=first.report.state)
+
+    assert first.report.status == "failed"
+    assert again.calls == []
+    assert resumed.status_of("wait") == ("failed", None, None, "timeout")

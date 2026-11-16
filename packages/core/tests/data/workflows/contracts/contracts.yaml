@@ -1,0 +1,43 @@
+version: 1
+name: contracts
+description: Typed outputs read by later nodes, with bindings, a halt and an authored outcome.
+revision: 1
+returns: report
+outcome_field: merged
+nodes:
+  - id: open-pr
+    type: shell
+    command: [hub, step, pr]
+    output_format:
+      type: object
+      properties:
+        url: {type: string}
+        number: {type: integer}
+      required: [url, number]
+  - id: no-pr
+    type: halt
+    reason: "nothing to review at $open-pr.output.url"
+    depends_on: [open-pr]
+    when: "$open-pr.output.number == 0"
+  - id: notes
+    type: shell
+    command: [cat, NOTES.md]
+    depends_on: [open-pr]
+    when: "$open-pr.output.number > 100"
+  - id: comment
+    type: shell
+    command: [gh, pr, comment, $open-pr.output.url, --body-file, NOTES.md]
+    depends_on: [open-pr]
+  - id: report
+    type: agent
+    prompt: "Report on PR $WITH.number with notes: $WITH.notes"
+    depends_on: [comment, notes]
+    trigger_rule: none_failed_min_one_success
+    with:
+      number: {from: $open-pr.output.number}
+      notes: {from: $notes.output, if_skipped: none}
+    output_format:
+      type: object
+      properties:
+        merged: {type: boolean}
+      required: [merged]

@@ -1,0 +1,292 @@
+"""The Phase 2 contract's paths, the paths control-plane clarity, ticket planning, the Skills
+tab, the workflows, the run commands, the item versions, the scenarios and the screen reads add."""
+
+API_PREFIX = "/api/v1"
+
+# Exactly the spec's "API surface in P2"; no P3/P4 path exists in the document (D21).
+P2_PATHS: frozenset[tuple[str, str]] = frozenset(
+    (method, f"{API_PREFIX}{path}")
+    for method, path in (
+        ("post", "/events/hooks"),
+        ("get", "/hubs"),
+        ("post", "/hubs"),
+        ("delete", "/hubs/{hub_id}"),
+        ("get", "/projects"),
+        ("get", "/projects/{project}"),
+        ("get", "/projects/{project}/now"),
+        ("get", "/projects/{project}/repos"),
+        ("get", "/projects/{project}/config"),
+        ("put", "/projects/{project}/config/local"),
+        ("post", "/projects/{project}/config/environments"),
+        ("post", "/projects/{project}/config/repos"),
+        ("get", "/projects/{project}/env-file-keys"),
+        ("get", "/needs-you"),
+        ("get", "/activity"),
+        ("get", "/search"),
+        ("get", "/sessions"),
+        ("get", "/sessions/{session_id}"),
+        ("get", "/sessions/{session_id}/summary"),
+        ("get", "/sessions/{session_id}/events"),
+        ("get", "/sessions/{session_id}/events/stream"),
+        ("get", "/sessions/{session_id}/files"),
+        ("get", "/sessions/{session_id}/cost"),
+        ("get", "/live-sessions"),
+        ("get", "/live-sessions/stream"),
+        ("get", "/workflow-runs"),
+        ("get", "/workflow-runs/{run_id}"),
+        ("get", "/workflow-runs/{run_id}/stream"),
+        ("get", "/approvals"),
+        ("get", "/approvals/{approval_id}"),
+        ("get", "/learnings"),
+        ("get", "/learnings/{learning_id}"),
+        ("get", "/features"),
+        ("get", "/features/{project}/{slug}"),
+        ("get", "/doctor/findings"),
+        ("get", "/collector/status"),
+        ("get", "/settings"),
+        ("get", "/events/stream"),
+    )
+)
+
+
+# The paths control-plane clarity adds (AC-201.39): the problems of a session, the two learning
+# decisions (the only P3 writes served, through a hub PR) and the brain browser.
+CLARITY_PATHS: frozenset[tuple[str, str]] = frozenset(
+    (method, f"{API_PREFIX}{path}")
+    for method, path in (
+        ("get", "/sessions/{session_id}/problems"),
+        ("post", "/learnings/{learning_id}/accept"),
+        ("post", "/learnings/{learning_id}/reject"),
+        ("post", "/learnings/decisions"),
+        ("get", "/projects/{project}/brain"),
+        ("get", "/projects/{project}/brain/note"),
+    )
+)
+
+# The path ticket planning adds (AC-136.33): a feature's tickets, the only read that may call
+# the tracker (ADR 0025).
+TICKET_PATHS: frozenset[tuple[str, str]] = frozenset(
+    {("get", f"{API_PREFIX}/features/{{project}}/{{slug}}/tickets")}
+)
+
+# The 17 route-method pairs driving Claude Code sessions adds (AGH-165 P5, AC-165.48): the only
+# routes the per-launch token guards (ADR 0031).
+AGENT_SESSIONS = f"{API_PREFIX}/agent-sessions"
+AGENT_SESSION_PATHS: frozenset[tuple[str, str]] = frozenset(
+    (method, f"{AGENT_SESSIONS}{path}")
+    for method, path in (
+        ("get", "/workdirs"),
+        ("get", "/capabilities"),
+        ("get", "/resumable"),
+        ("get", "/cloud"),
+        ("post", "/cloud"),
+        ("post", "/cloud/{cloud_id}/messages"),
+        ("get", ""),
+        ("post", ""),
+        ("get", "/{agent_session_id}"),
+        ("delete", "/{agent_session_id}"),
+        ("get", "/{agent_session_id}/events"),
+        ("get", "/{agent_session_id}/repo-changes"),
+        ("get", "/{agent_session_id}/repo-changes/commit"),
+        ("get", "/{agent_session_id}/repo-changes/file"),
+        ("get", "/{agent_session_id}/stream"),
+        ("post", "/{agent_session_id}/messages"),
+        ("post", "/{agent_session_id}/interrupt"),
+        ("post", "/{agent_session_id}/tasks/{task_id}/stop"),
+        ("post", "/{agent_session_id}/permissions/{request_id}"),
+        ("post", "/{agent_session_id}/settings"),
+        ("post", "/{agent_session_id}/close"),
+    )
+)
+
+# The paths the Skills tab adds (AC-164.11, amendment A1): the catalog, an item's detail and a
+# bundled file's text, all read-only.
+SKILL_PATHS: frozenset[tuple[str, str]] = frozenset(
+    ("get", f"{API_PREFIX}{path}")
+    for path in (
+        "/projects/{project}/skills",
+        "/projects/{project}/skills/{kind}/{source}/{name}",
+        "/projects/{project}/skills/{kind}/{source}/{name}/files/{file_id}",
+        "/skill-usage",
+    )
+)
+
+# The paths the workflows add (AGH-225, AC-213.15): the list and one workflow, read-only.
+WORKFLOW_PATHS: frozenset[tuple[str, str]] = frozenset(
+    ("get", f"{API_PREFIX}{path}") for path in ("/workflows", "/workflows/{project}/{name}")
+)
+
+# A workflow gate from hub web (AGH-231, AC-213.18): what answers it, and its decision (strict).
+GATE_PATHS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("get", f"{API_PREFIX}/approvals/{{approval_id}}/gate"),
+        ("post", f"{API_PREFIX}/approvals/{{approval_id}}/decision"),
+    }
+)
+
+# The run commands (AGH-232, AC-213.19): start, cancel, resume and abandon, strict writes.
+RUN_COMMAND_PATHS: frozenset[tuple[str, str]] = frozenset(
+    ("post", f"{API_PREFIX}{path}")
+    for path in (
+        "/workflow-runs",
+        "/workflow-runs/{run_id}/cancel",
+        "/workflow-runs/{run_id}/resume",
+        "/workflow-runs/{run_id}/abandon",
+    )
+)
+
+# An item's version history (AGH-295, S7): its versions, one version and its restore (a strict
+# write that needs the launch cookie), Toolkit and workflows; and the Studio's publish of a
+# draft, the other strict item write.
+ITEM_VERSION_PATHS: frozenset[tuple[str, str]] = frozenset(
+    (method, f"{API_PREFIX}{item}{path}")
+    for item in ("/projects/{project}/skills/{kind}/{source}/{name}", "/workflows/{project}/{name}")
+    for method, path in (
+        ("get", "/versions"),
+        ("get", "/versions/{version_id}"),
+        ("post", "/versions/{version_id}/restore"),
+    )
+) | {("post", f"{API_PREFIX}/projects/{{project}}/skills/drafts/{{draft_id}}/publish")}
+
+# Connecting hub web to Linear from Settings (playground): its check, the key's save and removal.
+LINEAR_PATHS: frozenset[tuple[str, str]] = frozenset(
+    (method, f"{API_PREFIX}/tracker/linear") for method in ("get", "put", "delete")
+)
+
+# The owner signs off a feature's owner steps (playground): a new SHIP eval in the hub, a strict
+# item write that needs the launch cookie (AGH-695).
+OWNER_SIGNOFF_PATHS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("post", f"{API_PREFIX}/features/{{project}}/{{slug}}/owner-signoff"),
+        ("post", f"{API_PREFIX}/features/{{project}}/{{slug}}/status"),
+    }
+)
+
+# The ticket flow (two-level-flows S2): one ticket's records, and the owner's decision on a plan
+# change request whose run is gone (strict, like a gate's decision).
+TICKET_FLOW_PATHS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("get", f"{API_PREFIX}/features/{{project}}/{{slug}}/tickets/{{ticket}}"),
+        ("post", f"{API_PREFIX}/features/{{project}}/{{slug}}/change-requests/{{n}}/decision"),
+    }
+)
+
+# Feature nicknames the owner sets from the Features screen (playground), kept on this machine.
+FEATURE_NAME_PATHS: frozenset[tuple[str, str]] = frozenset(
+    (method, f"{API_PREFIX}/feature-names") for method in ("get", "put")
+)
+
+# Syncing a hub to the running release from Settings (playground): pin, then hub sync.
+PLATFORM_SYNC_PATHS: frozenset[tuple[str, str]] = frozenset(
+    {("post", f"{API_PREFIX}/hubs/{{hub_id}}/platform-sync")}
+)
+
+# Fixing a hub's auto-fixable doctor findings from Health (playground): hub doctor --fix.
+DOCTOR_FIX_PATHS: frozenset[tuple[str, str]] = frozenset(
+    {("post", f"{API_PREFIX}/hubs/{{hub_id}}/doctor-fix")}
+)
+
+# Running an AC's recorded check from the feature page (playground): run, never recorded.
+AC_CHECK_PATHS: frozenset[tuple[str, str]] = frozenset(
+    {("post", f"{API_PREFIX}/features/{{project}}/{{slug}}/acs/{{ac}}/check-runs")}
+)
+
+# A UX design's HTML mockup, read beside its design on the feature page (playground), and the
+# same mockup as its own page, which the feature page frames (with a policy of its own).
+UX_MOCKUP_PATHS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("get", f"{API_PREFIX}/features/{{project}}/{{slug}}/mockups/{{name}}"),
+        ("get", f"{API_PREFIX}/features/{{project}}/{{slug}}/mockups/{{name}}/page"),
+    }
+)
+
+# The scenarios (AGH-350 plan T12, AC-350.30): the list, a scenario, its plan and its start, a
+# scenario run's record, its investigation's session (P-7, AM-2) and answer, and a finding's
+# issue and inbox note. Every POST is a strict write that needs the launch cookie.
+SCENARIO_PATHS: frozenset[tuple[str, str]] = frozenset(
+    (method, f"{API_PREFIX}{path}")
+    for method, path in (
+        ("get", "/scenarios"),
+        ("get", "/scenarios/{project}/{name}"),
+        ("post", "/scenarios/{project}/{name}/plan"),
+        ("post", "/scenarios/{project}/{name}/runs"),
+        ("get", "/scenario-runs/{run_id}"),
+        ("post", "/scenario-runs/{run_id}/investigation"),
+        ("post", "/scenario-runs/{run_id}/answer"),
+        ("post", "/scenario-runs/{run_id}/findings/{finding_id}/issue"),
+        ("post", "/scenario-runs/{run_id}/findings/{finding_id}/inbox"),
+        # The scenario builder: a document's check, the hub's actions, and the save (a strict
+        # write that needs the launch cookie).
+        ("post", "/projects/{project}/scenarios/validate"),
+        ("get", "/projects/{project}/actions"),
+        ("put", "/scenarios/{project}/{name}"),
+        ("delete", "/scenarios/{project}/{name}"),
+        ("get", "/scenarios/{project}/{name}/proposal"),
+        ("post", "/scenarios/{project}/{name}/proposal/dismiss"),
+        ("post", "/projects/{project}/actions"),
+        ("put", "/projects/{project}/actions/{pack}/{name}"),
+        # Debugging a scenario run written as blocks (ADR 0049): its breakpoints, Step and
+        # Continue (strict run writes), its values (the launch cookie) and migrate (an item
+        # write).
+        ("put", "/scenario-runs/{run_id}/breakpoints"),
+        ("post", "/scenario-runs/{run_id}/step"),
+        ("post", "/scenario-runs/{run_id}/continue"),
+        ("get", "/scenario-runs/{run_id}/values"),
+        ("post", "/scenarios/{project}/{name}/migrate"),
+    )
+)
+
+# Finding services with a read-only Claude session (ADR 0046): start, list, read and discard.
+DISCOVERY_PATHS: frozenset[tuple[str, str]] = frozenset(
+    (method, f"{API_PREFIX}/projects/{{project}}/environment-discoveries{path}")
+    for method, path in (
+        ("post", ""),
+        ("get", ""),
+        ("get", "/{discovery_id}"),
+        ("delete", "/{discovery_id}"),
+    )
+)
+
+# The knowledge view (AGH-393): the project's hub searched, and the documents linking to a note.
+KNOWLEDGE_PATHS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("get", f"{API_PREFIX}/projects/{{project}}/knowledge/search"),
+        ("get", f"{API_PREFIX}/projects/{{project}}/brain/backlinks"),
+    }
+)
+
+# The screen reads (ADR 0056): one GET per screen whose first view needs more than 5 calls.
+SCREEN_PATHS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("get", f"{API_PREFIX}/screens/shell"),
+        ("get", f"{API_PREFIX}/screens/portfolio"),
+        ("get", f"{API_PREFIX}/screens/project-overview/{{project}}"),
+        ("get", f"{API_PREFIX}/screens/sessions"),
+        ("get", f"{API_PREFIX}/screens/session-detail/{{session_id}}"),
+    }
+)
+
+# Every path the document lists.
+SERVED_PATHS: frozenset[tuple[str, str]] = (
+    P2_PATHS
+    | CLARITY_PATHS
+    | TICKET_PATHS
+    | SKILL_PATHS
+    | AGENT_SESSION_PATHS
+    | WORKFLOW_PATHS
+    | RUN_COMMAND_PATHS
+    | GATE_PATHS
+    | ITEM_VERSION_PATHS
+    | LINEAR_PATHS
+    | OWNER_SIGNOFF_PATHS
+    | TICKET_FLOW_PATHS
+    | FEATURE_NAME_PATHS
+    | PLATFORM_SYNC_PATHS
+    | DOCTOR_FIX_PATHS
+    | AC_CHECK_PATHS
+    | KNOWLEDGE_PATHS
+    | DISCOVERY_PATHS
+    | SCENARIO_PATHS
+    | SCREEN_PATHS
+    | UX_MOCKUP_PATHS
+)

@@ -1,0 +1,20 @@
+version: 1
+name: checks
+description: Run one make target, then judge its output.
+revision: 1
+inputs:
+  target: {required: true}
+nodes:
+  - id: run
+    type: shell
+    command: [make, $INPUTS.target]
+  - id: verdict
+    type: shell
+    command: [echo, $run.output]
+    depends_on: [run]
+    output_format:
+      type: object
+      properties:
+        verdict: {type: string}
+      required: [verdict]
+returns: verdict

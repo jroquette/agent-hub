@@ -1,0 +1,814 @@
+/* The Tickets tab's flow: the parallel groups as columns, left to right, then Done. */
+.ah-flow-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.ah-flow-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--text-muted);
+  background: var(--surface);
+}
+.ah-flow-count b {
+  font-weight: 600;
+  color: var(--text);
+}
+.ah-flow-count[data-tone="can_start"] b {
+  color: var(--done);
+}
+.ah-flow-count[data-tone="in_progress"] b {
+  color: var(--live);
+}
+.ah-flow-count[data-tone="waiting"] b {
+  color: var(--waiting);
+}
+.ah-flow-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--idle);
+}
+.ah-flow-dot[data-tone="can_start"],
+.ah-flow-dot[data-tone="done"] {
+  background: var(--done);
+}
+.ah-flow-dot[data-tone="in_progress"] {
+  background: var(--live);
+}
+.ah-flow-dot[data-tone="waiting"] {
+  background: var(--waiting);
+}
+.ah-flow-dot[data-tone="in_cycle"] {
+  background: var(--failed);
+}
+
+/* The epic heads the flow as one strip: the parent that tracks the tickets, never a step itself.
+   It wraps to two lines only on narrow screens. */
+.ah-flow-epic {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md, 8px);
+  background: var(--surface-sunken);
+}
+.ah-flow-epic[data-readiness="done"] {
+  border-style: solid;
+  border-color: var(--done);
+}
+.ah-flow-epic-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 20px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.ah-flow-epic-tag:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.ah-flow-epic > .ah-flow-track {
+  flex: 0 0 120px;
+}
+.ah-flow-epic-title {
+  flex: 1 1 200px;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ah-flow-track {
+  display: flex;
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--border);
+}
+.ah-flow-track span[data-tone="done"] {
+  background: var(--done);
+}
+.ah-flow-track span[data-tone="in_progress"] {
+  background: var(--live);
+}
+.ah-table tr[data-epic="true"] td {
+  background: var(--surface-sunken);
+}
+
+/* The header: title and intro, then the counts and the folded legend on the right. */
+.ah-flow-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.ah-flow-legend-intro {
+  color: var(--text-muted);
+}
+
+/* The flow on a pan and zoom canvas (components/Canvas.css): the groups as columns in the world,
+   left to right, edges from each blocker to the ticket it holds back. */
+.ah-flow-canvas {
+  min-height: 420px;
+}
+.ah-flow-cols {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  /* The gaps between groups are set per column by the router (flowRoutes.ts): 72 px or wider. */
+  gap: 0;
+}
+.ah-flow-edges {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+.ah-flow-edges-top {
+  z-index: 3;
+}
+/* Orthogonal lines, each a width --w (screen px at far zoom, so they never thin to a hairline). */
+.ah-flow-edges path {
+  --w: 1.5;
+  fill: none;
+  stroke: var(--border-control);
+  stroke-width: var(--w);
+}
+/* Each line's halo in the canvas ground: a later line cuts a gap where it crosses an earlier one. */
+.ah-flow-edges path.ah-flow-halo {
+  --w: 5.5;
+  stroke: var(--surface-sunken);
+  stroke-dasharray: none;
+}
+.ah-flow-edges path[data-source="plan"]:not(.ah-flow-halo) {
+  stroke-dasharray: 6 4;
+}
+.ah-flow-edges path[data-source="linear"]:not(.ah-flow-halo) {
+  stroke-dasharray: 2 3;
+}
+/* A settled line no longer holds anything back, and its card says "After X": it goes faint. */
+.ah-flow-edges path[data-settled="true"]:not(.ah-flow-halo) {
+  stroke: var(--border);
+}
+.ah-flow-edges path[data-critical="true"] {
+  --w: 2.25;
+  stroke: var(--accent);
+  opacity: 1;
+}
+.ah-flow-edges path[data-early="true"] {
+  --w: 2;
+  stroke: var(--waiting);
+}
+.ah-flow-edges path[data-hot] {
+  --w: 2.5;
+  stroke: var(--accent);
+  opacity: 1;
+}
+.ah-flow-edges path[data-hot][data-early="true"] {
+  --w: 2.5;
+  stroke: var(--waiting);
+}
+.ah-flow-edges [data-dim] {
+  opacity: 0.25;
+}
+/* A dot where a line branches off a shared trunk, in the strongest tone through it. */
+.ah-flow-dot {
+  fill: var(--border-control);
+}
+.ah-flow-dot[data-tone="settled"] {
+  fill: var(--border);
+}
+.ah-flow-dot[data-tone="critical"],
+.ah-flow-dot[data-tone="hot"] {
+  fill: var(--accent);
+}
+.ah-flow-dot[data-tone="early"] {
+  fill: var(--waiting);
+}
+/* Far zoom: what is left to do only, strokes at their screen width. */
+.ah-flow[data-zoom="far"] .ah-flow-edges path {
+  stroke-width: calc(var(--w) / var(--k));
+}
+.ah-flow[data-zoom="far"] .ah-flow-edges path[data-settled="true"] {
+  display: none;
+}
+[data-canvas="ticket-flow"] .ah-canvas-arrow path {
+  fill: var(--border-control);
+  stroke: none;
+}
+[data-canvas="ticket-flow"] .ah-canvas-arrow[data-tone="critical"] path,
+[data-canvas="ticket-flow"] .ah-canvas-arrow[data-tone="hot"] path {
+  fill: var(--accent);
+}
+[data-canvas="ticket-flow"] .ah-canvas-arrow[data-tone="settled"] path {
+  fill: var(--border);
+}
+[data-canvas="ticket-flow"] .ah-canvas-arrow[data-tone="early"] path {
+  fill: var(--waiting);
+}
+.ah-flow-col {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 288px;
+}
+.ah-flow-col-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 2px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-subtle);
+  white-space: nowrap;
+}
+.ah-flow-col-head b {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.ah-flow-col-n {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.ah-flow-col-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 4px 0 0;
+  list-style: none;
+}
+
+/* A compact card: id and status, title, what to do now, facts. No coloured left border: the
+   readiness is an icon and words, and only the attention states change the whole border. */
+.ah-flow-card {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) ease,
+    border-color var(--dur-fast) ease;
+}
+.ah-flow-card:hover {
+  background: var(--surface-hover);
+}
+.ah-flow-card[data-chain] {
+  border-color: var(--border-strong);
+}
+.ah-flow-card[aria-current="true"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.ah-flow-card[data-signal="waiting"] {
+  background: var(--waiting-soft);
+  border: 1.5px solid var(--waiting);
+  padding: 9.5px 11.5px;
+}
+.ah-flow-card[data-readiness="in_cycle"] {
+  border: 1.5px solid var(--failed);
+  padding: 9.5px 11.5px;
+}
+.ah-flow-card[data-readiness="canceled"] .ah-flow-card-title {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+.ah-flow-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+.ah-flow-card-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+.ah-flow-card-title a {
+  color: inherit;
+  text-decoration: none;
+}
+.ah-flow-card-title a:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+/* The ring of a focused title goes round its whole card. */
+.ah-flow-card-title a:focus-visible {
+  outline: none;
+}
+.ah-flow-card:has(.ah-flow-card-title a:focus-visible) {
+  outline: calc(2px / var(--k, 1)) solid var(--focus-ring);
+  outline-offset: calc(2px / var(--k, 1));
+}
+/* The card's "now": what the readiness adds to the Linear status, and the session or Start. */
+.ah-flow-card-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-2);
+  min-height: var(--control-sm);
+  font-size: 12.5px;
+  line-height: 18px;
+}
+.ah-flow-card-status:empty,
+.ah-flow-card-status:not(:has(*)) {
+  display: none;
+}
+.ah-flow-card-ready {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.ah-flow-card-action {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+  color: var(--text-muted);
+}
+.ah-flow-card-status > .ah-flow-card-action:only-child {
+  margin-left: 0;
+}
+/* The card's AI session: the newest one in any state, with how many earlier, and Start. */
+.ah-flow-card-now {
+  min-height: var(--control-sm);
+  display: flex;
+  align-items: center;
+}
+.ah-flow-card-now:empty {
+  display: none;
+}
+.ah-flow-card-session {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+}
+.ah-flow-card-session-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-subtle);
+}
+.ah-flow-card-steps {
+  font-size: 12px;
+}
+.ah-flow-card-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 10px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-subtle);
+}
+.ah-flow-card-facts:empty {
+  display: none;
+}
+.ah-flow-card-fact {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.ah-flow-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  font-size: 12px;
+  color: var(--text-subtle);
+}
+.ah-flow-critical {
+  font-weight: 500;
+  color: var(--accent);
+}
+/* Far zoom: id, status, title and the session's badge only. */
+.ah-flow[data-zoom="far"] .ah-flow-card-status,
+.ah-flow[data-zoom="far"] .ah-flow-card-facts,
+.ah-flow[data-zoom="far"] .ah-flow-card-steps,
+.ah-flow[data-zoom="far"] .ah-flow-card-session .ah-ticket-session .ah-small,
+.ah-flow[data-zoom="far"] .ah-flow-card-action {
+  display: none;
+}
+
+@media (forced-colors: active) {
+  .ah-flow-edges path {
+    stroke: CanvasText;
+  }
+  .ah-flow-edges path[data-settled="true"]:not(.ah-flow-halo) {
+    stroke: GrayText;
+  }
+  .ah-flow-edges path[data-hot]:not(.ah-flow-halo) {
+    stroke: Highlight;
+  }
+  .ah-flow-edges path.ah-flow-halo {
+    stroke: Canvas;
+  }
+  .ah-flow-dot {
+    fill: CanvasText;
+  }
+  .ah-flow-card[aria-current="true"] {
+    border-color: Highlight;
+  }
+}
+
+/* A ticket's id: the Linear link and the plan key, kept on one line. */
+.ah-ticket-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.ah-ticket-key {
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: 500 11px/16px var(--font-mono);
+  color: var(--text-subtle);
+}
+
+/* How many of a ticket's ACs pass: a short bar and the count. */
+.ah-ac-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.ah-ac-meter .ah-flow-track {
+  width: 56px;
+  height: 4px;
+}
+.ah-ac-meter[data-all="true"] {
+  color: var(--done);
+}
+
+/* The legend, folded beside the title. */
+.ah-flow-legend {
+  position: relative;
+  font-size: 12px;
+  color: var(--text-subtle);
+}
+.ah-flow-legend summary {
+  background: var(--surface-overlay);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  line-height: 20px;
+  cursor: pointer;
+  list-style: none;
+}
+.ah-flow-legend summary::-webkit-details-marker {
+  display: none;
+}
+.ah-flow-legend[open] summary {
+  color: var(--text);
+}
+.ah-flow-legend-body {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 300px;
+  max-height: min(60vh, 480px);
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.25);
+}
+.ah-flow-legend-body span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.ah-flow-line {
+  flex: none;
+  width: 22px;
+  border-top: 1.5px solid var(--border-control);
+}
+.ah-flow-line[data-source="plan"] {
+  border-top-style: dashed;
+}
+.ah-flow-line[data-source="linear"] {
+  border-top-style: dotted;
+}
+.ah-flow-line[data-settled="true"] {
+  border-top-color: var(--border);
+}
+/* The legend's branch: a line with a junction dot in its middle. */
+.ah-flow-line[data-branch="true"] {
+  position: relative;
+}
+.ah-flow-line[data-branch="true"]::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: -4px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--border-control);
+}
+.ah-flow-line[data-early="true"] {
+  border-top: 2px solid var(--waiting);
+}
+.ah-flow-line[data-critical="true"] {
+  border-top: 2.25px solid var(--accent);
+}
+
+/* The tickets table: room to breathe, each cell's lines aligned at the top. */
+.ah-table.ah-ticket-table td {
+  height: auto;
+  padding: 12px var(--space-3);
+  vertical-align: top;
+  white-space: normal;
+}
+.ah-table.ah-ticket-table td.ah-nowrap {
+  white-space: nowrap;
+}
+/* The title takes the room the fixed columns leave, but never less than a readable line: on a narrow
+   screen the table scrolls sideways (its wrap overflows) instead of squeezing the title to one word a line. */
+.ah-table.ah-ticket-table .ah-ticket-title-col {
+  min-width: 280px;
+}
+.ah-ticket-table tr[data-epic="true"] .ah-ticket-title {
+  font-weight: 600;
+}
+.ah-ticket-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  line-height: 20px;
+}
+.ah-ticket-branch {
+  color: var(--border-strong);
+  font-family: var(--font-mono);
+}
+.ah-ticket-table .ah-flow-epic-tag {
+  flex: none;
+}
+.ah-ticket-title[data-child="true"] {
+  padding-left: 4px;
+}
+/* A session of the ticket: its status and when it started, one click from its dialogue. */
+.ah-ticket-session {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.ah-ticket-session:hover {
+  color: var(--text);
+}
+.ah-ticket-session:hover .ah-small {
+  text-decoration: underline;
+}
+
+.ah-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--done);
+  display: inline-block;
+}
+.ah-live-dot[data-busy="true"] {
+  background: var(--live);
+  animation: ah-pulse 1.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ah-live-dot[data-busy="true"] {
+    animation: none;
+  }
+}
+
+/* The table's ACs cell: the card's meter as the summary, the AC ids folded under it. */
+.ah-ticket-acs summary {
+  cursor: pointer;
+  white-space: nowrap;
+  min-height: var(--control-sm);
+  line-height: var(--control-sm);
+}
+.ah-ticket-acs ul {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0 0;
+  gap: 4px;
+}
+
+/* A ticket's pull request link (#69), under its Linear id and in its card's meta line. */
+.ah-ticket-pr {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: var(--control-sm);
+}
+
+/* An AC's text in its tooltip in the Tickets table: three lines at most, for a quick check. */
+.ah-ticket-ac-tip {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/*
+ * The Eval tab's table, a tree: a summary row per scope (its ticket and title, then the latest
+ * eval's verdict, ACs, author and date in the same columns as the header), its evals folded
+ * under it, indented to start under the ticket id.
+ */
+.ah-eval-table .ah-eval-group th {
+  position: static;
+  height: var(--row);
+  padding: 0;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.ah-eval-table .ah-eval-group td {
+  background: var(--surface);
+}
+.ah-eval-table .ah-eval-group:hover th,
+.ah-eval-table .ah-eval-group:hover td {
+  background: var(--surface-hover);
+}
+.ah-eval-tbody + .ah-eval-tbody .ah-eval-group > * {
+  border-top: 1px solid var(--border-strong);
+}
+.ah-eval-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--row);
+  padding: 0 var(--space-3);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ah-eval-group-toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+.ah-eval-group-id {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ah-eval-group-title {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.ah-eval-table .ah-eval-run td {
+  background: var(--surface-sunken);
+}
+.ah-eval-table .ah-eval-run:hover td {
+  background: var(--surface-hover);
+}
+.ah-eval-table .ah-eval-run[aria-selected="true"] td {
+  background: var(--accent-soft);
+}
+/* 16px chevron + 8px gap, less the ghost button's own padding: the label starts under the id. */
+.ah-eval-child {
+  padding-left: 16px;
+}
+.ah-eval-when {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+.ah-eval-table td {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+/* The "Waiting for you" callout under the eval that waits on owner steps. */
+.ah-eval-table .ah-eval-owner-row td {
+  height: auto;
+  /* Starts under the ticket id, so it reads as the ticket's, not the table's. */
+  padding: 0 var(--space-3) var(--space-3) calc(var(--space-3) + 24px);
+  white-space: normal;
+  cursor: default;
+  background: var(--surface);
+}
+.ah-eval-table .ah-eval-owner-row:hover td {
+  background: var(--surface);
+}
+.ah-eval-table .ah-eval-group:has(+ .ah-eval-owner-row) > * {
+  border-bottom: 0;
+}
+.ah-eval-owner-row .ah-banner {
+  align-items: flex-start;
+}
+.ah-eval-decision {
+  gap: var(--space-3);
+  max-width: 720px;
+}
+.ah-eval-note {
+  width: 100%;
+  min-height: 56px;
+  resize: vertical;
+}
+
+/* The Tickets tab beside its ticket panel (AGH-330, 31-responsive.md): the panel overlays below
+   1600 px and docks from there, the table then keeping its first four columns. */
+.ah-ticket-layout {
+  display: flex;
+  gap: var(--space-4);
+  align-items: flex-start;
+}
+.ah-ticket-main {
+  flex: 1;
+  min-width: 0;
+}
+/* Full window: the flow and its ticket panel as one modal layer over the app. */
+.ah-ticket-layout[data-expanded] {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dialog);
+  padding: var(--space-4);
+  background: var(--bg);
+  overflow: hidden;
+}
+.ah-ticket-layout[data-expanded]:focus {
+  outline: none;
+}
+.ah-ticket-layout[data-expanded] .ah-side-panel[data-layout="overlay"] {
+  top: 0;
+}
+.ah-ticket-layout[data-expanded] .ah-side-panel[data-layout="docked"] {
+  max-height: calc(100vh - 2 * var(--space-4));
+}
+.ah-ticket-table tbody tr[data-ticket-open]:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+@media (max-width: 1599px) {
+  .ah-ticket-table [data-hide="laptop"] {
+    display: none;
+  }
+}
+@media (min-width: 1600px) {
+  .ah-ticket-layout:has(.ah-side-panel[data-layout="docked"]) .ah-ticket-table [data-hide] {
+    display: none;
+  }
+}

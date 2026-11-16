@@ -1,0 +1,12 @@
+--- rc (2 bytes) ---
+0
+
+--- stdout (204 bytes) ---
+{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "[hub guard] pushing to main is not allowed; open a PR from a dev/tst-<N>-<desc> branch"}}
+
+--- stderr (0 bytes) ---
+
+--- fs (0 bytes) ---
+
+--- calls (0 bytes) ---
+

@@ -1,0 +1,782 @@
+import ast
+import copy
+import json
+import re
+
+import pytest
+
+from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_files.writing_commands import (
+    WRITING_COMMANDS,
+    WRITING_TOOL_WORDS,
+    effective_allows,
+    matches,
+)
+from agent_hub.core.testing import builders
+from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.generator.built_json import (
+    HOOK_EVENTS,
+    base_hooks_block,
+    managed_settings,
+    marketplace,
+    marketplace_project,
+    mcp_config,
+    project_manifest,
+    project_settings,
+)
+from agent_hub.generator.json_merge import MergeError, merge_json
+from agent_hub.generator.render_hub import render_hub
+
+
+def a_config_named(name: str) -> HubConfig:
+    document = a_hub_document()
+    document["project"]["name"] = name
+    return HubConfig.model_validate(document)
+
+
+@pytest.mark.parametrize("project_name", ["demo", "acme-tools"])
+def test_declares_hub_server_when_mcp_config_built(project_name: str) -> None:
+    # AGH-392 D-mcp-json: every hub declares `hub mcp` through its own `./hub`, whatever its config.
+    assert mcp_config(a_config_named(project_name)) == {
+        "mcpServers": {
+            "hub": {"type": "stdio", "command": "${CLAUDE_PROJECT_DIR:-.}/hub", "args": ["mcp"]}
+        }
+    }
+
+
+@pytest.mark.parametrize("project_name", ["demo", "acme-tools"])
+def test_returns_empty_object_when_project_settings_built(project_name: str) -> None:
+    # Spec D2/D5: the project's own settings start empty; AGH-14 merges them into settings.json.
+    assert project_settings(a_config_named(project_name)) == {}
+
+
+@pytest.mark.parametrize("project_name", ["demo", "acme-tools"])
+def test_names_project_when_project_manifest_built(project_name: str) -> None:
+    # Spec Q-10: the project's name, a first version and a generic description; nothing else.
+    assert project_manifest(a_config_named(project_name)) == {
+        "name": project_name,
+        "version": "0.1.0",
+        "description": "Project agents, skills and guard extension of this hub.",
+    }
+
+
+@pytest.mark.parametrize("project_name", ["demo", "acme-tools"])
+def test_builds_marketplace_from_project_when_rendered(project_name: str) -> None:
+    # AGH-17 D4: the name and owner from `project.*`; the base plugin, then the project's own.
+    config = a_config_named(project_name)
+
+    assert marketplace(config) == {
+        "name": project_name,
+        "owner": {"name": config.project.author_name, "email": config.project.author_email},
+        "plugins": [
+            {"name": "hub-workflow", "source": "./plugin/hub-workflow"},
+            {"name": project_name, "source": f"./plugin/{project_name}"},
+        ],
+    }
+
+
+def test_owns_marketplace_by_project_when_author_absent() -> None:
+    # AGH-65 AC-65.8: a team hub names no developer; the project owns its marketplace.
+    document = a_hub_document()
+    for key in ("branch_prefix", "author_name", "author_email"):
+        del document["project"][key]
+
+    built = marketplace(HubConfig.model_validate(document))
+
+    assert built == {
+        "name": "demo",
+        "owner": {"name": "demo"},
+        "plugins": [
+            {"name": "hub-workflow", "source": "./plugin/hub-workflow"},
+            {"name": "demo", "source": "./plugin/demo"},
+        ],
+    }
+
+
+def test_omits_owner_email_when_only_name_set() -> None:
+    document = a_hub_document()
+    del document["project"]["author_email"]
+    config = HubConfig.model_validate(document)
+
+    built = marketplace(config)
+
+    assert isinstance(built, dict)
+    assert built["owner"] == {"name": config.project.author_name}
+
+
+@pytest.mark.parametrize("project_name", ["demo", "acme-tools"])
+def test_seeds_empty_marketplace_sibling_when_rendered(project_name: str) -> None:
+    # AGH-17 D4: the project adds its third-party pins to the seeded sibling.
+    assert marketplace_project(a_config_named(project_name)) == {}
+
+
+# Spec AC-4.7 (Q-5 keeps this hub's timeouts): event, matcher (``None``: no matcher key), the hook
+# file the command runs, timeout in seconds.
+HOOK_ROWS = (
+    ("SessionStart", "startup|resume|clear|compact", "session_start.py", 20),
+    # AGH-621: one PreToolUse hook for every tool runs the guard, then the sensor.
+    ("PreToolUse", "*", "pre_tool_use.py", 10),
+    ("PostToolUse", "Edit|Write|MultiEdit", "post_edit.py", 60),
+    ("Stop", None, "stop_gate.py", 180),
+    ("PreCompact", None, "pre_compact.py", 20),
+    ("SessionEnd", None, "session_end.py", 10),
+    # AGH-814: the prompt secret hook's group comes before the sensor's on UserPromptSubmit.
+    ("UserPromptSubmit", None, "prompt_secret.py", 5),
+    # AGH-812: the session reminder, right after the prompt secret warning.
+    ("UserPromptSubmit", None, "session_reminder.py", 5),
+)
+# AGH-200 D6 and E2: the events the hook sensor has a group of its own on, in the order the managed
+# settings list them; the tool events match every tool (``*``). Ten since AGH-621: on PreToolUse
+# the sensor runs inside pre_tool_use.py.
+SENSOR_EVENTS = (
+    "SessionStart",
+    "PostToolUse",
+    "Stop",
+    "PreCompact",
+    "SessionEnd",
+    "UserPromptSubmit",
+    "PostToolUseFailure",
+    "Notification",
+    "SubagentStart",
+    "SubagentStop",
+)
+SENSOR_MATCHERS = {"PostToolUse": "*", "PostToolUseFailure": "*"}
+SENSOR_ROWS = tuple(
+    (event, SENSOR_MATCHERS.get(event), "event_sensor.py", 5) for event in SENSOR_EVENTS
+)
+# The events of the managed settings, in their order: the base hooks' (PreToolUse second, from
+# the pre_tool_use row), then the sensor's own.
+SETTINGS_EVENTS = (
+    "SessionStart",
+    "PreToolUse",
+    "PostToolUse",
+    "Stop",
+    "PreCompact",
+    "SessionEnd",
+    "UserPromptSubmit",
+    "PostToolUseFailure",
+    "Notification",
+    "SubagentStart",
+    "SubagentStop",
+)
+# AGH-141 (O-3, E-4): the read-only gate on the two subagent events, no matcher, after the
+# sensor's group: 10 s on SubagentStart, 30 s on SubagentStop.
+GATE_ROWS = (
+    ("SubagentStart", None, "readonly_gate.py", 10),
+    ("SubagentStop", None, "readonly_gate.py", 30),
+)
+# AGH-838: the hook that names back the skills a prompt invokes, after the sensor's group.
+PROMPT_SKILLS_ROWS = (("UserPromptSubmit", None, "prompt_skills.py", 5),)
+
+
+def test_lists_base_hooks_then_sensor_when_settings_built(demo_config: HubConfig) -> None:
+    settings = managed_settings(demo_config)
+    assert isinstance(settings, dict)
+
+    expected: dict[str, list[dict[str, object]]] = {}
+    for event, matcher, file, timeout in (
+        *HOOK_ROWS,
+        *SENSOR_ROWS,
+        *GATE_ROWS,
+        *PROMPT_SKILLS_ROWS,
+    ):
+        group: dict[str, object] = {
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": f'python3 "$CLAUDE_PROJECT_DIR/plugin/hub-workflow/hooks/{file}"',
+                    "timeout": timeout,
+                }
+            ]
+        }
+        if matcher is not None:
+            group["matcher"] = matcher
+        expected.setdefault(event, []).append(group)
+    assert settings["hooks"] == expected
+    assert list(settings["hooks"]) == list(SETTINGS_EVENTS)
+
+
+# AGH-293 (Q-6): the guard's matcher is anchored, so only these exact names and MCP tools start
+# guard.py; Claude Code reads a matcher holding a regex character as one unanchored regex.
+# Python's ``re`` and JavaScript read this pattern alike: anchors, one group, alternation.
+# AGH-621 (P5): that matcher is now pre_tool_use.py's GUARDED_TOOLS, which picks the calls the one
+# PreToolUse hook hands to the guard.
+PRE_TOOL_USE = "plugin/hub-workflow/hooks/pre_tool_use.py"
+GUARDED_TOOLS = (
+    "Bash",
+    "Read",
+    "Grep",
+    "Glob",
+    "Edit",
+    "Write",
+    "MultiEdit",
+    "NotebookEdit",
+    "WebFetch",
+    "WebSearch",
+    "Task",
+    "Agent",
+    "SendMessage",
+    "mcp__db__query",
+    "mcp__x",
+)
+UNGUARDED_TOOLS = (
+    "TodoWrite",
+    "BashOutput",
+    "NotebookRead",
+    "TaskOutput",
+    "Skill",
+    "xmcp__y",
+    "Bashx",
+    "ReadX",
+)
+
+
+def module_constant(source: bytes, name: str) -> object:
+    """The literal a module-level ``name = <literal>`` assigns in ``source`` (read, never run)."""
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.Assign):
+            targets = [target for target in node.targets if isinstance(target, ast.Name)]
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets = [node.target] if isinstance(node.target, ast.Name) else []
+        else:
+            continue
+        if [target.id for target in targets] == [name]:
+            return ast.literal_eval(node.value)
+    raise AssertionError(f"no module-level {name} = <literal>")
+
+
+def test_routes_only_guarded_tools_when_matcher_searched(demo_config: HubConfig) -> None:
+    rendered = {file.path: file.content for file in render_hub(demo_config).files}
+    assert PRE_TOOL_USE in rendered
+    matcher = module_constant(rendered[PRE_TOOL_USE], "GUARDED_TOOLS")
+    assert isinstance(matcher, str)
+
+    routed = {
+        name: re.search(matcher, name) is not None for name in GUARDED_TOOLS + UNGUARDED_TOOLS
+    }
+
+    assert routed == {name: name in GUARDED_TOOLS for name in GUARDED_TOOLS + UNGUARDED_TOOLS}
+
+
+def sensor_groups(hooks: object) -> dict[str, list[object]]:
+    """``{event: [the matcher of each group running event_sensor.py]}`` of a ``hooks`` value."""
+    assert isinstance(hooks, dict)
+    found: dict[str, list[object]] = {}
+    for event, groups in hooks.items():
+        for group in groups:
+            for hook in group["hooks"]:
+                if hook["command"].endswith('/event_sensor.py"'):
+                    assert hook["timeout"] == 5
+                    found.setdefault(event, []).append(group.get("matcher"))
+    return found
+
+
+def test_registers_sensor_for_ten_events_when_settings_built(demo_config: HubConfig) -> None:
+    settings = managed_settings(demo_config)
+    assert isinstance(settings, dict)
+
+    found = sensor_groups(settings["hooks"])
+
+    assert found == {event: [SENSOR_MATCHERS.get(event)] for event in SENSOR_EVENTS}
+    assert len(found) == 10
+    assert sensor_groups(base_hooks_block()) == found
+    assert [hook.event for hook in HOOK_EVENTS if hook.file == "event_sensor.py"] == list(
+        SENSOR_EVENTS
+    )
+
+
+def hook_files(groups: object) -> list[tuple[object, str, object]]:
+    """``[(matcher, hook file, timeout)]`` of an event's groups, each group one command."""
+    assert isinstance(groups, list)
+    found: list[tuple[object, str, object]] = []
+    for group in groups:
+        assert isinstance(group, dict)
+        [hook] = group["hooks"]
+        file = hook["command"].rsplit("/", 1)[-1].removesuffix('"')
+        found.append((group.get("matcher"), file, hook["timeout"]))
+    return found
+
+
+def test_registers_readonly_gate_on_subagent_events_when_settings_built(
+    demo_config: HubConfig,
+) -> None:
+    settings = managed_settings(demo_config)
+    assert isinstance(settings, dict)
+
+    for hooks in (settings["hooks"], base_hooks_block()):
+        assert isinstance(hooks, dict)
+        gates = {
+            event: rows
+            for event, groups in hooks.items()
+            if (rows := [row for row in hook_files(groups) if row[1] == "readonly_gate.py"])
+        }
+        assert gates == {
+            "SubagentStart": [(None, "readonly_gate.py", 10)],
+            "SubagentStop": [(None, "readonly_gate.py", 30)],
+        }
+        # Each subagent event: the sensor's group, then the gate's (E-4).
+        assert hook_files(hooks["SubagentStart"]) == [
+            (None, "event_sensor.py", 5),
+            (None, "readonly_gate.py", 10),
+        ]
+        assert hook_files(hooks["SubagentStop"]) == [
+            (None, "event_sensor.py", 5),
+            (None, "readonly_gate.py", 30),
+        ]
+        for groups in (hooks["SubagentStart"], hooks["SubagentStop"]):
+            assert isinstance(groups, list)
+            assert all(isinstance(group, dict) and "matcher" not in group for group in groups)
+        # The gate rows come last: the event order stays the settings' (O-10).
+        assert list(hooks) == list(SETTINGS_EVENTS)
+    assert [hook.event for hook in HOOK_EVENTS if hook.file == "readonly_gate.py"] == [
+        "SubagentStart",
+        "SubagentStop",
+    ]
+    assert [hook.file for hook in HOOK_EVENTS[-3:-1]] == ["readonly_gate.py", "readonly_gate.py"]
+
+
+def test_registers_prompt_skills_after_sensor_when_settings_built(demo_config: HubConfig) -> None:
+    # AGH-838: one group on UserPromptSubmit, after the sensor's, no matcher, 5 s; the last row,
+    # so the events keep the settings' order.
+    settings = managed_settings(demo_config)
+    assert isinstance(settings, dict)
+
+    for hooks in (settings["hooks"], base_hooks_block()):
+        assert isinstance(hooks, dict)
+        assert hook_files(hooks["UserPromptSubmit"]) == [
+            (None, "prompt_secret.py", 5),
+            (None, "session_reminder.py", 5),
+            (None, "event_sensor.py", 5),
+            (None, "prompt_skills.py", 5),
+        ]
+        assert [
+            event
+            for event, groups in hooks.items()
+            if any(row[1] == "prompt_skills.py" for row in hook_files(groups))
+        ] == ["UserPromptSubmit"]
+        assert list(hooks) == list(SETTINGS_EVENTS)
+    assert HOOK_EVENTS[-1] == ("UserPromptSubmit", None, "prompt_skills.py", 5)
+
+
+def test_renders_additional_directories_when_repos_listed(
+    demo_config: HubConfig, variant_config: HubConfig
+) -> None:
+    demo = managed_settings(demo_config)
+    variant = managed_settings(variant_config)
+    assert isinstance(demo, dict)
+    assert isinstance(variant, dict)
+    assert isinstance(demo["permissions"], dict)
+    assert isinstance(variant["permissions"], dict)
+
+    # Spec D5: `../<dir>` for each repo, in `hub.json` order; no project name is written.
+    assert demo["permissions"]["additionalDirectories"] == ["../demo-api"]
+    assert variant["permissions"]["additionalDirectories"] == ["../demo-api", "../demo-web"]
+
+
+def test_renders_repos_in_config_order_when_repos_reordered() -> None:
+    document = a_hub_document()
+    document["repos"] = [
+        {"dir": repo_dir, "github": f"acme/{repo_dir}", "check_fast": "make a", "check": "make b"}
+        for repo_dir in ("zeta", "alpha")
+    ]
+    document["guard"] = {}
+    settings = managed_settings(HubConfig.model_validate(document))
+    assert isinstance(settings, dict)
+    assert isinstance(settings["permissions"], dict)
+
+    assert settings["permissions"]["additionalDirectories"] == ["../zeta", "../alpha"]
+
+
+def test_lists_hub_in_enabled_mcp_servers_when_settings_built(demo_config: HubConfig) -> None:
+    # ADR 0057: the managed settings enable the one server `.mcp.json` declares, by its name.
+    settings = managed_settings(demo_config)
+    servers = mcp_config(demo_config)
+    assert isinstance(settings, dict)
+    assert isinstance(servers, dict)
+    assert isinstance(servers["mcpServers"], dict)
+
+    assert settings["enabledMcpjsonServers"] == ["hub"]
+    assert settings["enabledMcpjsonServers"] == list(servers["mcpServers"])
+
+
+def test_equals_managed_hooks_when_base_block_read(demo_config: HubConfig) -> None:
+    # Spec AC-11.12 (Q-14): hub doctor's settings.weakening compares against this block: the value
+    # the managed settings embed; reading it renders nothing.
+    settings = managed_settings(demo_config)
+    assert isinstance(settings, dict)
+    expected = copy.deepcopy(settings["hooks"])
+
+    block = base_hooks_block()
+
+    assert block == expected
+    assert list(block) == list(dict.fromkeys(hook.event for hook in HOOK_EVENTS))
+    assert len(block) == 11
+    # Each call builds a new value: a caller that edits one, at the top or deeper, cannot change
+    # the next.
+    block["Stop"] = []
+    groups = block["PreToolUse"]
+    assert isinstance(groups, list)
+    assert isinstance(groups[0], dict)
+    hooks = groups[0]["hooks"]
+    assert isinstance(hooks, list)
+    hooks.clear()
+    assert base_hooks_block() == expected
+    assert base_hooks_block()["Stop"][0] is not base_hooks_block()["Stop"][0]
+
+
+BASE_HOSTS = [
+    "localhost",
+    "127.0.0.1",
+    "[::1]",
+    "pypi.org",
+    "files.pythonhosted.org",
+    "registry.npmjs.org",
+    "*.npmjs.org",
+    "github.com",
+    "*.github.com",
+    "*.githubusercontent.com",
+]
+PROJECT_HOSTS = ["linear.app", "*.linear.app", "docs.python.org"]
+
+
+def test_keeps_project_sandbox_hosts_when_sibling_merged(demo_config: HubConfig) -> None:
+    # AGH-16 D2 (E14): the base sandbox is managed; inventory row S6b's tracker and project hosts
+    # come from the sibling and merge after the base hosts, a repeated base host kept once.
+    template = managed_settings(demo_config)
+    sibling = {"sandbox": {"network": {"allowedDomains": ["github.com", *PROJECT_HOSTS]}}}
+
+    merged = json.loads(
+        merge_json(
+            template, json.dumps(sibling).encode("utf-8"), path=".claude/settings.project.json"
+        )
+    )
+
+    assert merged["sandbox"]["network"]["allowedDomains"] == BASE_HOSTS + PROJECT_HOSTS
+    assert merged["sandbox"]["network"]["allowLocalBinding"] is True
+    assert merged["sandbox"]["enabled"] is True
+    assert merged["sandbox"]["allowUnsandboxedCommands"] is False
+    assert merged["permissions"] == template["permissions"]  # type: ignore[index]
+
+
+@pytest.mark.parametrize(
+    ("sibling", "key_path"),
+    [
+        ({"disableAllHooks": True}, "disableAllHooks"),
+        ({"permissions": {"defaultMode": "bypassPermissions"}}, "permissions.defaultMode"),
+    ],
+)
+def test_refuses_weakening_key_when_sibling_merged_over_base(
+    sibling: dict[str, object], key_path: str, demo_config: HubConfig
+) -> None:
+    # The base denies and sandbox do not change the refusals: the sibling still cannot weaken.
+    with pytest.raises(MergeError) as caught:
+        merge_json(
+            managed_settings(demo_config),
+            json.dumps(sibling).encode("utf-8"),
+            path=".claude/settings.project.json",
+        )
+
+    assert caught.value.key_path == key_path
+
+
+def test_denies_push_to_each_protected_branch_when_default_branch_not_main(
+    variant_config: HubConfig,
+) -> None:
+    # The guard's protected set (`main`, `master`, the project's `trunk`), sorted; piped shells
+    # are denied as the subcommand Claude Code matches on its own.
+    settings = managed_settings(variant_config)
+    assert isinstance(settings, dict)
+    assert isinstance(settings["permissions"], dict)
+
+    assert settings["permissions"]["deny"] == [
+        "Read(**/*.pem)",
+        "Read(**/*.key)",
+        "Bash(git push --force*)",
+        "Bash(git push -f *)",
+        "Bash(git push * main)",
+        "Bash(git push origin HEAD:main*)",
+        "Bash(git push * master)",
+        "Bash(git push origin HEAD:master*)",
+        "Bash(git push * trunk)",
+        "Bash(git push origin HEAD:trunk*)",
+        "Bash(terraform *)",
+        "Bash(aws *)",
+        "Bash(git diff *--output*)",
+        "Bash(git log *--output*)",
+        "Bash(git show *--output*)",
+        "Bash(gh api -X GET * -X*)",
+        "Bash(gh api -X GET * --method*)",
+        "Bash(gh api -X GET -X*)",
+        "Bash(gh api -X GET --method*)",
+        "Bash(security *)",
+        "Bash(ssh *)",
+        "Bash(sh)",
+        "Bash(bash)",
+    ]
+
+
+@pytest.mark.parametrize("infra", [builders.a_guard_infra(), {}], ids=["infra", "empty"])
+def test_omits_infra_denies_when_guard_infra_set(infra: dict[str, list[str]]) -> None:
+    # AGH-45 D11: `guard.infra`, even `{}`, leaves `terraform` and `aws` to the guard hook; every
+    # other deny stays in place, and the hooks and the sandbox do not change.
+    document = a_hub_document()
+    plain = managed_settings(HubConfig.model_validate(document))
+    document["guard"]["infra"] = infra
+    settings = managed_settings(HubConfig.model_validate(document))
+    assert isinstance(plain, dict)
+    assert isinstance(plain["permissions"], dict)
+    assert isinstance(settings, dict)
+    assert isinstance(settings["permissions"], dict)
+    plain_deny = plain["permissions"]["deny"]
+    assert isinstance(plain_deny, list)
+
+    assert settings["permissions"]["deny"] == [
+        rule for rule in plain_deny if rule not in ("Bash(terraform *)", "Bash(aws *)")
+    ]
+    assert len(settings["permissions"]["deny"]) == len(plain_deny) - 2
+    assert settings["permissions"]["deny"][-4:] == [
+        "Bash(security *)",
+        "Bash(ssh *)",
+        "Bash(sh)",
+        "Bash(bash)",
+    ]
+    assert settings["hooks"] == plain["hooks"]
+    assert settings["sandbox"] == plain["sandbox"]
+    assert {key: value for key, value in settings.items() if key != "permissions"} == {
+        key: value for key, value in plain.items() if key != "permissions"
+    }
+    assert {key: value for key, value in settings["permissions"].items() if key != "deny"} == {
+        key: value for key, value in plain["permissions"].items() if key != "deny"
+    }
+
+
+def test_denies_push_to_repo_branch_when_repo_sets_default_branch() -> None:
+    document = a_hub_document()
+    document["repos"][0]["default_branch"] = "develop"
+    settings = managed_settings(HubConfig.model_validate(document))
+    assert isinstance(settings, dict)
+    assert isinstance(settings["permissions"], dict)
+
+    pushes = [rule for rule in settings["permissions"]["deny"] if " * " in str(rule)]
+    assert pushes == [
+        "Bash(git push * develop)",
+        "Bash(git push * main)",
+        "Bash(git push * master)",
+        # These two denies hold ` * ` too and follow the pushes in deny order.
+        "Bash(gh api -X GET * -X*)",
+        "Bash(gh api -X GET * --method*)",
+    ]
+
+
+def test_keeps_sibling_sandbox_scalar_when_sibling_disables_sandbox(
+    demo_config: HubConfig,
+) -> None:
+    # Owner decision (AGH-16 task 2.5 review): on scalars the project wins, so a sibling may turn
+    # the base sandbox off; only managed or CLI settings could enforce it.
+    sibling = {"sandbox": {"enabled": False}}
+
+    merged = json.loads(
+        merge_json(
+            managed_settings(demo_config),
+            json.dumps(sibling).encode("utf-8"),
+            path=".claude/settings.project.json",
+        )
+    )
+
+    assert merged["sandbox"]["enabled"] is False
+    assert merged["sandbox"]["allowUnsandboxedCommands"] is False
+    assert merged["sandbox"]["network"]["allowedDomains"] == BASE_HOSTS
+
+
+# The rules that run with no prompt, written out here so that a change of the settings' own
+# constants cannot move the expectation with it.
+GIT_READS = [
+    "Bash(git status *)",
+    "Bash(git diff *)",
+    "Bash(git log *)",
+    "Bash(git show *)",
+]
+GH_READS = [
+    "Bash(gh pr view *)",
+    "Bash(gh pr checks *)",
+    "Bash(gh pr diff *)",
+    "Bash(gh run view *)",
+    "Bash(gh run list *)",
+    "Bash(gh api -X GET *)",
+]
+LINEAR_SERVERS = ("mcp__Linear", "mcp__claude_ai_Linear")
+LINEAR_READ_TOOLS = (
+    "get_issue",
+    "list_issues",
+    "list_comments",
+    "list_issue_statuses",
+    "list_issue_labels",
+    "get_team",
+    "list_teams",
+    "get_user",
+    "get_project",
+    "list_projects",
+)
+GITHUB_READ_TOOLS = (
+    "pull_request_read",
+    "list_pull_requests",
+    "search_pull_requests",
+    "issue_read",
+    "list_issues",
+    "search_issues",
+    "get_file_contents",
+    "list_commits",
+    "get_commit",
+    "get_me",
+)
+# One rule per tool, by its full name: each Linear server's tools, then GitHub's.
+MCP_READS = [
+    *(f"{server}__{tool}" for server in LINEAR_SERVERS for tool in LINEAR_READ_TOOLS),
+    *(f"mcp__github__{tool}" for tool in GITHUB_READ_TOOLS),
+]
+# A rule for one MCP tool: a known server, then the tool's name in lowercase words.
+MCP_TOOL_RULE = re.compile(r"mcp__(Linear|claude_ai_Linear|github)__([a-z]+(?:_[a-z]+)*)")
+# The writing commands an allow rule matches, each with the one deny that stops it.
+DENIED_WRITES = {
+    "git diff --output=f": ["Bash(git diff *--output*)"],
+    "git log --output=f": ["Bash(git log *--output*)"],
+    "git show --output=f": ["Bash(git show *--output*)"],
+    "gh api -X GET -X POST repos/o/r/issues -f title=t": ["Bash(gh api -X GET -X*)"],
+    "gh api -X GET --method DELETE repos/o/r/git/refs/heads/b": ["Bash(gh api -X GET --method*)"],
+    "gh api -X GET repos/o/r/issues -X POST -f title=t": ["Bash(gh api -X GET * -X*)"],
+    "gh api -X GET repos/o/r/issues --method=PATCH": ["Bash(gh api -X GET * --method*)"],
+}
+# The REST calls the skills fall back to when they open and edit a pull request.
+REST_PR_FALLBACKS = (
+    "gh api repos/o/r/pulls -f base=main -f head=b -f title=t",
+    "gh api -X PATCH repos/o/r/pulls/1 -F body=@f",
+)
+
+
+def permission_rules(config: HubConfig) -> tuple[list[str], list[str]]:
+    """The allow and the deny rules of the managed settings, as strings."""
+    settings = managed_settings(config)
+    assert isinstance(settings, dict)
+    permissions = settings["permissions"]
+    assert isinstance(permissions, dict)
+    allow, deny = permissions["allow"], permissions["deny"]
+    assert isinstance(allow, list)
+    assert isinstance(deny, list)
+    return [str(rule) for rule in allow], [str(rule) for rule in deny]
+
+
+def writing_words(tool: str) -> set[str]:
+    """The writing words among the tool name's ``_`` parts; ``pull_request`` reads as one noun."""
+    return set(tool.replace("pull_request", "pullrequest").split("_")) & set(WRITING_TOOL_WORDS)
+
+
+def test_lists_read_only_allow_when_settings_built(demo_config: HubConfig) -> None:
+    allow, _ = permission_rules(demo_config)
+
+    assert allow[:4] == GIT_READS
+    assert allow[4:10] == GH_READS
+    # The watch of one pull request, which only reads; the bare `hub pr-watch` spelling still asks.
+    assert allow[10] == "Bash(./hub pr-watch *)"
+    assert allow[11:41] == MCP_READS
+    assert len(MCP_READS) == 30
+    # The onboard rules follow; their own tests pin them.
+    assert allow[41] == "Bash(sha256sum)"
+
+
+@pytest.mark.parametrize("config_name", ["demo", "variant"])
+def test_has_no_writing_allow_when_settings_built(
+    config_name: str, request: pytest.FixtureRequest
+) -> None:
+    allow, deny = permission_rules(request.getfixturevalue(f"{config_name}_config"))
+
+    stopped: dict[str, list[str]] = {}
+    for command in WRITING_COMMANDS:
+        allowing = [rule for rule in allow if matches(rule, command)]
+        denying = [rule for rule in deny if matches(rule, command)]
+        assert not allowing or denying, f"{allowing[0]} pre-allows {command!r}"
+        assert not effective_allows(allow, deny, command)
+        if allowing:
+            stopped[command] = denying
+
+    # Each write deny is the only rule that stops one command, so none is there for nothing.
+    assert stopped == DENIED_WRITES
+
+
+def test_has_no_writing_allow_for_mcp_tools_when_settings_built(demo_config: HubConfig) -> None:
+    allow, _ = permission_rules(demo_config)
+
+    tools = [rule for rule in allow if rule.startswith("mcp__")]
+
+    # The count keeps the loop below from passing on no rule at all.
+    assert len(tools) == 30
+    for rule in tools:
+        # No `*` and no rule for a whole server: the rule names one tool.
+        named = MCP_TOOL_RULE.fullmatch(rule)
+        assert named, rule
+        assert not writing_words(named[2]), rule
+    assert writing_words("pull_request_review_write") == {"write"}
+    assert writing_words("merge_pull_request") == {"merge"}
+    assert writing_words("request_copilot_review") == {"request"}
+    assert writing_words("save_issue") == {"save"}
+    assert writing_words("pull_request_read") == set()
+
+
+def test_keeps_rest_pr_fallback_out_of_denies_when_settings_built(
+    variant_config: HubConfig,
+) -> None:
+    # A deny refuses and never asks, so a deny that matched these calls would stop the skills
+    # from opening and editing a pull request after the owner's OK.
+    _, deny = permission_rules(variant_config)
+
+    for command in REST_PR_FALLBACKS:
+        assert not [rule for rule in deny if matches(rule, command)], command
+
+
+GUARD = "plugin/hub-workflow/hooks/guard.py"
+# The hub launcher, one verb, any arguments.
+LAUNCHER_COMMAND = re.compile(r"\./hub ([a-z][a-z-]*) \*")
+# The one `./` rule that names a whole command, and no sandbox exclusion matches it: it stays
+# inside the sandbox, so the guard's launcher verbs need not name it.
+SANDBOXED_LAUNCHER_RULE = "Bash(./hub doctor)"
+
+
+def excluded_commands(config: HubConfig) -> list[str]:
+    """The commands the managed settings run outside the sandbox, as strings."""
+    settings = managed_settings(config)
+    assert isinstance(settings, dict)
+    sandbox = settings["sandbox"]
+    assert isinstance(sandbox, dict)
+    excluded = sandbox["excludedCommands"]
+    assert isinstance(excluded, list)
+    return [str(command) for command in excluded]
+
+
+@pytest.mark.parametrize("config_name", ["demo", "variant"])
+def test_ties_relative_commands_to_guard_verbs_when_settings_built(
+    config_name: str, request: pytest.FixtureRequest
+) -> None:
+    # `./hub` is the file of the folder a call runs in, so each `./` command that leaves the
+    # sandbox or runs with no prompt must be a verb the guard holds to the hub folder.
+    config = request.getfixturevalue(f"{config_name}_config")
+    rendered = {file.path: file.content for file in render_hub(config).files}
+    verbs = module_constant(rendered[GUARD], "LAUNCHER_VERBS")
+    allow, _ = permission_rules(config)
+    excluded = excluded_commands(config)
+
+    relative = [entry for entry in excluded if entry.startswith("./")]
+    relative += [
+        rule.removeprefix("Bash(").removesuffix(")")
+        for rule in allow
+        if rule.startswith("Bash(./") and rule != SANDBOXED_LAUNCHER_RULE
+    ]
+
+    assert isinstance(verbs, tuple)
+    # These two keep the loop below from passing on no entry at all.
+    assert relative.count("./hub pr-watch *") == 2
+    assert "./hub worktree *" in relative
+    for entry in relative:
+        command = LAUNCHER_COMMAND.fullmatch(entry)
+        assert command, entry
+        assert command[1] in verbs, entry
+    assert SANDBOXED_LAUNCHER_RULE in allow
+    assert not [entry for entry in excluded if matches(f"Bash({entry})", "./hub doctor")]

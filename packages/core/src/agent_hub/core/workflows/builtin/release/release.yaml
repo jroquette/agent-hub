@@ -1,0 +1,305 @@
+# A platform release, up to its version PR: the release worktree of the platform repo from a
+# fresh fetch (hub step worktree), the PRs merged since the last vX.Y.Z tag and the proposed
+# version (since.py), the release commit (bump.py: the lockstep versions, the lock lines,
+# CHANGELOG, README, the SPEC status, the generated files), what hub sync rewrites at the new
+# version (pin.py list, computed, never written by hand; hub step config reads hub.json for it:
+# no script reads its config from hub.json), the notes (a read-only agent) and their
+# composition, the repo's check on that exact commit (exact_check.py; a red check ends the run
+# blocked), then the one approval, go, where the owner confirms the version and the commit, and
+# the version PR (hub step pr). The run ends there, outcome opened.
+# The tag goes on the version PR's merge commit, whatever the merge method. /release follows the
+# PR, dispatches the platform repo's release workflow, which alone makes the tag (ADR 0047),
+# checks the tag, then starts release-pin for the hub's pin PR; no node here makes, moves or
+# pushes a tag.
+# Started only by /release or ./hub workflow run release (never scheduled or event-started). No
+# node reads or writes the tracker (ADR 0030): /release finds or creates the release issue before
+# the run and comments after it.
+version: 1
+name: release
+description: >-
+  Cut a platform release when the owner asks: the PRs merged since the last tag, the version
+  bump, the check on the exact release commit and the notes with what hub sync rewrites, then
+  the version PR, behind the owner's approval of the version and the commit. The tag goes on
+  that PR's merge commit, and release-pin opens the hub's pin PR once the tag exists.
+revision: 2
+inputs:
+  issue:
+    required: true
+    description: The release's tracker issue, <team>-<n> (it names the worktrees and branches).
+  repo:
+    required: true
+    description: The platform repo, its dir in hub.json.
+  version:
+    required: false
+    default: ""
+    description: The version to release, X.Y.Z; empty, the bump the merged PRs call for.
+returns: report
+outcome_field: outcome
+nodes:
+  - id: worktree
+    type: shell
+    description: Make (or keep) the release worktree from a fresh fetch; print the repo's target.
+    command: [hub, step, worktree, --issue, $INPUTS.issue, --repo, $INPUTS.repo]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        path: {type: string}
+        branch: {type: string}
+        base: {type: string}
+        hub: {type: string}
+        hub_name: {type: string}
+        check: {type: string}
+        prompt:
+          type: object
+          properties:
+            guard: {type: string}
+            gate_step: {type: string}
+            commit_shape: {type: string}
+          required: [guard, gate_step, commit_shape]
+        target: {type: object}
+      required: [path, branch, base, hub, hub_name, check, prompt, target]
+
+  - id: since
+    type: script
+    description: The PRs merged since the last vX.Y.Z tag and the version they call for.
+    depends_on: [worktree]
+    runtime: python
+    script: since.py
+    args: [--version, $INPUTS.version]
+    cwd: $worktree.output.path
+    timeout: 5m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        last_tag: {type: string}
+        previous: {type: string}
+        version: {type: string}
+        bump: {type: string, enum: [major, minor, patch, none]}
+        reason: {type: string}
+        count: {type: integer, minimum: 0}
+        prs:
+          type: array
+          maxItems: 500
+          items:
+            type: object
+            properties:
+              number: {type: [integer, "null"]}
+              title: {type: string}
+              type: {type: string}
+              breaking: {type: boolean}
+              sha: {type: string}
+            required: [number, title, type, breaking, sha]
+        text: {type: string}
+        omitted: {type: integer, minimum: 0}
+      required: [last_tag, previous, version, bump, reason, count, prs, text, omitted]
+
+  - id: bump
+    type: script
+    description: The release commit - versions, lock lines, CHANGELOG, README, SPEC status, generated files.
+    depends_on: [since]
+    when: "$since.output.count > 0"
+    runtime: python
+    script: bump.py
+    args:
+      - --version
+      - $since.output.version
+      - --previous
+      - $since.output.previous
+      - --last-tag
+      - $since.output.last_tag
+      - --issue
+      - $INPUTS.issue
+      - --regenerate
+      - make llms-txt
+    cwd: $worktree.output.path
+    timeout: 15m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        version: {type: string}
+        previous: {type: string}
+        sha: {type: string, pattern: "^[0-9a-f]{40}$"}
+        files: {type: array, items: {type: string}}
+        changelog: {type: string}
+        changelog_empty: {type: boolean}
+        readme_replaced: {type: integer, minimum: 0}
+        lockstep: {type: string}
+      required: [version, previous, sha, files, changelog, changelog_empty, readme_replaced, lockstep]
+
+  - id: config
+    type: shell
+    description: The hub.json values this run's scripts need, read by the CLI (read-only).
+    depends_on: [bump]
+    command: [hub, step, config]
+    effect: read
+    mutates_checkout: false
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        default_branch: {type: string}
+        branch_prefix: {type: [string, "null"]}
+        hub: {type: object}
+        repos: {type: array, items: {type: object}}
+      required: [default_branch, branch_prefix, hub, repos]
+
+  - id: rewrites
+    type: script
+    description: What hub sync rewrites in every hub at the new version, rendered by the release's own CLI.
+    depends_on: [bump, config]
+    runtime: python
+    script: pin.py
+    args: [list, --repo, $worktree.output.path, --version, $bump.output.version, --config, $config.output]
+    timeout: 20m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        from: {type: string}
+        version: {type: string}
+        count: {type: integer, minimum: 0}
+        files:
+          type: array
+          maxItems: 500
+          items:
+            type: object
+            properties:
+              verb: {type: string}
+              path: {type: string}
+            required: [verb, path]
+        omitted: {type: integer, minimum: 0}
+        conflicts: {type: array, maxItems: 50, items: {type: string}}
+        text: {type: string}
+      required: [from, version, count, files, omitted, conflicts, text]
+
+  - id: notes
+    type: agent
+    description: The release notes' sections from the PRs and the CHANGELOG; read-only.
+    depends_on: [rewrites]
+    prompt_file: notes.md
+    cwd: $worktree.output.path
+    mutates_checkout: false
+    timeout: 30m
+    retry: {max_attempts: 0}
+    limits: {max_turns: 40, max_cost_usd: 3.0}
+    with:
+      hub: $worktree.output.hub
+      last_tag: $since.output.last_tag
+      version: $bump.output.version
+      prs: $since.output.text
+      changelog: $bump.output.changelog
+      sync: $rewrites.output.text
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [features, fixes, doctor, migration, summary]
+      properties:
+        features: {type: string, maxLength: 12000}
+        fixes: {type: string, maxLength: 12000}
+        doctor: {type: string, maxLength: 6000}
+        migration: {type: string, maxLength: 6000}
+        summary: {type: string, maxLength: 500}
+
+  - id: compose
+    type: script
+    description: The notes - five sections, the computed sync list verbatim, within the dispatch's limit.
+    depends_on: [notes]
+    runtime: python
+    script: compose.py
+    args: [--version, $bump.output.version, --last-tag, $since.output.last_tag, --sync, $rewrites.output.text]
+    stdin: $notes.output
+    timeout: 5m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        notes: {type: string, maxLength: 60000}
+        chars: {type: integer, minimum: 0}
+        trimmed: {type: boolean}
+      required: [notes, chars, trimmed]
+
+  - id: check
+    type: script
+    description: The repo's check on the clean release commit; a red check is data, the run ends blocked.
+    depends_on: [compose]
+    runtime: python
+    script: exact_check.py
+    args: [$worktree.output.check, --sha, $bump.output.sha]
+    cwd: $worktree.output.path
+    timeout: 60m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        sha: {type: string}
+        passed: {type: boolean}
+        exit_code: {type: [integer, "null"]}
+        log: {type: string}
+        tail: {type: string, maxLength: 4096}
+        problem: {type: string}
+      required: [sha, passed, exit_code, log, tail, problem]
+
+  - id: go
+    type: approval
+    description: The owner confirms the version and the release commit, then the version PR opens.
+    depends_on: [check]
+    when: "$check.output.passed == true"
+    message: >-
+      Release v$bump.output.version (from v$since.output.previous, $since.output.bump:
+      $since.output.reason). Release commit $bump.output.sha passed the check. CHANGELOG section
+      empty: $bump.output.changelog_empty. hub sync rewrites $rewrites.output.count managed files.
+      Notes: $notes.output.summary In the PR, write the SPEC status line's prose phrase for this
+      release. Confirm the version and the commit: approve, and the version PR opens. Merge it
+      with any merge method; the tag for v$bump.output.version goes on its merge commit.
+
+  - id: pr
+    type: shell
+    description: Push the release branch and open its PR, the notes as its body.
+    depends_on: [go]
+    when: "$go.output.decision == 'approve'"
+    command:
+      [hub, step, pr, --issue, $INPUTS.issue, --target, $worktree.output.target, --summary, $compose.output.notes]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        url: {type: string}
+        found: {type: boolean}
+        summary: {type: string}
+        title_unmatched: {type: [string, "null"]}
+      required: [url, found, summary, title_unmatched]
+
+  - id: report
+    type: script
+    description: The run's outcome, from what the steps printed (no tracker write).
+    depends_on: [since, check, go, pr]
+    trigger_rule: none_failed_min_one_success
+    runtime: python
+    script: report.py
+    args:
+      - --count
+      - $since.output.count
+      - --passed
+      - $check.output.passed
+      - --log
+      - $check.output.log
+      - --go
+      - $go.output.decision
+      - --pr
+      - $pr.output.url
+      - --version
+      - $since.output.version
+    timeout: 5m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        outcome: {type: string, enum: [nothing, blocked, declined, opened]}
+        version: {type: string}
+        pr: {type: string}
+        pin_pr: {type: string}
+        reason: {type: string}
+      required: [outcome, version, pr, pin_pr, reason]

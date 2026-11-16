@@ -1,0 +1,12 @@
+--- rc (2 bytes) ---
+0
+
+--- stdout (195 bytes) ---
+{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "[hub guard] force-push is not allowed; push a new commit (or a merge) instead"}}
+
+--- stderr (0 bytes) ---
+
+--- fs (0 bytes) ---
+
+--- calls (0 bytes) ---
+

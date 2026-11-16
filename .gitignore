@@ -1,0 +1,37 @@
+.DS_Store
+# Merge-conflict leftovers (git mergetool backups): never source.
+*.orig
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+node_modules/
+dist/
+build/
+# The web app's build plugins: source code, not a build's output.
+!apps/web/src/build/
+*.sqlite
+*.db
+.claude/settings.local.json
+CLAUDE.local.md
+.claude/worktrees/
+.coverage
+coverage.json
+.import_linter_cache/
+# The web app's test outputs.
+apps/web/coverage/
+apps/web/test-results/
+apps/web/playwright-report/
+# tsc -b's incremental build state.
+*.tsbuildinfo
+# make playground-export's packages: the owner's requests stay on this machine.
+.playground/
+# make perf's fixture cache and its outputs.
+/.perf/
+/perf.json
+/perf.log

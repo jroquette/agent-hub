@@ -1,0 +1,1440 @@
+"""``EventReadModels`` over an ``EventReader``: folds on read, snapshot pages, a memo (D12).
+
+Every read folds the stored events up to a high-water mark into sessions, runs, approvals and
+learnings. A list's first page uses the store's current mark and its cursor carries it, so the
+following pages fold exactly the same events: appends between page requests never make an
+item repeat or vanish (AC-200.32); they show up on the next first page.
+
+Reads stay cheap with state kept in process and never on disk. The loaded events are indexed
+by session, run and learning, each group in canonical order; a new batch is read alone and
+sorts again only the groups it touches. Each session, run, session's approvals and the
+learnings keep their last fold and the group it came from, so a batch folds again only what it
+changed (a session also when ``now`` crosses one of its status thresholds: statuses depend on
+the clock, but only through ``clock_phase``). The folded snapshot is kept for the same mark and
+the same second of ``now`` (threads asking for it at once share one fold), and a session's
+sorted timeline for the same mark, so its pages are found by bisection. A cursor from before
+later appends folds its own events apart. Search reads only ids, paths, commands and tool
+names, never payload bodies.
+
+A session is folded with its problems (AGH-201), so ``session_problems`` reads the snapshot of
+the current mark and agrees with the session's ``problems`` counts. A session's label gets its
+issue at read time from the hub's ``LabelRules`` (``label_rules_of``), outside every memo, so a
+``hub.json`` change shows on the next read without a refold.
+"""
+
+import bisect
+import threading
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
+from dataclasses import asdict, dataclass, replace
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
+from typing import Literal
+from urllib.parse import quote
+
+from agent_hub.core.agent_sessions.links import AgentSessionLink
+from agent_hub.core.approvals.approval import Approval, ApprovalKind
+from agent_hub.core.approvals.fold_approvals import fold_approvals
+from agent_hub.core.brain.brain_path import BRAIN_FOLDER
+from agent_hub.core.events.event import EventType
+from agent_hub.core.events.event_query import MAX_QUERY_LIMIT, EventQuery
+from agent_hub.core.events.event_reader import EventReader
+from agent_hub.core.events.stored_event import StoredEvent
+from agent_hub.core.features.feature_view import FeatureCost
+from agent_hub.core.learnings.fold_learning import fold_learnings
+from agent_hub.core.learnings.learning import Learning, LearningStatus
+from agent_hub.core.projects.project_views import (
+    ActivityItem,
+    LiveTile,
+    NeedsYouItem,
+    ProjectActivity,
+    SearchHit,
+    SearchKind,
+    StreamCounts,
+)
+from agent_hub.core.readmodels.cursor import (
+    Cursor,
+    CursorKeyPart,
+    InvalidCursorError,
+    decode_cursor,
+    encode_cursor,
+    id_digest,
+)
+from agent_hub.core.readmodels.fact_keys import canonical_events, resolve_facts
+from agent_hub.core.readmodels.filters import (
+    ApprovalFilter,
+    LearningFilter,
+    PageRequest,
+    RunFilter,
+    Scope,
+    SessionFilter,
+)
+from agent_hub.core.readmodels.fold_memo import FoldMemo
+from agent_hub.core.readmodels.live_tiles import (
+    WAITING_REASONS,
+    TileFields,
+    has_tile,
+    live_tiles,
+    tile_clock_settled,
+    tile_fields,
+)
+from agent_hub.core.readmodels.page import Page
+from agent_hub.core.readmodels.read_ports import EntityNotFoundError
+from agent_hub.core.runner.run_record import Stage
+from agent_hub.core.runs.fold_run import RUN_SESSION_PREFIX, fold_run, run_id_of
+from agent_hub.core.runs.workflow_run import WorkflowRun
+from agent_hub.core.sessions.fold_session import (
+    SESSION_SOURCES,
+    FoldedSession,
+    fold_session_with_problems,
+    run_issues,
+)
+from agent_hub.core.sessions.pricing import PRICES, PerMillion
+from agent_hub.core.sessions.problem import SessionProblems
+from agent_hub.core.sessions.session import (
+    Session,
+    SessionCost,
+    SessionFileChange,
+    SessionStatus,
+    SessionSummary,
+    TimelineEvent,
+)
+from agent_hub.core.sessions.session_cost import fold_session_cost
+from agent_hub.core.sessions.session_files import fold_session_files
+from agent_hub.core.sessions.session_label import LabelRules, with_issue, with_prompt_issue
+from agent_hub.core.sessions.session_status import clock_phase
+from agent_hub.core.sessions.session_summary import summarize_session
+from agent_hub.core.skills.skill_usage import LONGEST_WINDOW, SkillUses, fold_skill_uses, usage_at
+from agent_hub.core.skills.skill_view import SkillUsage
+
+type SortKey = tuple[CursorKeyPart, ...]
+
+RECENT = timedelta(days=7)
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+DAYS_IN_PERIOD = 7
+# Where a hub keeps its features; a session that touched a path under it worked on that feature.
+_FEATURES_PATH = "brain/features"
+_SEARCH_ORDER: Mapping[SearchKind, int] = {
+    "session": 0,
+    "run": 1,
+    "approval": 2,
+    "learning": 3,
+    "feature": 4,
+    "file": 5,
+    "command": 6,
+    "tool": 7,
+}
+
+
+_LEARNING_TYPES = frozenset(
+    {EventType.LEARNING_PROPOSED, EventType.LEARNING_ACCEPTED, EventType.LEARNING_REJECTED}
+)
+
+type _CanonicalKey = tuple[datetime, str, str]
+type _Group = Sequence[StoredEvent]
+# What a run's fold reads from each session it started; nothing in it depends on ``now``.
+type _RunLink = tuple[str, datetime, Decimal | None, bool, str | None, int | None]
+
+
+def _canonical_key(stored: StoredEvent) -> _CanonicalKey:
+    # The order ``canonical_events`` sorts by; unique, since the store keeps one event per key.
+    return (stored.event.timestamp, str(stored.event.source), stored.event.source_id)
+
+
+def _merged(group: _Group, added: Sequence[StoredEvent]) -> list[StoredEvent]:
+    # A new list, sorted again: only the groups a batch touches pay for it.
+    return canonical_events([*group, *added])
+
+
+class _EventIndex:
+    """The loaded events grouped by the keys the folds need, each group in canonical order.
+
+    ``apply`` takes one batch: it sorts again only the groups the batch touched, and gives each
+    of them a new list, so a fold memo can tell a changed group by identity. Events are held
+    once (a run or learning group shares them with its session group).
+    """
+
+    def __init__(self) -> None:
+        self.hwm = 0
+        self.by_session: dict[str, _Group] = {}
+        self.by_run: dict[str, _Group] = {}
+        self.issues: dict[str, str] = {}
+        self.learning_events: _Group = ()
+        self.live_sessions: set[str] = set()
+        self.gate_sessions: set[str] = set()
+        self.last_activity: dict[str, datetime] = {}
+
+    def apply(self, batch: Iterable[StoredEvent], *, hwm: int) -> None:
+        """Add the events stored after ``self.hwm`` up to ``hwm``."""
+        sessions: dict[str, list[StoredEvent]] = {}
+        runs: dict[str, list[StoredEvent]] = {}
+        learnings: list[StoredEvent] = []
+        for stored in batch:
+            self._note(stored)
+            sessions.setdefault(stored.event.session, []).append(stored)
+            run_id = run_id_of(stored)
+            if run_id is not None:
+                runs.setdefault(run_id, []).append(stored)
+            if stored.event.type in _LEARNING_TYPES:
+                learnings.append(stored)
+        for session_id, added in sessions.items():
+            self.by_session[session_id] = _merged(self.by_session.get(session_id, ()), added)
+        for run_id, added in runs.items():
+            group = _merged(self.by_run.get(run_id, ()), added)
+            self.by_run[run_id] = group
+            issue = run_issues(group).get(run_id)
+            if issue is not None:
+                self.issues[run_id] = issue
+        if learnings:
+            self.learning_events = _merged(self.learning_events, learnings)
+        self.hwm = hwm
+
+    def _note(self, stored: StoredEvent) -> None:
+        event = stored.event
+        if event.type == EventType.GATE_REQUEST:
+            self.gate_sessions.add(event.session)
+        if event.source in SESSION_SOURCES:
+            self.live_sessions.add(event.session)
+        known = self.last_activity.get(event.project)
+        if known is None or event.timestamp > known:
+            self.last_activity[event.project] = event.timestamp
+
+    def up_to(self, hwm: int) -> _EventIndex:
+        """A new index of the events up to ``hwm`` only (a cursor taken before later appends)."""
+        older = _EventIndex()
+        older.apply(
+            (stored for group in self.by_session.values() for stored in group if stored.seq <= hwm),
+            hwm=hwm,
+        )
+        return older
+
+
+@dataclass(kw_only=True, slots=True)
+class _FoldMemos:
+    """The last fold of each key and the group it was folded from (compared by identity)."""
+
+    sessions: dict[str, tuple[_Group, datetime, str | None, FoldedSession]]
+    runs: dict[str, tuple[_Group, tuple[_RunLink, ...], WorkflowRun]]
+    approvals: dict[
+        str, tuple[_Group, frozenset[tuple[str, str]], dict[str, tuple[_CanonicalKey, Approval]]]
+    ]
+    learnings: tuple[_Group, dict[str, Learning]]
+    # Tile fields per (session, waits on a permission request), derived at read time for the
+    # rows asked; valid while the group, ``now`` and the folded problems are the same.
+    tiles: dict[tuple[str, bool], tuple[_Group, datetime, SessionProblems, TileFields]]
+    # The paths each session touched, folded at read time for the file matches (the feature
+    # cost, the file filter); valid while the group is the same.
+    files: dict[str, tuple[_Group, frozenset[str]]]
+
+    @classmethod
+    def empty(cls) -> _FoldMemos:
+        return cls(sessions={}, runs={}, approvals={}, learnings=((), {}), tiles={}, files={})
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _Snapshot:
+    """Everything folded from the events up to ``hwm``, at one ``now``."""
+
+    hwm: int
+    now: datetime
+    by_session: Mapping[str, Sequence[StoredEvent]]
+    last_activity: Mapping[str, datetime]
+    sessions: Mapping[str, Session]
+    problems: Mapping[str, SessionProblems]
+    runs: Mapping[str, WorkflowRun]
+    approvals: Mapping[str, Approval]
+    learnings: Mapping[str, Learning]
+    tiles: dict[tuple[str, bool], tuple[_Group, datetime, SessionProblems, TileFields]]
+    files: dict[str, tuple[_Group, frozenset[str]]]
+
+
+def _microseconds(moment: datetime | None) -> int:
+    return 0 if moment is None else int(moment.timestamp() * 1_000_000)
+
+
+def _money_key(value: Decimal | None, *, descending: bool) -> SortKey:
+    # A missing amount sorts last both ways; amounts compare exactly at 10 decimal places.
+    if value is None:
+        return (0 if descending else 1, 0)
+    return (1 if descending else 0, int(value.scaleb(10).to_integral_value()))
+
+
+def _after(key: SortKey, item_id: str, cursor: Cursor, *, descending: bool) -> bool:
+    try:
+        if descending:
+            return (key, item_id) < (cursor.key, cursor.id)
+        return (key, item_id) > (cursor.key, cursor.id)
+    except TypeError as error:
+        msg = "invalid cursor: it belongs to another list or sort"
+        raise InvalidCursorError(msg) from error
+
+
+def _after_cursor[T](
+    ordered: list[T],
+    cursor: Cursor,
+    *,
+    key: Callable[[T], SortKey],
+    item_id: Callable[[T], str],
+    descending: bool,
+) -> list[T]:
+    if cursor.id is not None:
+        return [
+            item
+            for item in ordered
+            if _after(key(item), item_id(item), cursor, descending=descending)
+        ]
+    # Compact cursor: start right after the item whose id has its digest, in the same snapshot.
+    for index, item in enumerate(ordered):
+        if id_digest(item_id(item)) == cursor.id_digest:
+            return ordered[index + 1 :]
+    msg = "invalid cursor: the item it points to is gone; load the first page again"
+    raise InvalidCursorError(msg)
+
+
+def _paginate[T](
+    items: Sequence[T],
+    *,
+    key: Callable[[T], SortKey],
+    item_id: Callable[[T], str],
+    descending: bool,
+    request: PageRequest,
+    hwm: int,
+) -> Page[T]:
+    ordered = sorted(items, key=lambda item: (key(item), item_id(item)), reverse=descending)
+    if request.cursor is not None:
+        ordered = _after_cursor(
+            ordered,
+            decode_cursor(request.cursor),
+            key=key,
+            item_id=item_id,
+            descending=descending,
+        )
+    page = ordered[: request.limit]
+    next_cursor = None
+    if len(ordered) > request.limit:
+        last = page[-1]
+        next_cursor = encode_cursor(Cursor(hwm=hwm, key=key(last), id=item_id(last)))
+    return Page[T](items=tuple(page), next_cursor=next_cursor, total_estimate=len(items))
+
+
+def _timeline_key(item: TimelineEvent) -> SortKey:
+    return (_microseconds(item.timestamp), item.seq)
+
+
+@dataclass(frozen=True, slots=True)
+class _SortedTimeline:
+    """A session's timeline in page order with each item's ``(key, id)``, for O(log n) pages."""
+
+    items: tuple[TimelineEvent, ...]
+    positions: tuple[tuple[SortKey, str], ...]
+
+    @classmethod
+    def of(cls, timeline: Iterable[TimelineEvent]) -> _SortedTimeline:
+        ordered = sorted(timeline, key=lambda item: (_timeline_key(item), item.event_id))
+        positions = tuple((_timeline_key(item), item.event_id) for item in ordered)
+        return cls(items=tuple(ordered), positions=positions)
+
+    def page(self, request: PageRequest, *, hwm: int) -> Page[TimelineEvent]:
+        """The page ``_paginate`` would give for an ascending ``(timestamp, seq)`` order."""
+        start = 0
+        if request.cursor is not None:
+            cursor = decode_cursor(request.cursor)
+            try:
+                start = bisect.bisect_right(self.positions, (cursor.key, cursor.id))
+            except TypeError as error:
+                msg = "invalid cursor: it belongs to another list or sort"
+                raise InvalidCursorError(msg) from error
+        page = self.items[start : start + request.limit]
+        next_cursor = None
+        if start + request.limit < len(self.items):
+            key, item_id = self.positions[start + request.limit - 1]
+            next_cursor = encode_cursor(Cursor(hwm=hwm, key=key, id=item_id))
+        return Page[TimelineEvent](
+            items=page, next_cursor=next_cursor, total_estimate=len(self.items)
+        )
+
+
+def _whole[T](items: Sequence[T]) -> Page[T]:
+    return Page[T](items=tuple(items), next_cursor=None, total_estimate=len(items))
+
+
+def _in_scope(project: str, scope: Scope) -> bool:
+    return scope.project is None or scope.project == project
+
+
+def _names_note(learning: Learning, note: str | None) -> bool:
+    """Whether the learning's ``brain_path`` is ``note`` (under ``brain/``): app decisions store
+    it with the ``brain/`` prefix, other producers without (D-brain-path)."""
+    if note is None:
+        return True
+    stored = learning.brain_path
+    return stored is not None and stored.removeprefix(f"{BRAIN_FOLDER}/") == note
+
+
+class FoldedEventReadModels:
+    """The ``EventReadModels`` port, folding the events an ``EventReader`` returns.
+
+    ``now`` is the clock (folds never read one themselves); ``hub_path_of`` names a project's
+    hub path for "How to decide", when the caller knows it; ``label_rules_of`` gives a
+    project's ``LabelRules`` (tracker teams, branch prefix), or None when its hub is unknown,
+    and is asked on every read that returns a session or a tile. ``agent_session_links_of``
+    finds the agent sessions ``hub web`` drives sessions from (P13), asked once per project on
+    the same reads: it fills ``Session.agent_session_id``, and a tile whose agent session
+    waits on a permission request shows ``waiting`` (AC-165.25).
+    """
+
+    def __init__(
+        self,
+        reader: EventReader,
+        *,
+        now: Callable[[], datetime],
+        hub_path_of: Callable[[str], str | None] | None = None,
+        prices: Mapping[str, PerMillion] = PRICES,
+        label_rules_of: Callable[[str], LabelRules | None] | None = None,
+        agent_session_links_of: Callable[[str, Collection[str]], Mapping[str, AgentSessionLink]]
+        | None = None,
+    ) -> None:
+        self._reader = reader
+        self._now = now
+        self._hub_path_of = hub_path_of
+        self._label_rules_of = label_rules_of
+        self._agent_session_links_of = agent_session_links_of
+        self._prices = prices
+        # The events read so far, grouped, and the mark they were read up to: the store only
+        # grows, so a later read takes only what was appended since.
+        self._index = _EventIndex()
+        self._memos = _FoldMemos.empty()
+        self._folding = threading.Lock()
+        self._snapshots: FoldMemo[tuple[int, datetime], _Snapshot] = FoldMemo(max_entries=8)
+        # A session's timeline depends only on its events, so it lives as long as the mark: the
+        # pages of one long session (a 5,000-event one is 25 pages) build it once.
+        self._timelines: FoldMemo[str, _SortedTimeline] = FoldMemo(max_entries=32)
+        # Skill and agent uses per (project, UTC date of ``now``) at the store's mark, folded from
+        # that date's midnight minus 90 days; each read counts them at its own ``now`` (P2).
+        # 64 entries, so every registered hub keeps one: Home's usage table reads each project
+        # on every request, and with fewer entries than hubs the LRU would fold them all each
+        # time. An entry is one project's 90-day use times; past days' entries stay until 64 are
+        # kept, so the memo holds at most 64 such entries, and past 64 hubs each read refolds.
+        self._usage: FoldMemo[tuple[str, date], SkillUses] = FoldMemo(max_entries=64)
+
+    # Loading and folding
+
+    def _load(self, *, after: int, hwm: int) -> tuple[StoredEvent, ...]:
+        loaded: list[StoredEvent] = []
+        after_seq = after
+        while True:
+            page = self._reader.query(EventQuery(after_seq=after_seq, limit=MAX_QUERY_LIMIT))
+            loaded.extend(stored for stored in page.items if stored.seq <= hwm)
+            if page.next_after_seq is None or page.next_after_seq >= hwm:
+                return tuple(loaded)
+            after_seq = page.next_after_seq
+
+    def _index_at(self, hwm: int) -> tuple[_EventIndex, _FoldMemos]:
+        """The index of the events up to ``hwm`` and the memos to fold it with."""
+        current = self._reader.high_water_mark()
+        if current < self._index.hwm:
+            # A smaller mark is another store at the same path: read it all again.
+            self._index, self._memos = _EventIndex(), _FoldMemos.empty()
+        target = min(hwm, current)
+        if target > self._index.hwm:
+            self._index.apply(self._load(after=self._index.hwm, hwm=target), hwm=target)
+        if target == self._index.hwm:
+            return self._index, self._memos
+        # A cursor from before later appends: fold its events apart, keeping the memos.
+        return self._index.up_to(target), _FoldMemos.empty()
+
+    def _fold(self, hwm: int, now: datetime) -> _Snapshot:
+        with self._folding:
+            index, memos = self._index_at(hwm)
+            # Sessions in the order their first events come in.
+            live = sorted(index.live_sessions, key=lambda s: _canonical_key(index.by_session[s][0]))
+            by_session = {session_id: index.by_session[session_id] for session_id in live}
+            folded = self._fold_sessions(by_session, now=now, issues=index.issues, memos=memos)
+            sessions = {session_id: item.session for session_id, item in folded.items()}
+            hub_paths = self._hub_paths(index.last_activity)
+            return _Snapshot(
+                hwm=hwm,
+                now=now,
+                by_session=by_session,
+                last_activity=dict(index.last_activity),
+                sessions=sessions,
+                problems={session_id: item.problems for session_id, item in folded.items()},
+                runs=_fold_runs(index, sessions, memos),
+                approvals=_fold_approvals(index, hub_paths, memos),
+                learnings=_fold_learnings(index, memos),
+                tiles=memos.tiles,
+                files=memos.files,
+            )
+
+    def _fold_sessions(
+        self,
+        by_session: Mapping[str, _Group],
+        *,
+        now: datetime,
+        issues: Mapping[str, str],
+        memos: _FoldMemos,
+    ) -> dict[str, FoldedSession]:
+        # A session whose events, clock phase and run issue are unchanged is not folded again
+        # (``clock_phase``: between two thresholds ``now`` changes nothing in the fold); its
+        # run comes from its own events, so the same events name the same run. Its problems
+        # are folded with it, at the same status.
+        folded: dict[str, FoldedSession] = {}
+        for session_id, group in by_session.items():
+            found = memos.sessions.get(session_id)
+            if (
+                found is not None
+                and found[0] is group
+                and _same_clock_phase(group, found[1], now)
+                and found[2] == _run_issue(found[3].session, issues)
+            ):
+                folded[session_id] = found[3]
+                continue
+            item = fold_session_with_problems(group, now=now, issues=issues, prices=self._prices)
+            memos.sessions[session_id] = (group, now, _run_issue(item.session, issues), item)
+            folded[session_id] = item
+        return folded
+
+    def _hub_paths(self, projects: Iterable[str]) -> dict[str, str]:
+        if self._hub_path_of is None:
+            return {}
+        paths = {project: self._hub_path_of(project) for project in projects}
+        return {project: path for project, path in paths.items() if path is not None}
+
+    def _snapshot(self, cursor: str | None = None) -> _Snapshot:
+        hwm = decode_cursor(cursor).hwm if cursor is not None else self._reader.high_water_mark()
+        now = self._now()
+        second = now.replace(microsecond=0)
+        return self._snapshots.get((hwm, second), hwm=hwm, compute=lambda: self._fold(hwm, now))
+
+    def _session(self, snapshot: _Snapshot, session_id: str) -> Session:
+        session = snapshot.sessions.get(session_id)
+        if session is None:
+            raise EntityNotFoundError(entity="session", entity_id=session_id)
+        return session
+
+    def _links(self, sessions: Iterable[Session]) -> dict[tuple[str, str], AgentSessionLink]:
+        """The agent-session link of each of ``sessions`` that has one, by ``(project,
+        session_id)``: one lookup per project."""
+        links_of = self._agent_session_links_of
+        if links_of is None:
+            return {}
+        by_project: dict[str, list[str]] = {}
+        for session in sessions:
+            by_project.setdefault(session.project, []).append(session.id)
+        return {
+            (project, session_id): link
+            for project, session_ids in by_project.items()
+            for session_id, link in links_of(project, session_ids).items()
+        }
+
+    def _decorated(
+        self,
+        sessions: Sequence[Session],
+        *,
+        links: Mapping[tuple[str, str], AgentSessionLink] | None = None,
+    ) -> list[tuple[Session, bool]]:
+        """Each session with its issue and agent-session link, and whether that agent session
+        waits on a permission request; ``links`` when the caller already read them (``_links``),
+        else they are read here."""
+        if links is None:
+            links = self._links(sessions)
+        rules: dict[str, LabelRules | None] = {}
+        decorated: list[tuple[Session, bool]] = []
+        for session in sessions:
+            if session.project not in rules:
+                found = self._label_rules_of
+                rules[session.project] = None if found is None else found(session.project)
+            link = links.get((session.project, session.id))
+            labelled = _with_issue(session, rules[session.project], link)
+            if link is not None:
+                labelled = labelled.model_copy(update={"agent_session_id": link.agent_session_id})
+            decorated.append((labelled, link is not None and link.waiting))
+        return decorated
+
+    def _of_issue(
+        self,
+        sessions: Iterable[Session],
+        issue: str,
+        *,
+        links: Mapping[tuple[str, str], AgentSessionLink],
+    ) -> list[Session]:
+        """The sessions about ``issue`` (any case): the issue their first prompt
+        (``/feature AGH-305``) names, else their branch or worktree, for the hub's tracker
+        teams, else the one their run names. ``links`` are their agent-session links
+        (``_links``)."""
+        return self._of_issues(sessions, frozenset({issue.casefold()}), links=links)
+
+    def _of_issues(
+        self,
+        sessions: Iterable[Session],
+        wanted: frozenset[str],
+        *,
+        links: Mapping[tuple[str, str], AgentSessionLink],
+    ) -> list[Session]:
+        """The sessions about one of the ``wanted`` issues (casefolded), as ``_of_issue``."""
+        rules: dict[str, LabelRules | None] = {}
+        found: list[Session] = []
+        for session in sessions:
+            if session.project not in rules:
+                rules_of = self._label_rules_of
+                rules[session.project] = None if rules_of is None else rules_of(session.project)
+            link = links.get((session.project, session.id))
+            label = _with_issue(session, rules[session.project], link).label
+            of = (label.issue if label is not None else None) or session.issue
+            if of is not None and of.casefold() in wanted:
+                found.append(session)
+        return found
+
+    # Sessions
+
+    def list_sessions(self, session_filter: SessionFilter) -> Page[Session]:
+        """Sessions matching the filter, one page in its sort order."""
+        snapshot = self._snapshot(session_filter.cursor)
+        matching = [
+            session
+            for session in snapshot.sessions.values()
+            if _session_matches(session, session_filter, snapshot)
+        ]
+        links: dict[tuple[str, str], AgentSessionLink] | None = None
+        if session_filter.issue is not None:
+            # The page is a subset of these sessions, so the links read here decorate it too.
+            links = self._links(matching)
+            matching = self._of_issue(matching, session_filter.issue, links=links)
+        sort = session_filter.sort
+        descending = sort.startswith("-")
+        page = _paginate(
+            matching,
+            key=_session_sort_key(sort.removeprefix("-"), descending=descending),
+            item_id=lambda session: session.id,
+            descending=descending,
+            request=session_filter,
+            hwm=snapshot.hwm,
+        )
+        items = _with_tile_fields(snapshot, self._decorated(page.items, links=links))
+        return page.model_copy(update={"items": tuple(items)})
+
+    def get_session(self, session_id: str) -> Session:
+        """One session, with its tile fields."""
+        snapshot = self._snapshot()
+        session = self._session(snapshot, session_id)
+        return _with_tile_fields(snapshot, self._decorated([session]))[0]
+
+    def observed(self, pairs: Iterable[tuple[str, str]]) -> frozenset[tuple[str, str]]:
+        """The ``(project, session_id)`` pairs that are sessions of their project, from one
+        snapshot (``ObservedSessionLookup``)."""
+        sessions = self._snapshot().sessions
+        return frozenset(
+            (project, session_id)
+            for project, session_id in pairs
+            if (found := sessions.get(session_id)) is not None and found.project == project
+        )
+
+    def session_summary(self, session_id: str) -> SessionSummary:
+        """The session's summary lines (D17)."""
+        snapshot = self._snapshot()
+        self._session(snapshot, session_id)
+        return summarize_session(session_id, snapshot.by_session[session_id], now=snapshot.now)
+
+    def session_events(
+        self, session_id: str, *, types: frozenset[EventType], page: PageRequest
+    ) -> Page[TimelineEvent]:
+        """The session's events in timestamp order, filtered by type (empty = all)."""
+        snapshot = self._snapshot(page.cursor)
+        self._session(snapshot, session_id)
+        timeline = self._timelines.get(
+            session_id,
+            hwm=snapshot.hwm,
+            compute=lambda: _SortedTimeline.of(_timeline(snapshot.by_session[session_id])),
+        )
+        if not types:
+            return timeline.page(page, hwm=snapshot.hwm)
+        selected = [item for item in timeline.items if item.type in types]
+        return _paginate(
+            selected,
+            key=lambda item: (_microseconds(item.timestamp), item.seq),
+            item_id=lambda item: item.event_id,
+            descending=False,
+            request=page,
+            hwm=snapshot.hwm,
+        )
+
+    def session_files(self, session_id: str) -> Page[SessionFileChange]:
+        """The paths the session touched."""
+        snapshot = self._snapshot()
+        self._session(snapshot, session_id)
+        return _whole(fold_session_files(snapshot.by_session[session_id]))
+
+    def session_problems(self, session_id: str) -> SessionProblems:
+        """The session's problems and "what went wrong" lines, folded with the session."""
+        snapshot = self._snapshot()
+        self._session(snapshot, session_id)
+        return snapshot.problems[session_id]
+
+    def session_cost(self, session_id: str) -> SessionCost:
+        """The session's estimated cost per turn and in total, with its run's total and budget."""
+        snapshot = self._snapshot()
+        session = self._session(snapshot, session_id)
+        cost = fold_session_cost(session_id, snapshot.by_session[session_id], prices=self._prices)
+        run = None if session.run_id is None else snapshot.runs.get(session.run_id)
+        if run is None:
+            return cost
+        budget = None if run.caps is None else run.caps.budget_usd
+        return cost.model_copy(update={"run_total_usd": run.cost_usd, "budget_usd": budget})
+
+    def feature_cost(self, project: str, slug: str, issues: tuple[str, ...]) -> FeatureCost:
+        """What the feature's sessions cost: those of ``project`` that touched (read or
+        changed) ``brain/features/<slug>/`` or worked on one of its ``issues``, each counted
+        once. A subagent's turns are part of its session's cost."""
+        snapshot = self._snapshot()
+        scoped = [s for s in snapshot.sessions.values() if s.project == project]
+        folder = f"{_FEATURES_PATH}/{slug}/"
+        found = {
+            session.id: session
+            for session in scoped
+            if _file_matches(_touched(snapshot, session.id), folder)
+        }
+        if issues:
+            rest = [session for session in scoped if session.id not in found]
+            wanted = frozenset(issue.casefold() for issue in issues)
+            of_issues = self._of_issues(rest, wanted, links=self._links(rest))
+            found |= {session.id: session for session in of_issues}
+        priced = [session.cost_usd for session in found.values() if session.cost_usd is not None]
+        return FeatureCost(
+            total_usd=sum(priced, Decimal(0)) if priced else None,
+            sessions=len(found),
+            unpriced=len(found) - len(priced),
+        )
+
+    def list_live_sessions(self, scope: Scope) -> Page[LiveTile]:
+        """Live session tiles grouped waiting, live, idle, ended recently."""
+        snapshot = self._snapshot()
+        scoped = [
+            session
+            for session in snapshot.sessions.values()
+            if _in_scope(session.project, scope) and has_tile(session, now=snapshot.now)
+        ]
+        decorated = self._decorated(scoped)
+        waiting = {session.id for session, waits in decorated if waits}
+        sessions = {
+            session.id: _waiting(session) if session.id in waiting else session
+            for session, _ in decorated
+        }
+        budgets = {
+            run_id: run.caps.budget_usd
+            for run_id, run in snapshot.runs.items()
+            if run.caps is not None and run.caps.budget_usd is not None
+        }
+        tiles = live_tiles(
+            sessions,
+            snapshot.by_session,
+            now=snapshot.now,
+            budgets=budgets,
+            problems=snapshot.problems,
+        )
+        return _whole(
+            tuple(_permission_tile(tile) if tile.id in waiting else tile for tile in tiles)
+        )
+
+    # Runs, approvals, learnings
+
+    def list_runs(self, run_filter: RunFilter) -> Page[WorkflowRun]:
+        """Workflow runs matching the filter, newest first."""
+        snapshot = self._snapshot(run_filter.cursor)
+        matching = [run for run in snapshot.runs.values() if _run_matches(run, run_filter)]
+        return _paginate(
+            matching,
+            key=lambda run: (_microseconds(run.started_at),),
+            item_id=lambda run: run.id,
+            descending=True,
+            request=run_filter,
+            hwm=snapshot.hwm,
+        )
+
+    def get_run(self, run_id: str) -> WorkflowRun:
+        """One workflow run."""
+        run = self._snapshot().runs.get(run_id)
+        if run is None:
+            raise EntityNotFoundError(entity="run", entity_id=run_id)
+        return run
+
+    def list_approvals(self, approval_filter: ApprovalFilter) -> Page[Approval]:
+        """Approvals matching the filter, oldest first."""
+        snapshot = self._snapshot(approval_filter.cursor)
+        matching = [
+            approval
+            for approval in snapshot.approvals.values()
+            if _approval_matches(approval, approval_filter)
+        ]
+        return _paginate(
+            matching,
+            key=lambda approval: (_microseconds(approval.requested_at),),
+            item_id=lambda approval: approval.id,
+            descending=False,
+            request=approval_filter,
+            hwm=snapshot.hwm,
+        )
+
+    def get_approval(self, approval_id: str) -> Approval:
+        """One approval."""
+        approval = self._snapshot().approvals.get(approval_id)
+        if approval is None:
+            raise EntityNotFoundError(entity="approval", entity_id=approval_id)
+        return approval
+
+    def list_learnings(self, learning_filter: LearningFilter) -> Page[Learning]:
+        """Learnings matching the filter, newest proposal first."""
+        snapshot = self._snapshot(learning_filter.cursor)
+        matching = [
+            learning
+            for learning in snapshot.learnings.values()
+            if _in_scope(learning.project, learning_filter)
+            and (learning_filter.status is None or learning.status == learning_filter.status)
+            and _names_note(learning, learning_filter.brain_path)
+        ]
+        return _paginate(
+            matching,
+            key=lambda learning: (_microseconds(learning.proposed_at),),
+            item_id=lambda learning: learning.id,
+            descending=True,
+            request=learning_filter,
+            hwm=snapshot.hwm,
+        )
+
+    def get_learning(self, learning_id: str) -> Learning:
+        """One learning."""
+        learning = self._snapshot().learnings.get(learning_id)
+        if learning is None:
+            raise EntityNotFoundError(entity="learning", entity_id=learning_id)
+        return learning
+
+    # Projects, needs, activity, search, counts
+
+    def project_activity(self, project: str) -> ProjectActivity:
+        """The event-derived numbers of one project (a project with no event has zeros)."""
+        snapshot = self._snapshot()
+        sessions = [s for s in snapshot.sessions.values() if s.project == project]
+        runs = [run for run in snapshot.runs.values() if run.project == project]
+        in_flight: dict[Stage, int] = {}
+        for run in runs:
+            if run.status == "running":
+                in_flight[run.stage] = in_flight.get(run.stage, 0) + 1
+        now = snapshot.now
+        return ProjectActivity(
+            project=project,
+            live_sessions=sum(1 for session in sessions if _is_running(session)),
+            runs_in_flight_by_stage=in_flight,
+            failed_runs_7d=sum(1 for run in runs if _failed_recently(run, now)),
+            cost_period=_cost_between(sessions, now - RECENT, now),
+            cost_previous_period=_cost_between(sessions, now - 2 * RECENT, now - RECENT),
+            cost_daily=_daily_costs(sessions, now),
+            last_activity_at=snapshot.last_activity.get(project),
+        )
+
+    def needs_you(self, scope: Scope) -> Page[NeedsYouItem]:
+        """What waits for a person, oldest first."""
+        snapshot = self._snapshot()
+        items = [
+            *(_approval_need(item) for item in snapshot.approvals.values() if not item.decided),
+            *(
+                _failed_need(run)
+                for run in snapshot.runs.values()
+                if _failed_recently(run, snapshot.now)
+            ),
+            *(
+                _learning_need(learning)
+                for learning in snapshot.learnings.values()
+                if learning.status == LearningStatus.PROPOSED
+            ),
+        ]
+        scoped = [item for item in items if _in_scope(item.project, scope)]
+        scoped.sort(key=lambda item: (item.since is None, item.since or snapshot.now, item.href))
+        return _whole(scoped)
+
+    def activity(self, page: PageRequest) -> Page[ActivityItem]:
+        """Notable events, newest first."""
+        snapshot = self._snapshot(page.cursor)
+        items = [
+            *(_run_activity(run) for run in snapshot.runs.values() if run.ended_at is not None),
+            *(_learning_activity(learning) for learning in snapshot.learnings.values()),
+            *(
+                _approval_activity(approval)
+                for approval in snapshot.approvals.values()
+                if approval.decided
+            ),
+        ]
+        scoped = [item for item in items if _in_scope(item.project, page)]
+        return _paginate(
+            scoped,
+            key=lambda item: (_microseconds(item.at),),
+            item_id=lambda item: f"{item.kind}:{item.href}",
+            descending=True,
+            request=page,
+            hwm=snapshot.hwm,
+        )
+
+    def search_events(self, query: str, page: PageRequest) -> Page[SearchHit]:
+        """Hits on ids, paths, commands and tool names; never payload bodies."""
+        snapshot = self._snapshot(page.cursor)
+        needle = query.strip().casefold()
+        hits = [] if not needle else _search(snapshot, needle)
+        scoped = [hit for hit in hits if hit.project is None or _in_scope(hit.project, page)]
+        return _paginate(
+            scoped,
+            key=lambda hit: (_SEARCH_ORDER[hit.kind], hit.label),
+            item_id=lambda hit: hit.href,
+            descending=False,
+            request=page,
+            hwm=snapshot.hwm,
+        )
+
+    def stream_counts(self) -> StreamCounts:
+        """The badge counts of the global stream."""
+        snapshot = self._snapshot()
+        return StreamCounts(
+            approvals_open=sum(1 for item in snapshot.approvals.values() if not item.decided),
+            live_sessions=sum(1 for item in snapshot.sessions.values() if _is_running(item)),
+            failed_runs_7d=sum(
+                1 for run in snapshot.runs.values() if _failed_recently(run, snapshot.now)
+            ),
+            # One per note: proposals of the same inbox note (one per session) are one decision.
+            learnings_proposed=len(
+                {
+                    (learning.project, learning.note_path or learning.id)
+                    for learning in snapshot.learnings.values()
+                    if learning.status == LearningStatus.PROPOSED
+                }
+            ),
+        )
+
+    def skill_usage(self, project: str) -> SkillUsage:
+        """How often each skill and agent of ``project`` was used over the last ``USAGE_DAYS``
+        before ``now``, and its 7/30/90-day windows: names, counts and times only (L7 dedupe
+        in the fold, AGH-482). The uses are folded once per UTC date and store mark, without
+        the snapshot, and counted at each read (AGH-611)."""
+        hwm = self._reader.high_water_mark()
+        now = self._now()
+        day = now.astimezone(UTC).date()
+        uses = self._usage.get(
+            (project, day), hwm=hwm, compute=lambda: self._skill_uses(project, day=day, hwm=hwm)
+        )
+        return usage_at(uses, now=now)
+
+    def _skill_uses(self, project: str, *, day: date, hwm: int) -> SkillUses:
+        """``project``'s uses from ``day``'s UTC midnight minus 90 days, in the events up to
+        ``hwm`` or later. Only the copy of the session groups holds ``_folding``, so the session
+        routes' ``_fold`` never waits for the skill fold."""
+        with self._folding:
+            if self._index.hwm > hwm:
+                # Another read loaded past this mark: fold at the store's mark rather than copy
+                # the index up to this one (``up_to``). The memo keeps these uses under the older
+                # mark, so a read at the newer one folds again.
+                hwm = self._reader.high_water_mark()
+            index, _ = self._index_at(hwm)
+            # Copied: ``apply`` replaces groups and adds sessions while the fold runs.
+            sessions = {
+                session_id: index.by_session[session_id] for session_id in index.live_sessions
+            }
+        midnight = datetime(day.year, day.month, day.day, tzinfo=UTC)
+        return fold_skill_uses(sessions, project=project, start=midnight - LONGEST_WINDOW)
+
+
+# Labels and tile fields at read time
+
+
+def _with_tile_fields(
+    snapshot: _Snapshot, decorated: Iterable[tuple[Session, bool]]
+) -> list[Session]:
+    """Each decorated session with the fields its Live tile shows (D5), derived for these rows
+    only: one whose agent session waits on a permission request gets the fields of its
+    ``waiting`` tile, while it keeps its own status."""
+    filled: list[Session] = []
+    for session, waits in decorated:
+        fields = _tile_fields_of(snapshot, session, waits=waits)
+        filled.append(session.model_copy(update=asdict(fields)))
+    return filled
+
+
+def _tile_fields_of(snapshot: _Snapshot, session: Session, *, waits: bool) -> TileFields:
+    """The tile fields of one row, folded again only when its events, its problems or a
+    ``now`` that still matters (``tile_clock_settled``) changed (AC-234.5: a read at the same
+    mark, or after an append to another session, does not fold every row's events)."""
+    group = snapshot.by_session[session.id]
+    problems = snapshot.problems[session.id]
+    found = snapshot.tiles.get((session.id, waits))
+    if (
+        found is not None
+        and found[0] is group
+        and _same_tile_clock(group, found[1], snapshot.now)
+        and found[2] is problems
+    ):
+        return found[3]
+    shown = _waiting(session) if waits else session
+    fields = tile_fields(shown, group, now=snapshot.now, problems=problems)
+    if waits and shown.status == SessionStatus.WAITING:
+        fields = replace(fields, waiting_reason=_permission_reason(fields.waiting_reason))
+    snapshot.tiles[(session.id, waits)] = (group, snapshot.now, problems, fields)
+    return fields
+
+
+def _same_clock_phase(group: _Group, before: datetime, now: datetime) -> bool:
+    """Whether a session folded at ``before`` from ``group`` folds the same at ``now``."""
+    last_at = group[-1].event.timestamp
+    return before == now or clock_phase(last_at, before) == clock_phase(last_at, now)
+
+
+def _same_tile_clock(group: _Group, before: datetime, now: datetime) -> bool:
+    """Whether tile fields derived at ``before`` from ``group`` are the same at ``now``."""
+    last_at = group[-1].event.timestamp
+    return before == now or (
+        tile_clock_settled(last_at, before) and tile_clock_settled(last_at, now)
+    )
+
+
+def _waiting(session: Session) -> Session:
+    """A live session whose agent session waits on a permission request: its tile is
+    ``waiting`` (an ended one keeps its status)."""
+    if session.status not in {SessionStatus.LIVE, SessionStatus.IDLE}:
+        return session
+    return session.model_copy(update={"status": SessionStatus.WAITING})
+
+
+def _permission_reason(reason: str | None) -> str:
+    """The waiting reason of a session whose agent session waits on a permission request:
+    an open approval's own reason first."""
+    return WAITING_REASONS[ApprovalKind.PERMISSION] if reason is None else reason
+
+
+def _permission_tile(tile: LiveTile) -> LiveTile:
+    if tile.group != "waiting" or tile.waiting_reason is not None:
+        return tile
+    return tile.model_copy(update={"waiting_reason": _permission_reason(None)})
+
+
+def _with_issue(
+    session: Session, rules: LabelRules | None, link: AgentSessionLink | None = None
+) -> Session:
+    if rules is None or session.label is None:
+        return session
+    label = with_issue(session.label, rules)
+    if link is not None:
+        label = with_prompt_issue(label, link.prompt_issue, rules)
+    return session if label == session.label else session.model_copy(update={"label": label})
+
+
+# Folds by key over the index
+
+
+def _run_issue(session: Session, issues: Mapping[str, str]) -> str | None:
+    return None if session.run_id is None else issues.get(session.run_id)
+
+
+def _run_link(session: Session) -> _RunLink:
+    return (
+        session.id,
+        session.started_at,
+        session.cost_usd,
+        session.tokens is not None,
+        session.step,
+        session.attempt,
+    )
+
+
+def _fold_runs(
+    index: _EventIndex, sessions: Mapping[str, Session], memos: _FoldMemos
+) -> dict[str, WorkflowRun]:
+    """Every run, folding again only a run whose events or started sessions changed."""
+    started: dict[str, list[Session]] = {}
+    for session in sessions.values():
+        if session.run_id is not None:
+            started.setdefault(session.run_id, []).append(session)
+    runs: dict[str, WorkflowRun] = {}
+    by_first = sorted(index.by_run.items(), key=lambda item: _canonical_key(item[1][0]))
+    for run_id, group in by_first:
+        linked = started.get(run_id, [])
+        links = tuple(_run_link(session) for session in linked)
+        found = memos.runs.get(run_id)
+        if found is not None and found[0] is group and found[1] == links:
+            runs[run_id] = found[2]
+            continue
+        run = fold_run(run_id, group, sessions=linked)
+        memos.runs[run_id] = (group, links, run)
+        runs[run_id] = run
+    return runs
+
+
+def _session_approvals(
+    group: _Group, hub_paths: Mapping[str, str]
+) -> dict[str, tuple[_CanonicalKey, Approval]]:
+    folded = fold_approvals(group, hub_paths=hub_paths)
+    requests = {approval.request_event_id for approval in folded.values()}
+    keys = {s.event_id: _canonical_key(s) for s in group if s.event_id in requests}
+    return {
+        gate_id: (keys[approval.request_event_id], approval) for gate_id, approval in folded.items()
+    }
+
+
+def _fold_approvals(
+    index: _EventIndex, hub_paths: Mapping[str, str], memos: _FoldMemos
+) -> dict[str, Approval]:
+    """Every approval, folding again only the sessions whose events changed.
+
+    An approval is decided from its own session's events, so each session folds apart; a gate
+    id requested in two sessions keeps the request that comes first, as in one fold.
+    """
+    paths_key = frozenset(hub_paths.items())
+    first: dict[str, tuple[_CanonicalKey, Approval]] = {}
+    for session_id in index.gate_sessions:
+        group = index.by_session[session_id]
+        found = memos.approvals.get(session_id)
+        if found is not None and found[0] is group and found[1] == paths_key:
+            folded = found[2]
+        else:
+            folded = _session_approvals(group, hub_paths)
+            memos.approvals[session_id] = (group, paths_key, folded)
+        for gate_id, (key, approval) in folded.items():
+            known = first.get(gate_id)
+            if known is None or key < known[0]:
+                first[gate_id] = (key, approval)
+    ordered = sorted(first.items(), key=lambda item: item[1][0])
+    return {gate_id: approval for gate_id, (_, approval) in ordered}
+
+
+def _fold_learnings(index: _EventIndex, memos: _FoldMemos) -> dict[str, Learning]:
+    """Every learning, folded again only when a batch brought a learning event."""
+    group, learnings = memos.learnings
+    if group is not index.learning_events:
+        learnings = fold_learnings(index.learning_events)
+        memos.learnings = (index.learning_events, learnings)
+    return learnings
+
+
+# Session filters and sort
+
+
+def _session_matches(session: Session, wanted: SessionFilter, snapshot: _Snapshot) -> bool:
+    checks = (
+        _in_scope(session.project, wanted),
+        wanted.repo is None or session.repo == wanted.repo,
+        wanted.agent is None or session.agent == wanted.agent,
+        wanted.status is None or session.status == wanted.status,
+        wanted.outcome is None or session.outcome == wanted.outcome,
+        wanted.run_id is None or session.run_id == wanted.run_id,
+        wanted.started_from is None or session.started_at >= wanted.started_from,
+        wanted.started_to is None or session.started_at <= wanted.started_to,
+        wanted.tool is None or wanted.tool in session.tool_counts,
+        wanted.guard_denial is None or (session.guard_denials > 0) == wanted.guard_denial,
+    )
+    return (
+        all(checks)
+        and _cost_in_range(session.cost_usd, wanted)
+        and _workflow_matches(snapshot.by_session[session.id], wanted.workflow)
+        and (wanted.file is None or _file_matches(_touched(snapshot, session.id), wanted.file))
+    )
+
+
+def _cost_in_range(cost: Decimal | None, wanted: SessionFilter) -> bool:
+    if wanted.cost_min is None and wanted.cost_max is None:
+        return True
+    if cost is None:
+        return False
+    above_min = wanted.cost_min is None or cost >= wanted.cost_min
+    return above_min and (wanted.cost_max is None or cost <= wanted.cost_max)
+
+
+def _workflow_matches(events: Sequence[StoredEvent], workflow: str | None) -> bool:
+    return workflow is None or any(stored.event.workflow == workflow for stored in events)
+
+
+def _touched(snapshot: _Snapshot, session_id: str) -> frozenset[str]:
+    """The paths the session touched (read or changed), folded again only when its events
+    changed: they are kept while its group is the same object. Written outside the fold lock,
+    as the tile fields are: an equal group gives equal paths."""
+    group = snapshot.by_session[session_id]
+    found = snapshot.files.get(session_id)
+    if found is not None and found[0] is group:
+        return found[1]
+    paths = frozenset(change.path for change in fold_session_files(group))
+    snapshot.files[session_id] = (group, paths)
+    return paths
+
+
+def _file_matches(paths: Iterable[str], file: str) -> bool:
+    return any(file in path for path in paths)
+
+
+def _session_sort_key(field: str, *, descending: bool) -> Callable[[Session], SortKey]:
+    if field == "cost":
+        return lambda session: _money_key(session.cost_usd, descending=descending)
+    if field == "last_activity_at":
+        return lambda session: (_microseconds(session.last_activity_at),)
+    return lambda session: (_microseconds(session.started_at),)
+
+
+def _timeline(events: Sequence[StoredEvent]) -> list[TimelineEvent]:
+    resolution = resolve_facts(events)
+    ordered = sorted(events, key=lambda stored: (stored.event.timestamp, stored.seq))
+    timeline = []
+    for stored in ordered:
+        event = stored.event
+        latency = None
+        if stored.received_at is not None:
+            latency = int((stored.received_at - event.timestamp).total_seconds() * 1000)
+        timeline.append(
+            TimelineEvent(
+                event_id=stored.event_id,
+                seq=stored.seq,
+                project=event.project,
+                session=event.session,
+                type=event.type,
+                timestamp=event.timestamp,
+                received_at=stored.received_at,
+                latency_ms=latency,
+                source=event.source,
+                source_id=event.source_id,
+                repo=event.repo,
+                agent=event.agent,
+                workflow=event.workflow,
+                step=event.step,
+                payload=dict(event.payload),
+                fact_key=resolution.keys.get(stored.event_id),
+                merged_sources=resolution.merged_sources.get(stored.event_id, ()),
+                conflict=stored.event_id in resolution.conflicts,
+            )
+        )
+    return timeline
+
+
+# Runs and approvals
+
+
+def _run_matches(run: WorkflowRun, wanted: RunFilter) -> bool:
+    failure_stage = None if run.failure is None else run.failure.stage
+    failure_kind = None if run.failure is None else run.failure.failure_kind
+    checks = (
+        _in_scope(run.project, wanted),
+        wanted.repo is None or run.repo == wanted.repo,
+        wanted.stage is None or run.stage == wanted.stage,
+        wanted.outcome != "done" or run.status == "done",
+        wanted.outcome != "failed" or run.failure is not None,
+        wanted.failure_stage is None or failure_stage == wanted.failure_stage,
+        wanted.mode is None or run.mode == wanted.mode,
+        wanted.workflow is None or run.workflow == wanted.workflow,
+        wanted.failure_kind is None or failure_kind == wanted.failure_kind,
+        wanted.issue is None or (run.issue is not None and run.issue.key == wanted.issue),
+        wanted.keeps(run),
+    )
+    return all(checks)
+
+
+def _approval_matches(approval: Approval, wanted: ApprovalFilter) -> bool:
+    status_matches = {
+        "open": not approval.decided,
+        "decided": approval.decided,
+        "all": True,
+    }[wanted.status]
+    kind_matches = wanted.kind is None or approval.kind == wanted.kind
+    return _in_scope(approval.project, wanted) and kind_matches and status_matches
+
+
+# Project numbers
+
+
+def _is_running(session: Session) -> bool:
+    return session.status != SessionStatus.ENDED
+
+
+def _failed_recently(run: WorkflowRun, now: datetime) -> bool:
+    return run.failure is not None and now - (run.ended_at or run.last_activity_at) <= RECENT
+
+
+def _cost_between(sessions: Sequence[Session], start: datetime, end: datetime) -> Decimal | None:
+    costs = [
+        session.cost_usd
+        for session in sessions
+        if session.cost_usd is not None and start <= session.started_at < end
+    ]
+    return sum(costs, Decimal(0)) if costs else None
+
+
+def _daily_costs(sessions: Sequence[Session], now: datetime) -> tuple[Decimal, ...]:
+    days = []
+    for days_ago in range(DAYS_IN_PERIOD - 1, -1, -1):
+        end = now - timedelta(days=days_ago)
+        days.append(_cost_between(sessions, end - timedelta(days=1), end) or Decimal(0))
+    return tuple(days)
+
+
+def _approval_href(approval: Approval) -> str:
+    """Where an approval is answered: its run's page for a workflow gate, else its session's."""
+    if approval.session_id.startswith(RUN_SESSION_PREFIX):
+        return f"/runs/{approval.session_id.removeprefix(RUN_SESSION_PREFIX)}"
+    return f"/sessions/{approval.session_id}"
+
+
+def _approval_need(approval: Approval) -> NeedsYouItem:
+    return NeedsYouItem(
+        kind="approval",
+        verb="Review",
+        context=approval.title,
+        project=approval.project,
+        since=approval.requested_at,
+        href=_approval_href(approval),
+    )
+
+
+def _failed_need(run: WorkflowRun) -> NeedsYouItem:
+    issue = run.issue.key if run.issue is not None else f"Run {run.id}"
+    stage = run.failure.stage.value if run.failure is not None else run.stage.value
+    return NeedsYouItem(
+        kind="failed",
+        verb="Check failed run",
+        context=f"{issue} failed at {stage}",
+        project=run.project,
+        since=run.ended_at or run.last_activity_at,
+        href=f"/runs/{run.id}",
+    )
+
+
+def _learning_need(learning: Learning) -> NeedsYouItem:
+    return NeedsYouItem(
+        kind="learning",
+        verb="Review learning",
+        context=learning.text,
+        project=learning.project,
+        since=learning.proposed_at,
+        href=f"/knowledge/learnings/{learning.id}",
+    )
+
+
+def _run_activity(run: WorkflowRun) -> ActivityItem:
+    issue = run.issue.key if run.issue is not None else run.id
+    failed = run.failure is not None
+    kind: Literal["failed", "reported"] = "failed" if failed else "reported"
+    text = f"{issue} failed at {run.failure.stage.value}" if run.failure else f"{issue} reported"
+    return ActivityItem(
+        kind=kind,
+        text=text,
+        project=run.project,
+        at=run.ended_at or run.last_activity_at,
+        href=f"/runs/{run.id}",
+        event_id=None if run.failure is None else run.failure.failing_event_id,
+    )
+
+
+def _learning_activity(learning: Learning) -> ActivityItem:
+    return ActivityItem(
+        kind="learning",
+        text=f"Learning {learning.status.value}: {learning.text}",
+        project=learning.project,
+        at=learning.decided_at or learning.proposed_at or _EPOCH,
+        href=f"/knowledge/learnings/{learning.id}",
+        event_id=learning.source_event_id,
+    )
+
+
+def _approval_activity(approval: Approval) -> ActivityItem:
+    return ActivityItem(
+        kind="approval",
+        text=f"{approval.title}: {approval.status}",
+        project=approval.project,
+        at=approval.decided_at or approval.requested_at,
+        href=_approval_href(approval),
+        event_id=approval.decision_event_id,
+    )
+
+
+# Search
+
+
+def _entity_hits(snapshot: _Snapshot, needle: str) -> list[SearchHit]:
+    hits = [
+        SearchHit(
+            kind="session",
+            label=s.id,
+            detail=f"{s.project} · {s.agent}",
+            project=s.project,
+            href=f"/sessions/{s.id}",
+        )
+        for s in snapshot.sessions.values()
+        if needle in s.id.casefold()
+    ]
+    for run in snapshot.runs.values():
+        issue = "" if run.issue is None else run.issue.key
+        if needle in run.id.casefold() or needle in issue.casefold():
+            hits.append(
+                SearchHit(
+                    kind="run",
+                    label=run.id,
+                    detail=issue or None,
+                    project=run.project,
+                    href=_run_href(run),
+                )
+            )
+    hits.extend(
+        SearchHit(
+            kind="approval",
+            label=a.id,
+            detail=a.title,
+            project=a.project,
+            href=_approval_href(a),
+        )
+        for a in snapshot.approvals.values()
+        if needle in a.id.casefold()
+    )
+    hits.extend(
+        SearchHit(
+            kind="learning",
+            label=item.id,
+            detail=item.text,
+            project=item.project,
+            href=f"/knowledge/learnings/{item.id}",
+        )
+        for item in snapshot.learnings.values()
+        if needle in item.id.casefold()
+    )
+    return hits
+
+
+_CALL_FIELDS: tuple[tuple[str, SearchKind], ...] = (
+    ("path", "file"),
+    ("command", "command"),
+    ("tool", "tool"),
+)
+
+
+def _call_hits(snapshot: _Snapshot, needle: str) -> list[SearchHit]:
+    hits: dict[str, SearchHit] = {}
+    for session_id, events in snapshot.by_session.items():
+        for stored in events:
+            if stored.event.type != EventType.TOOL_CALL:
+                continue
+            for field, kind in _CALL_FIELDS:
+                value = stored.event.payload.get(field)
+                if not isinstance(value, str) or needle not in value.casefold():
+                    continue
+                tab = "?tab=files" if kind == "file" else ""
+                href = f"/sessions/{session_id}{tab}#{kind}:{value}"
+                hits.setdefault(
+                    href,
+                    SearchHit(
+                        kind=kind,
+                        label=value,
+                        detail=session_id,
+                        project=stored.event.project,
+                        href=href,
+                        event_id=stored.event_id,
+                    ),
+                )
+    return list(hits.values())
+
+
+def _search(snapshot: _Snapshot, needle: str) -> list[SearchHit]:
+    return [*_entity_hits(snapshot, needle), *_call_hits(snapshot, needle)]
+
+
+def _run_href(run: WorkflowRun) -> str:
+    """A run's page: a scenario run's own (``/scenarios/<project>/<name>/runs/<id>``, AGH-350
+    E-15), Run detail for a workflow run."""
+    if run.kind == "scenario":
+        name = run.workflow.removeprefix("scenario:")
+        return f"/scenarios/{quote(run.project, safe='')}/{quote(name, safe='')}/runs/{run.id}"
+    return f"/runs/{run.id}"

@@ -1,0 +1,662 @@
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
+
+import { ApiProblem } from "../../lib/api";
+import { seriousViolations } from "../../testing/axe";
+import { Composer, DEFAULT_MESSAGE_MAX_BYTES, type ComposerProps } from "./Composer";
+
+vi.mock("../../lib/pastedImage", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../lib/pastedImage")>();
+  // The canvas is not in jsdom: an image "converts" to a data URL naming its file.
+  return {
+    ...actual,
+    imageToPng: vi.fn((file: File) => Promise.resolve(`data:image/png;base64,${file.name}`)),
+  };
+});
+
+function open(overrides: Partial<ComposerProps> = {}) {
+  const props: ComposerProps = {
+    status: "idle",
+    mode: "default",
+    model: "sonnet",
+    models: ["default", "opus", "sonnet", "haiku"],
+    onSend: vi.fn(() => Promise.resolve()),
+    onInterrupt: vi.fn(() => Promise.resolve()),
+    onSettings: vi.fn(() => Promise.resolve()),
+    ...overrides,
+  };
+  const view = render(<Composer {...props} />);
+  return { ...view, props, box: screen.getByRole("textbox", { name: "Message Claude" }) };
+}
+
+describe("Composer (composer)", () => {
+  it("sends on Enter and clears the box", async () => {
+    const { box, props } = open();
+
+    await userEvent.type(box, "Run the tests{Enter}");
+
+    expect(props.onSend).toHaveBeenCalledWith("Run the tests", [], []);
+    expect(box).toHaveValue("");
+  });
+
+  it("inserts a newline on Shift+Enter without sending", async () => {
+    const { box, props } = open();
+
+    await userEvent.type(box, "one{Shift>}{Enter}{/Shift}two");
+
+    expect(box).toHaveValue("one\ntwo");
+    expect(props.onSend).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(props.onSend).toHaveBeenCalledWith("one\ntwo", [], []);
+  });
+
+  it("sends on Alt+Enter, but leaves Ctrl/Cmd+Alt+Enter to the chat's allow chord", async () => {
+    const { box, props } = open();
+    await userEvent.type(box, "Run it");
+
+    expect(fireEvent.keyDown(box, { key: "Enter", ctrlKey: true, altKey: true })).toBe(true);
+    expect(fireEvent.keyDown(box, { key: "Enter", metaKey: true, altKey: true })).toBe(true);
+    await act(() => Promise.resolve());
+    expect(props.onSend).not.toHaveBeenCalled();
+
+    expect(fireEvent.keyDown(box, { key: "Enter", altKey: true })).toBe(false);
+    await waitFor(() => {
+      expect(props.onSend).toHaveBeenCalledWith("Run it", [], []);
+    });
+  });
+
+  it("sends nothing when the box is blank", async () => {
+    const { box, props } = open();
+
+    await userEvent.type(box, "   {Enter}");
+
+    expect(props.onSend).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  });
+
+  it.each([
+    ["running", true],
+    ["idle", false],
+    ["waiting_permission", true],
+    ["ended", false],
+  ] as const)(
+    "enables stop while running or waiting when the status is %s",
+    async (status, enabled) => {
+      const { props } = open({ status });
+      const stop = screen.getByRole("button", { name: "Stop" });
+
+      if (enabled) {
+        expect(stop).toBeEnabled();
+        await userEvent.click(stop);
+        expect(props.onInterrupt).toHaveBeenCalledTimes(1);
+      } else {
+        expect(stop).toBeDisabled();
+      }
+    },
+  );
+
+  it("offers Auto in every app, never a bypass mode, and posts a mode change", async () => {
+    const { props } = open();
+    const mode = screen.getByRole("combobox", { name: "Mode" });
+    const values = within(mode)
+      .getAllByRole("option")
+      .map((option) => option.getAttribute("value"));
+
+    expect(values).toEqual(["default", "acceptEdits", "plan", "auto"]);
+    expect(values).not.toContain("bypassPermissions");
+    expect(values).not.toContain("dontAsk");
+    await userEvent.selectOptions(mode, "auto");
+
+    expect(props.onSettings).toHaveBeenCalledWith({ mode: "auto" });
+  });
+
+  it("shows a session in Auto as Auto, and offers it", () => {
+    open({ mode: "auto" });
+    const mode = screen.getByRole("combobox", { name: "Mode" });
+
+    expect(mode).toHaveValue("auto");
+    expect(within(mode).getByRole("option", { name: "Auto" })).toBeEnabled();
+  });
+
+  it("AC-681.4 posts a model change and keeps a custom current model in the list", async () => {
+    const { props } = open({ model: "custom-model" });
+    const pill = screen.getByRole("button", { name: /^Model and effort/ });
+
+    expect(pill).toHaveTextContent("custom-model");
+    await userEvent.click(pill);
+    expect(screen.getByRole("menuitemradio", { name: "custom-model" })).toBeChecked();
+    await userEvent.click(screen.getByRole("menuitemradio", { name: "Haiku" }));
+
+    expect(props.onSettings).toHaveBeenCalledWith({ model: "haiku" });
+  });
+
+  it("AC-681.4 shows a resolved model on its family's row and leaves that row alone when picked", async () => {
+    const { props } = open({ model: "claude-opus-5-5" });
+    const pill = screen.getByRole("button", { name: /^Model and effort/ });
+
+    expect(pill).toHaveTextContent("Opus 5.5");
+    await userEvent.click(pill);
+    await userEvent.click(screen.getByRole("menuitemradio", { name: "Opus 5.5" }));
+
+    expect(props.onSettings).not.toHaveBeenCalled();
+  });
+
+  it("AC-681.4 posts an effort change and shows the level, warning at Max", async () => {
+    window.localStorage.removeItem("ah.session.effort");
+    const { props } = open({ effort: "medium" });
+    await userEvent.click(screen.getByRole("button", { name: /^Model and effort/ }));
+    await userEvent.click(screen.getByRole("menuitem", { name: /Effort/ }));
+    expect(screen.getByRole("menuitemradio", { name: /^Medium/ })).toBeChecked();
+    expect(screen.getByRole("menuitemradio", { name: /^Max/ })).toHaveTextContent(
+      "3.5× or more usage",
+    );
+
+    await userEvent.click(screen.getByRole("menuitemradio", { name: /^Max/ }));
+
+    expect(props.onSettings).toHaveBeenCalledWith({ effort: "max" });
+    window.localStorage.removeItem("ah.session.effort");
+  });
+
+  it("AC-681.9 toggles Ultracode from the effort menu, which stays open", async () => {
+    const { props } = open({ ultracode: true });
+    const pill = screen.getByRole("button", { name: /^Model and effort/ });
+    expect(pill).toHaveTextContent("Ultracode");
+    await userEvent.click(pill);
+    await userEvent.click(screen.getByRole("menuitem", { name: /Effort/ }));
+    const toggle = screen.getByRole("menuitemcheckbox", { name: "Ultracode" });
+    expect(toggle).toBeChecked();
+
+    await userEvent.click(toggle);
+
+    expect(props.onSettings).toHaveBeenCalledWith({ ultracode: false });
+    expect(screen.getByRole("menuitemcheckbox", { name: "Ultracode" })).toBeInTheDocument();
+  });
+
+  it("AC-681.6 opens the menu on the body, so no parent can clip or move it", async () => {
+    open();
+    await userEvent.click(screen.getByRole("button", { name: /^Model and effort/ }));
+
+    const menu = screen.getByRole("menu", { name: "Model and effort" });
+    expect(menu.closest("form")).toBeNull();
+    expect(menu).toHaveClass("ah-pop", "as-model-pop");
+  });
+
+  it("AC-681.4 walks the effort levels by keyboard and closes one menu per Esc", async () => {
+    open({ effort: "low" });
+    await userEvent.click(screen.getByRole("button", { name: /^Model and effort/ }));
+    screen.getByRole("menuitem", { name: /Effort/ }).focus();
+
+    await userEvent.keyboard("{ArrowRight}");
+    expect(screen.getByRole("menuitemradio", { name: /^Low/ })).toHaveFocus();
+    await userEvent.keyboard("{ArrowDown}");
+    expect(screen.getByRole("menuitemradio", { name: /^Medium/ })).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.getByRole("menuitem", { name: /Effort/ })).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(screen.getByRole("button", { name: /^Model and effort/ })).toHaveFocus();
+  });
+
+  it("disables sending and settings when the session has ended", () => {
+    open({ status: "failed" });
+
+    expect(screen.getByRole("textbox")).toBeDisabled();
+    expect(screen.getByRole("textbox")).toHaveAttribute(
+      "placeholder",
+      "This session has ended. Start a new session to continue.",
+    );
+    expect(screen.getByRole("combobox", { name: "Mode" })).toBeDisabled();
+  });
+
+  it("sends to an ended session a message resumes", async () => {
+    const { props } = open({ status: "ended", resumable: true });
+    const box = screen.getByRole("textbox");
+
+    expect(box).toHaveAttribute(
+      "placeholder",
+      "This session has ended. Send a message to resume it.",
+    );
+    await userEvent.type(box, "Go on.{Enter}");
+
+    expect(props.onSend).toHaveBeenCalledWith("Go on.", [], []);
+    expect(screen.getByRole("combobox", { name: "Mode" })).toBeDisabled();
+  });
+
+  it("disables sending with the given reason", () => {
+    open({ disabledReason: "The log is full: resume the session." });
+
+    expect(screen.getByRole("textbox")).toHaveAttribute(
+      "placeholder",
+      "The log is full: resume the session.",
+    );
+  });
+
+  it("refuses a message over the byte limit", async () => {
+    const { box } = open({ maxBytes: 1024 });
+
+    await userEvent.click(box);
+    await userEvent.paste("é".repeat(600));
+
+    expect(box).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByText("Too long: 2 KiB of 1 KiB")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  });
+
+  it("takes a long text up to 1 MiB by default (AC-266.9)", () => {
+    const { box } = open();
+
+    fireEvent.change(box, { target: { value: "x".repeat(200 * 1024) } });
+
+    expect(box).not.toHaveAttribute("aria-invalid", "true");
+    expect(screen.queryByText(/Too long/)).not.toBeInTheDocument();
+    expect(DEFAULT_MESSAGE_MAX_BYTES).toBe(1024 * 1024);
+  });
+
+  it("keeps the text and shows the problem when sending fails", async () => {
+    const onSend = vi.fn(() =>
+      Promise.reject(new ApiProblem({ status: 409, title: "Busy", detail: "Wait for the turn" })),
+    );
+    const { box } = open({ onSend });
+
+    await userEvent.type(box, "hello{Enter}");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Busy: Wait for the turn");
+    expect(box).toHaveValue("hello");
+  });
+
+  it("shows a generic problem when a setting cannot be posted", async () => {
+    open({ onSettings: vi.fn(() => Promise.reject(new Error("network"))) });
+
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Mode" }), "acceptEdits");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not change the mode. Try again.",
+    );
+  });
+
+  it.each([
+    [120, "120px", "hidden"],
+    [400, "400px", "hidden"],
+    [401, "400px", "auto"],
+  ])("grows to fit %i px of text, up to 40vh, then scrolls", async (content, height, overflow) => {
+    vi.stubGlobal("innerHeight", 1000);
+    const { box } = open();
+    // Only the composer's own box reports the content height.
+    Object.defineProperty(box, "scrollHeight", { configurable: true, get: () => content });
+
+    await userEvent.type(box, "a");
+
+    expect(box.style.height).toBe(height);
+    expect(box.style.overflowY).toBe(overflow);
+    vi.unstubAllGlobals();
+  });
+
+  it("measures the content height once per change", async () => {
+    vi.stubGlobal("innerHeight", 1000);
+    const { box } = open();
+    const measure = vi.fn(() => 120);
+    Object.defineProperty(box, "scrollHeight", { configurable: true, get: measure });
+
+    await userEvent.type(box, "a");
+
+    expect(measure).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
+  it("fits the box again when the window shrinks, and scrolls past the new cap", async () => {
+    vi.stubGlobal("innerHeight", 2000);
+    const { box } = open();
+    Object.defineProperty(box, "scrollHeight", { configurable: true, get: () => 500 });
+    await userEvent.type(box, "a");
+    expect([box.style.height, box.style.overflowY]).toEqual(["500px", "hidden"]);
+
+    vi.stubGlobal("innerHeight", 1000);
+    act(() => {
+      window.dispatchEvent(new Event("resize"));
+    });
+
+    expect([box.style.height, box.style.overflowY]).toEqual(["400px", "auto"]);
+    vi.unstubAllGlobals();
+  });
+
+  it("restores the session's draft and clears it once the send is accepted", async () => {
+    window.localStorage.setItem("ah.chat.draft.s-1", JSON.stringify("Saved earlier"));
+    const { box, props } = open({ draftId: "s-1" });
+
+    expect(box).toHaveValue("Saved earlier");
+    await userEvent.type(box, "{Enter}");
+
+    expect(props.onSend).toHaveBeenCalledWith("Saved earlier", [], []);
+    expect(box).toHaveValue("");
+    expect(window.localStorage.getItem("ah.chat.draft.s-1")).toBeNull();
+  });
+
+  it("keeps the saved draft when the send fails", async () => {
+    window.localStorage.setItem("ah.chat.draft.s-1", JSON.stringify("Try me"));
+    const { box } = open({ draftId: "s-1", onSend: vi.fn(() => Promise.reject(new Error("x"))) });
+
+    await userEvent.type(box, "{Enter}");
+
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(box).toHaveValue("Try me");
+    expect(window.localStorage.getItem("ah.chat.draft.s-1")).toBe(JSON.stringify("Try me"));
+    window.localStorage.clear();
+  });
+
+  it.each([
+    [true, true],
+    [false, false],
+  ])("takes focus on open without scrolling when asked (%s)", (focusOnOpen, focused) => {
+    const focus = vi.spyOn(HTMLTextAreaElement.prototype, "focus");
+    const { box } = open({ focusOnOpen });
+
+    expect(box === document.activeElement).toBe(focused);
+    if (focused) expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    focus.mockRestore();
+  });
+
+  it("keeps focus in the box after Send, without scrolling", async () => {
+    const { box } = open();
+    await userEvent.type(box, "Go");
+    const focus = vi.spyOn(HTMLTextAreaElement.prototype, "focus");
+
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(box).toHaveValue("");
+    expect(box).toHaveFocus();
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    focus.mockRestore();
+  });
+
+  /** Presses Enter and lets a send that started reach `onSend`. */
+  const pressEnter = async (box: HTMLElement, init: object = {}) => {
+    await act(async () => {
+      fireEvent.keyDown(box, { key: "Enter", ...init });
+      await Promise.resolve();
+    });
+  };
+
+  it.each([
+    ["the key event says so", true],
+    ["only the composition events say so", false],
+  ])("never sends on Enter while an IME composes (%s)", async (_, isComposing) => {
+    const { box, props } = open();
+    fireEvent.change(box, { target: { value: "にほん" } });
+
+    if (!isComposing) fireEvent.compositionStart(box);
+
+    await pressEnter(box, { isComposing });
+
+    expect(props.onSend).not.toHaveBeenCalled();
+    fireEvent.compositionEnd(box);
+  });
+
+  it.each([
+    [499, false],
+    [500, true],
+  ])("sends on Enter %i ms after the composition ends: %s", async (after, sends) => {
+    const now = vi.spyOn(performance, "now").mockReturnValue(1000);
+    const { box, props } = open();
+    fireEvent.change(box, { target: { value: "日本" } });
+    fireEvent.compositionStart(box);
+    fireEvent.compositionEnd(box);
+
+    now.mockReturnValue(1000 + after);
+    await pressEnter(box);
+
+    expect(props.onSend).toHaveBeenCalledTimes(sends ? 1 : 0);
+    now.mockRestore();
+  });
+
+  it("keeps Enter as a new line under a coarse pointer; Send sends", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: query === "(pointer: coarse)" }));
+    const { box, props } = open();
+    await userEvent.type(box, "one{Enter}two");
+
+    expect(box).toHaveValue("one\ntwo");
+    expect(props.onSend).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(props.onSend).toHaveBeenCalledWith("one\ntwo", [], []);
+    vi.unstubAllGlobals();
+  });
+
+  it("has no serious violation (composer a11y)", async () => {
+    const { container } = open({ status: "running" });
+
+    expect(await seriousViolations(container)).toEqual([]);
+  });
+});
+
+describe("Composer (stop)", () => {
+  it("interrupts once on Esc in an empty composer while the interrupt is in flight", async () => {
+    let done: (value?: unknown) => void = () => undefined;
+    const onInterrupt = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          done = resolve;
+        }),
+    );
+    const { box } = open({ status: "waiting_permission", onInterrupt });
+
+    await userEvent.type(box, "{Escape}{Escape}");
+    await userEvent.click(screen.getByRole("button", { name: "Stopping…" }));
+    expect(onInterrupt).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      done();
+      await Promise.resolve();
+    });
+    await userEvent.type(box, "{Escape}");
+    expect(onInterrupt).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows a pending interrupt on a disabled Stopping… button until it answers", async () => {
+    let done: (value?: unknown) => void = () => undefined;
+    const onInterrupt = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          done = resolve;
+        }),
+    );
+    open({ status: "running", onInterrupt });
+
+    await userEvent.click(screen.getByRole("button", { name: "Stop" }));
+
+    const pending = screen.getByRole("button", { name: "Stopping…" });
+    expect(pending).toHaveAttribute("aria-disabled", "true");
+    // Not `disabled`: a browser drops keyboard focus from a disabled button (jsdom does not).
+    expect(pending).not.toBeDisabled();
+    await userEvent.click(pending);
+    expect(onInterrupt).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      done();
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Stop" })).not.toHaveAttribute("aria-disabled");
+  });
+
+  it.each([
+    ["the composer holds text", "running", "Keep going"],
+    ["no turn runs", "idle", ""],
+  ] as const)("leaves Esc alone when %s", async (_, status, text) => {
+    const { box, props } = open({ status });
+
+    await userEvent.type(box, `${text}{Escape}`);
+
+    expect(props.onInterrupt).not.toHaveBeenCalled();
+    expect(box).toHaveValue(text);
+  });
+});
+
+describe("Composer (images)", () => {
+  const image = (name: string) => new File(["x"], name, { type: "image/png" });
+
+  it("adds a pasted image above the text and sends it with the message (AC-266.6)", async () => {
+    const { box, props } = open({ acceptsImages: true });
+
+    fireEvent.paste(box, { clipboardData: { files: [image("shot.png")] } });
+
+    const strip = await screen.findByRole("list", { name: "Attached to this message" });
+    expect(within(strip).getByRole("img", { name: "Image 1" })).toHaveAttribute(
+      "src",
+      "data:image/png;base64,shot.png",
+    );
+    expect(screen.getByText("Add a message to send with the image")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+
+    await userEvent.type(box, "What is wrong here?{Enter}");
+
+    expect(props.onSend).toHaveBeenCalledWith(
+      "What is wrong here?",
+      ["data:image/png;base64,shot.png"],
+      [],
+    );
+    await waitFor(() => {
+      expect(screen.queryByRole("list", { name: "Attached to this message" })).toBeNull();
+    });
+  });
+
+  it("takes dropped images, removes one, and refuses past ten (AC-266.6)", async () => {
+    const { box, props } = open({ acceptsImages: true });
+    const form = screen.getByRole("form", { name: "Message composer" });
+
+    fireEvent.drop(form, {
+      dataTransfer: {
+        files: "abcdefghijk".split("").map((n) => image(`${n}.png`)),
+        types: ["Files"],
+      },
+    });
+
+    const strip = await screen.findByRole("list", { name: "Attached to this message" });
+    await waitFor(() => {
+      expect(within(strip).getAllByRole("img")).toHaveLength(10);
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent("A message takes up to 10 images.");
+    expect(screen.getByRole("button", { name: "Add an image" })).toBeDisabled();
+
+    await userEvent.click(within(strip).getByRole("button", { name: "Remove image 2" }));
+    await userEvent.type(box, "Compare{Enter}");
+
+    expect(props.onSend).toHaveBeenCalledWith(
+      "Compare",
+      "acdefghij".split("").map((n) => `data:image/png;base64,${n}.png`),
+      [],
+    );
+  });
+
+  it("pastes text as usual and takes no image where images are not accepted", () => {
+    const { box } = open();
+
+    fireEvent.paste(box, { clipboardData: { files: [image("shot.png")] } });
+
+    expect(screen.queryByRole("list", { name: "Attached to this message" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add an image" })).toBeNull();
+  });
+  it("hides the mode switch when the session's mode is locked (scenario investigation)", () => {
+    open({ modeLocked: true });
+
+    expect(screen.queryByRole("combobox", { name: "Mode" })).toBeNull();
+    expect(screen.getByRole("button", { name: /^Model and effort/ })).toBeInTheDocument();
+  });
+});
+
+describe("Composer (the floating card, AGH-422)", () => {
+  it("AC-422.9 names its round Send and Stop in their tooltips and for screen readers", () => {
+    open({ status: "running" });
+    const send = screen.getByRole("button", { name: "Send" });
+    const stop = screen.getByRole("button", { name: "Stop" });
+    expect(send).toHaveClass("as-round");
+    expect(send).toHaveAttribute("title", "Send");
+    expect(stop).toHaveClass("as-round");
+    expect(stop).toHaveAttribute("title", "Stop (Esc)");
+  });
+
+  it("AC-422.9 shows what rides with the message inside the card, above the box", () => {
+    open({ accessory: <div data-testid="refs">AC-7</div> });
+    const refs = screen.getByTestId("refs");
+    expect(refs.closest("form")).toHaveClass("as-composer");
+    expect(
+      refs.compareDocumentPosition(screen.getByRole("textbox", { name: "Message Claude" })) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("AC-422.11 sizes the mode and model pickers to their value", () => {
+    open({ mode: "acceptEdits", model: "opus" });
+    const mode = screen.getByRole("combobox", { name: "Mode" });
+    const model = screen.getByRole("button", { name: /^Model and effort/ });
+    expect(mode.closest("label")?.querySelector(".as-pill-value")).toHaveTextContent(/edits/i);
+    expect(model.querySelector(".as-pill-value")).toHaveTextContent("Opus");
+  });
+});
+
+describe("Composer (files)", () => {
+  const textFile = (name: string, body = "id,name\n1,Ada\n") =>
+    new File([body], name, { type: "text/csv" });
+
+  it("attaches a picked text file as a chip and sends it with the message (AC-419.7, AC-419.9)", async () => {
+    const { box, props } = open({ acceptsImages: true, acceptsFiles: true });
+    const picker = document.querySelector<HTMLInputElement>("input[type=file]");
+    if (!picker) throw new Error("no file picker");
+    expect(picker).not.toHaveAttribute("accept");
+
+    fireEvent.change(picker, { target: { files: [textFile("people.csv")] } });
+
+    const strip = await screen.findByRole("list", { name: "Attached to this message" });
+    expect(await within(strip).findByText("people.csv")).toBeInTheDocument();
+    expect(screen.getByText("Add a message to send with the file")).toBeInTheDocument();
+    expect(box).toHaveAttribute("placeholder", "Say what Claude should do with the file");
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+
+    await userEvent.type(box, "Summarize it{Enter}");
+
+    expect(props.onSend).toHaveBeenCalledWith(
+      "Summarize it",
+      [],
+      [
+        {
+          name: "people.csv",
+          mediaType: "text/plain",
+          data: btoa("id,name\n1,Ada\n"),
+          bytes: 14,
+        },
+      ],
+    );
+  });
+
+  it("refuses a binary file with the reason and keeps the rest (AC-419.8)", async () => {
+    const { box } = open({ acceptsFiles: true });
+    const binary = new File([new Uint8Array([0, 1, 2])], "app.bin");
+
+    fireEvent.paste(box, { clipboardData: { files: [binary] } });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Claude reads PDFs and text files here, and “app.bin” is neither.",
+    );
+    expect(screen.queryByRole("list", { name: "Attached to this message" })).toBeNull();
+  });
+
+  it("refuses a file over 5 MB before reading it (AC-419.8)", async () => {
+    const { box } = open({ acceptsFiles: true });
+    const big = textFile("huge.log", "a".repeat(5 * 1024 * 1024 + 1));
+
+    fireEvent.paste(box, { clipboardData: { files: [big] } });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("files go up to 5 MB");
+  });
+
+  it("removes an attached file (AC-419.7)", async () => {
+    open({ acceptsFiles: true });
+    const form = screen.getByRole("form", { name: "Message composer" });
+
+    fireEvent.drop(form, { dataTransfer: { files: [textFile("notes.md")], types: ["Files"] } });
+
+    const strip = await screen.findByRole("list", { name: "Attached to this message" });
+    await userEvent.click(await within(strip).findByRole("button", { name: "Remove notes.md" }));
+
+    expect(screen.queryByRole("list", { name: "Attached to this message" })).toBeNull();
+  });
+});

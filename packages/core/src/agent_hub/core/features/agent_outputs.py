@@ -1,0 +1,196 @@
+"""Check the JSON outputs agents hand to ``/feature`` (AGH-139): pure, bytes in, problems out.
+
+``review_problems``, ``eval_problems`` and ``preflight_problems`` return every problem of an
+output, uncapped: first the root problem (bytes that are not a JSON object), else every shape
+problem against ``ReviewOutput``, ``EvalOutput`` or ``PreflightRecord``, then every cross-check
+problem (``review_output_checks``, ``eval_output_checks``, then ``eval_output_scope``) in S2's
+order; a preflight record has none. The caller decides how many to show. Core applies the size
+bounds to the bytes it is given, whatever the caller read: ``MAX_OUTPUT_BYTES`` to the output,
+``MAX_RECORD_BYTES`` to the record, and the sibling's first ``EVAL_HEAD_BYTES`` only are read.
+
+The JSON Schemas of the outputs ship as package data beside this module (``review.v1.json``,
+``eval.v1.json``, ``eval.v2.json``, ``preflight.v1.json``, ``preflight.v2.json``); an eval output is
+checked against the model its ``schema`` names (``agent-hub/eval/2``: ``EvalOutputV2``, else
+``EvalOutput``), regenerated with ``make output-schemas`` whenever a model changes; unit tests fail
+while a shipped file differs from the export.
+"""
+
+import json
+from collections.abc import Callable, Iterator, Mapping
+from typing import Final, Literal
+
+from pydantic import BaseModel, ValidationError
+
+from agent_hub.core.features.eval_output_checks import eval_cross_problems
+from agent_hub.core.features.eval_output_scope import eval_scope_problems, parsed_record
+from agent_hub.core.features.feature_record import RECORD_FILE, ticket_repos
+from agent_hub.core.features.output_models import (
+    EVAL_V2_SCHEMA_ID,
+    MAX_EVAL_ACS,
+    MAX_EVAL_TICKETS,
+    MAX_FINDING_ACS,
+    MAX_FINDINGS,
+    MAX_GATES,
+    MAX_OWNER_STEPS,
+    MAX_PREFLIGHT_RUNS,
+    MAX_RED_ON_PARENT,
+    MAX_RESULTS,
+    PREFLIGHT_V2_SCHEMA_ID,
+    EvalOutput,
+    EvalOutputV2,
+    OutputProblem,
+    PreflightRecord,
+    PreflightRecordV2,
+    ReviewOutput,
+)
+from agent_hub.core.features.output_shape import (
+    output_path,
+    overlong_problem,
+    parse_document,
+    shape_problems,
+)
+from agent_hub.core.features.review_output_checks import review_cross_problems
+
+type _Document = dict[str, object]
+type OutputKind = Literal["review", "eval", "preflight"]
+# Each shipped schema: an output kind, or ``<kind>-<version>`` for a later version of one.
+type OutputSchema = Literal["review", "eval", "eval-2", "preflight", "preflight-2"]
+
+OUTPUT_SCHEMA_PACKAGE: Final = "agent_hub.core.features"
+OUTPUT_SCHEMA_FILES: Final[Mapping[OutputSchema, str]] = {
+    "review": "review.v1.json",
+    "eval": "eval.v1.json",
+    "eval-2": "eval.v2.json",
+    "preflight": "preflight.v1.json",
+    "preflight-2": "preflight.v2.json",
+}
+_OUTPUT_MODELS: Final[Mapping[OutputSchema, type[BaseModel]]] = {
+    "review": ReviewOutput,
+    "eval": EvalOutput,
+    "eval-2": EvalOutputV2,
+    "preflight": PreflightRecord,
+    "preflight-2": PreflightRecordV2,
+}
+
+# Each list of an eval output and its bound, in the model's field order.
+_EVAL_LISTS: Final[tuple[tuple[str, int], ...]] = (
+    ("tickets", MAX_EVAL_TICKETS),
+    ("acs", MAX_EVAL_ACS),
+    ("results", MAX_RESULTS),
+    ("gates", MAX_GATES),
+    ("red_on_parent", MAX_RED_ON_PARENT),
+    ("owner_steps", MAX_OWNER_STEPS),
+)
+
+
+def review_problems(
+    content: bytes,
+    *,
+    file_name: str,
+    folder_name: str,
+    parent_name: str | None = None,
+    record: bytes | str | None = None,
+) -> tuple[OutputProblem, ...]:
+    """Every problem of a review output saved as ``<folder_name>/<file_name>``; () when valid.
+
+    ``file_name`` and ``folder_name`` are the file's own name and its folder's name: its ticket's,
+    or one repo's of a ticket that owns several, under the ticket's folder ``parent_name``. Such a
+    repo must be one of the ticket's in ``record`` (``features.json``'s bytes, or why it could not
+    be read) when given.
+    """
+    document = parse_document(content)
+    if isinstance(document, OutputProblem):
+        return (document,)
+    shape = _shape(document, model=ReviewOutput, overlong=_overlong_review_lists)
+    cross = review_cross_problems(
+        document,
+        file_name=file_name,
+        folder_name=folder_name,
+        parent_name=parent_name,
+        owned=None if record is None else _owned_repos(record),
+    )
+    return (*shape, *cross)
+
+
+def _owned_repos(record: bytes | str) -> Mapping[str, tuple[str, ...]] | str:
+    """Each planned ticket's key and id, upper case, to the repos it owns; or the record's
+    problem."""
+    if isinstance(record, str):
+        return f"{RECORD_FILE} could not be read ({record})"
+    parsed = parsed_record(record)
+    if isinstance(parsed, OutputProblem):
+        return parsed.message
+    return {
+        name.upper(): tuple(repo.repo for repo in ticket_repos(ticket))
+        for ticket in (() if parsed is None else parsed.tickets)
+        for name in (ticket.key, ticket.id)
+        if name is not None
+    }
+
+
+def eval_problems(
+    content: bytes, *, file_name: str, sibling_head: bytes | None, record: bytes | None
+) -> tuple[OutputProblem, ...]:
+    """Every problem of an eval output saved as ``evals/<file_name>``; () when valid.
+
+    ``sibling_head`` is the first bytes of the sibling ``evals/<stem>.md`` (None when absent) and
+    ``record`` the feature's ``features.json`` (None when absent).
+    """
+    document = parse_document(content)
+    if isinstance(document, OutputProblem):
+        return (document,)
+    model = EvalOutputV2 if document.get("schema") == EVAL_V2_SCHEMA_ID else EvalOutput
+    shape = _shape(document, model=model, overlong=_overlong_eval_lists)
+    cross = eval_cross_problems(document, file_name=file_name, sibling_head=sibling_head)
+    return (*shape, *cross, *eval_scope_problems(document, record=record))
+
+
+def preflight_problems(content: bytes) -> tuple[OutputProblem, ...]:
+    """Every problem of a ticket's ``preflight.json``; () when valid."""
+    document = parse_document(content)
+    if isinstance(document, OutputProblem):
+        return (document,)
+    v2 = document.get("schema") == PREFLIGHT_V2_SCHEMA_ID
+    model = PreflightRecordV2 if v2 else PreflightRecord
+    return _shape(document, model=model, overlong=_overlong_preflight_runs)
+
+
+def _shape(
+    document: _Document,
+    *,
+    model: type[BaseModel],
+    overlong: Callable[[_Document], Iterator[OutputProblem]],
+) -> tuple[OutputProblem, ...]:
+    """The shape problems of ``document`` against ``model``, then each overlong list they miss."""
+    try:
+        model.model_validate(document)
+    except ValidationError as error:
+        shape = shape_problems(error)
+        reported = {problem.path for problem in shape}
+        missed = (found for found in overlong(document) if found.path not in reported)
+        return (*shape, *missed)
+    return ()
+
+
+def _overlong_review_lists(document: _Document) -> Iterator[OutputProblem]:
+    findings = document.get("findings")
+    yield from overlong_problem("findings", findings, MAX_FINDINGS)
+    for index, finding in enumerate(findings if isinstance(findings, list) else ()):
+        if isinstance(finding, dict):
+            path = output_path(("findings", index, "acs"))
+            yield from overlong_problem(path, finding.get("acs"), MAX_FINDING_ACS)
+
+
+def _overlong_eval_lists(document: _Document) -> Iterator[OutputProblem]:
+    for name, limit in _EVAL_LISTS:
+        yield from overlong_problem(name, document.get(name), limit)
+
+
+def _overlong_preflight_runs(document: _Document) -> Iterator[OutputProblem]:
+    yield from overlong_problem("runs", document.get("runs"), MAX_PREFLIGHT_RUNS)
+
+
+def export_output_schema_text(kind: OutputSchema) -> str:
+    """The JSON Schema of one output as its shipped file holds it: indented, one final newline."""
+    schema = _OUTPUT_MODELS[kind].model_json_schema()
+    return json.dumps(schema, indent=2, ensure_ascii=False) + "\n"

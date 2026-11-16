@@ -1,0 +1,5 @@
+# Module marketplace (hub.json → modules.marketplace). Managed by hub sync; the base Makefile includes it.
+.PHONY: marketplace-validate
+
+marketplace-validate:  ## Validate .claude-plugin/marketplace.json with Claude Code
+	claude plugin validate .

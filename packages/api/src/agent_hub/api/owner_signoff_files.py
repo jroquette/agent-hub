@@ -1,0 +1,69 @@
+"""The owner sign-off's eval note, written into the hub's feature folder (playground).
+
+The folder is ``<hub>/brain/features/<slug>/evals/``; the slug comes from a feature folder the
+reader found, and the name from ``SignOffOwnerSteps``. The note is created exclusively, never
+overwriting an eval, and no link is followed into the folder.
+"""
+
+import os
+from pathlib import Path
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from agent_hub.core.features.feature_evals import EVALS_FOLDER
+from agent_hub.core.features.owner_signoff import MAX_NOTE_CHARS
+from agent_hub.core.readmodels.read_ports import HubReadModels
+
+_FEATURES = ("brain", "features")
+
+
+class OwnerSignOffBody(BaseModel):
+    """``POST .../owner-signoff``: the eval to settle (or the ACs the owner checked by hand), the
+    owner's decision and an optional note."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    delivery: str | None = Field(default=None, min_length=1, max_length=64)
+    decision: Literal["done", "more_work"] = "done"
+    note: str | None = Field(default=None, max_length=MAX_NOTE_CHARS)
+    acs: tuple[Annotated[str, Field(min_length=1, max_length=32)], ...] | None = Field(
+        default=None, min_length=1, max_length=200
+    )
+
+
+class ProjectHubPaths:
+    """``ProjectHubs`` over the hub read models."""
+
+    def __init__(self, models: HubReadModels) -> None:
+        self._models = models
+
+    def hub_path_of(self, project: str) -> str:
+        """The hub folder of ``project``."""
+        return self._models.get_project(project).hub_path
+
+
+def feature_folder(hub_path: str, slug: str) -> Path:
+    """``<hub>/brain/features/<slug>``, a real folder; ``FileNotFoundError`` when it is missing
+    or a link. The caller has checked that ``slug`` is one name, not a path."""
+    feature = Path(hub_path, *_FEATURES, slug)
+    if feature.is_symlink() or not feature.is_dir():
+        raise FileNotFoundError(feature.name)
+    return feature
+
+
+class HubEvalWriter:
+    """``EvalWriter`` on the local file system."""
+
+    def create_eval(self, hub_path: str, *, slug: str, name: str, text: str) -> None:
+        """Create ``brain/features/<slug>/evals/<name>``; ``FileExistsError`` when it exists."""
+        if "/" in slug or "/" in name or slug.startswith(".") or name.startswith("."):
+            raise ValueError("invalid feature or eval name")
+        folder = feature_folder(hub_path, slug) / EVALS_FOLDER
+        if folder.is_symlink():
+            raise FileNotFoundError(EVALS_FOLDER)
+        folder.mkdir(exist_ok=True)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(folder / name, flags, 0o644)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as note:
+            note.write(text)

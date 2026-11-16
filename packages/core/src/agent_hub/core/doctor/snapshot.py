@@ -1,0 +1,266 @@
+"""What ``hub doctor`` knows of a hub: its config (or why), lock, files, base hooks, repos,
+and the developer's ``hub.local.json`` and branch prefix.
+
+The cli fills a ``DoctorSnapshot``; rules read it and never touch the disk. Paths are relative
+POSIX paths from the hub root.
+"""
+
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+
+from agent_hub.core.hub_config.effective_identity import Sourced
+from agent_hub.core.hub_config.local_config import LocalConfig
+from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_config.problems import ConfigProblem
+from agent_hub.core.hub_files.hub_lock import HUB_LOCK_PATH, HubLock
+from agent_hub.core.hub_files.tree_snapshot import FileEntry, TreeEntry
+from agent_hub.core.json_form import JsonValue
+from agent_hub.core.workflows.catalog import WorkflowSource
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class PinMismatch:
+    """``platform.version`` is a well-formed release other than the running ``hub``."""
+
+    pinned: str
+    running: str
+    # The command that runs the pinned release; ``None`` when the pin is too long to echo.
+    command: str | None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ConfigFailure:
+    """Why ``hub.json`` cannot be used: the reader's or schema's problems, or a pin mismatch."""
+
+    problems: tuple[ConfigProblem, ...]
+    pin: PinMismatch | None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class HubFiles:
+    """The files of one tree, read without following links.
+
+    ``entries`` holds every path looked at, present ones only: the listed and fixed paths, the
+    lock's paths when read, and the leftover-shaped names the reader also records (unread,
+    plan E9); ``listed`` is the sorted listing of the tree, empty when no rule asked for it. The
+    tree's files, the only set a rule may treat as such, are the listing plus the fixed paths
+    (``hub_paths``) present in ``entries`` (plan E31); never lock paths or leftover names.
+    ``problem`` says why the listing could not be made or a path read. ``paths_read`` is whether
+    every path looked at by path was read: when not, an absent one may be one the read never
+    reached, so no rule may call it missing; a failed listing alone leaves it true.
+    ``listed_by_git`` is whether ``listed`` came from ``git ls-files``; false for a walk, a failed
+    listing or no listing.
+    """
+
+    entries: Mapping[str, TreeEntry]
+    listed: tuple[str, ...]
+    problem: str | None
+    paths_read: bool
+    listed_by_git: bool = False
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class RepoFiles:
+    """One ``repos[].dir`` of ``hub.json`` and the files of its checkout at ``../<dir>``.
+
+    ``files`` is ``None`` when ``../<dir>`` is absent or not a folder (spec Q-9); a checkout's
+    paths are relative to the checkout, as the hub's are to the hub.
+    """
+
+    dir: str
+    files: HubFiles | None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class RemoteProbe:
+    """One ``repos[].dir`` checkout's ``git ls-remote origin``, run from this process (AGH-134).
+
+    ``problem`` is ``None`` when the remote answered, else the first line of why not.
+    """
+
+    dir: str
+    problem: str | None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LockAbsent:
+    """No ``hub.lock`` entry in the hub folder: the hub was never adopted."""
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LockNotRegular:
+    """``hub.lock`` is a link, folder, FIFO or other non-regular file, so it was never opened."""
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class EnvFileFacts:
+    """A declared env file as found (docs/design/scenarios.md § Credentials).
+
+    ``path`` is as declared, relative to the workspace; ``environment`` and ``source`` are the
+    first environment that declares it and its file. ``holder`` is the hub's or a declared repo's
+    dir holding it, ``None`` for none; ``ignored`` is whether git ignores it there, ``None`` when
+    there is no holder or git could not answer. ``linked`` is whether a link lies on its path
+    below the hub's or repo's folder it names (``hub action run`` follows none there).
+    """
+
+    path: str
+    environment: str
+    source: str
+    exists: bool
+    holder: str | None
+    ignored: bool | None
+    linked: bool = False
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class WorkflowShadow:
+    """A hub workflow that overrides the built-in of its name (ADR 0032), as discovery found it.
+
+    ``path`` is the hub's workflow file and ``pack`` its pack folder, from the hub root;
+    ``builtin_pack`` is the overridden built-in's pack. ``identical`` is whether every file of
+    that built-in pack (hidden names and ``__pycache__`` aside) is a regular file of the hub's
+    pack at the same path with the same bytes: the pack as ``hub init`` seeds it from this release.
+    """
+
+    name: str
+    path: str
+    pack: str
+    builtin_pack: str
+    identical: bool
+
+
+# What the CLI's probe of the pinned release's tag found (ADR 0054).
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ReleaseFound:
+    """The pinned tag exists on the platform repository and names ``commit``."""
+
+    commit: str
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ReleaseTagMissing:
+    """The platform repository answered, and has no tag for the pinned version."""
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ReleaseProbeFailed:
+    """The tag could not be read (no network, no credential, timeout): ``reason`` says why."""
+
+    reason: str
+
+
+type ReleaseProbe = ReleaseFound | ReleaseTagMissing | ReleaseProbeFailed
+
+
+# What ``hub.lock`` holds: the lock, no lock, something that is no file, or its problems.
+type LockState = HubLock | LockAbsent | LockNotRegular | tuple[ConfigProblem, ...]
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class DoctorSnapshot:
+    """The input of every rule: the config, the running release, the hub's files and its lock.
+
+    ``lock`` is ``None`` when it was not read: no selected rule reads it, the config failed, or
+    ``hub.lock`` could not be read (the hub's files then say why, as ``hub.lock`` is a fixed path).
+    ``base_hooks`` is the ``hooks`` block of the running release's managed settings, ``None``
+    when no selected rule reads it or the config failed. ``repos`` holds one entry per
+    ``repos[].dir``, in ``hub.json`` order, when a selected rule reads them; else it is empty.
+    ``local`` is the developer's ``hub.local.json`` (``LocalConfig()`` when absent) or its
+    problems, read on every run. ``branch_prefix`` is the developer's effective prefix and its
+    source when a selected rule reads the developer identity on a valid config and local file;
+    else ``None``, as when no source gives one. ``remote_probes`` holds one probe per git checkout
+    of ``repos``, in ``hub.json`` order, when a selected rule reads the remotes and the caller
+    runs inside a Claude Code session (its commands sandboxed when the settings say so); else
+    ``None``. ``workflows`` is the hub's workflows and the built-ins, as ``hub workflow`` reads
+    them, when a selected rule reads them; else ``None``. ``workflow_folders`` then lists the pack
+    folders, so the control plane's cache sees a pack git does not list. ``workflow_shadows``
+    holds each hub workflow that overrides a built-in, by name, when a selected rule reads them;
+    else ``None``. ``item_leftovers`` is
+    every temp-named entry directly in the item folders, in path order, when a selected rule
+    reads them; else ``None``. ``item_folders`` then holds the folders to watch for them: the
+    ones scanned, plus ``plugin`` and each ``plugin/<p>``, where an item folder can be made.
+    ``env_files`` holds each declared env file as found when a selected rule reads them; else
+    ``None``. ``scenarios`` is the hub's scenarios (``scenarios/<pack>/``), as ``hub scenario``
+    reads them, when a selected rule reads them; else ``None``. ``scenario_folders`` then lists
+    the pack folders, so the control plane's cache sees a scenario added, removed or rewritten.
+    ``release_probe`` is what the probe of the pinned release's tag found, when a selected rule
+    reads the release commit and the lock records one; else ``None``.
+    """
+
+    config: HubConfig | ConfigFailure
+    running_version: str
+    hub: HubFiles
+    lock: LockState | None
+    base_hooks: Mapping[str, JsonValue] | None
+    repos: tuple[RepoFiles, ...]
+    local: LocalConfig | tuple[ConfigProblem, ...] = field(default_factory=LocalConfig)
+    branch_prefix: Sourced | None = None
+    remote_probes: tuple[RemoteProbe, ...] | None = None
+    workflows: WorkflowSource | None = None
+    # The folders directly under ``workflows/`` (``workflows/<pack>``), read with ``workflows``.
+    workflow_folders: tuple[str, ...] = ()
+    workflow_shadows: tuple[WorkflowShadow, ...] | None = None
+    item_leftovers: tuple[str, ...] | None = None
+    item_folders: tuple[str, ...] = ()
+    env_files: tuple[EnvFileFacts, ...] | None = None
+    scenarios: WorkflowSource | None = None
+    # The folders directly under ``scenarios/`` (``scenarios/<pack>``), read with ``scenarios``.
+    scenario_folders: tuple[str, ...] = ()
+    release_probe: ReleaseProbe | None = None
+
+    @property
+    def hub_config(self) -> HubConfig:
+        """The valid config; only the config rules run on a failed one, so reading it is a bug."""
+        if isinstance(self.config, ConfigFailure):
+            msg = "hub.json is not valid; only config.schema and platform.version run"
+            raise ValueError(msg)
+        return self.config
+
+
+def hub_paths(config: HubConfig) -> tuple[str, ...]:
+    """The paths every run looks at by path, listed or not: the files rules read by name."""
+    return (
+        HUB_LOCK_PATH,
+        ".claude/settings.json",
+        ".claude/settings.project.json",
+        ".mcp.json",
+        "Makefile",
+        "Makefile.project",
+        *module_makefiles(config),
+        "package.json",
+        guard_extension_path(config),
+    )
+
+
+def module_makefiles(config: HubConfig) -> tuple[str, ...]:
+    """``mk/<id>.mk`` of each selected module, by id: the managed ``Makefile`` includes them.
+
+    A ``mk/`` file of an unselected module is not included, so it defines no target (plan E13).
+    """
+    selected = config.modules.model_dump(exclude_none=True).keys()
+    return tuple(f"mk/{module}.mk" for module in sorted(selected))
+
+
+def guard_extension_path(config: HubConfig) -> str:
+    """The project's guard extension, which the base guard runs (hub-generator.md § Hooks)."""
+    return f"plugin/{config.project.name}/hooks/project_guard.py"
+
+
+def text_of(entry: TreeEntry | None) -> str | None:
+    """A regular file's UTF-8 text; ``None`` when absent, a link or folder, unread or binary."""
+    if not isinstance(entry, FileEntry) or entry.content is None or b"\x00" in entry.content:
+        return None
+    try:
+        return entry.content.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def lines_of(text: str) -> tuple[str, ...]:
+    """The lines of a text, split on ``\\n`` only (``splitlines`` also splits on U+2028).
+
+    A final ``\\n`` ends the last line; it does not start an empty one.
+    """
+    if not text:
+        return ()
+    return tuple(text.removesuffix("\n").split("\n"))

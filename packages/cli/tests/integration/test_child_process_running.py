@@ -1,0 +1,244 @@
+"""``run_child`` with real child processes: streams, exit code, a timeout and a missing tool.
+
+The kill probes use a lock, not the wall clock: the grandchild holds an exclusive ``flock`` until
+it dies, so the test can take the lock only once the whole process group is gone.
+"""
+
+import contextlib
+import fcntl
+import os
+import signal
+import sys
+import textwrap
+import time
+from collections.abc import Iterator
+from pathlib import Path
+from types import FrameType
+
+import pytest
+
+from agent_hub.cli.child_process import ChildResult, run_child
+from agent_hub.cli.errors import ChildTimedOutError
+
+# Isolated interpreters: no user site, no site-packages, no environment variables read.
+PYTHON = (sys.executable, "-I", "-S")
+CHILD_TIMEOUT = 1.0
+INTERRUPT_AFTER = 0.3
+# Long enough to never end on its own during a test; the probe waits this long at most.
+SLEEP_FOREVER = 60
+PROBE_DEADLINE = 5.0
+GRANDCHILD = textwrap.dedent(
+    f"""
+    import fcntl, os, time
+    lock = open("lock", "w")
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    with open("started.tmp", "w") as started:
+        started.write(str(os.getpid()))
+    os.replace("started.tmp", "started")
+    time.sleep({SLEEP_FOREVER})
+    """
+)
+# The child exits once the grandchild holds the lock. The grandchild keeps the inherited stdout
+# open, so the read goes on until the timeout or the interruption, and only a kill of the whole
+# group frees the lock: without it the run returns while the grandchild still holds it.
+CHILD = textwrap.dedent(
+    f"""
+    import os, subprocess, sys, time
+    subprocess.Popen([sys.executable, "-I", "-S", "-c", {GRANDCHILD!r}])
+    while not os.path.exists("started"):
+        time.sleep(0.01)
+    """
+)
+
+
+class Interrupted(Exception):  # noqa: N818 - a test sentinel, not an error
+    """Raised by the test's SIGALRM handler in the middle of ``run_child``."""
+
+
+@contextlib.contextmanager
+def grandchild_reaped(folder: Path) -> Iterator[None]:
+    """After the block, assert the grandchild started and died; kill it if it is still alive."""
+    try:
+        yield
+        assert (folder / "started").exists(), "the grandchild never started"
+        assert is_lock_free_within(folder / "lock", PROBE_DEADLINE), "the grandchild is alive"
+    finally:
+        with contextlib.suppress(FileNotFoundError, ProcessLookupError, ValueError):
+            os.kill(int((folder / "started").read_text()), signal.SIGKILL)
+
+
+def is_lock_free_within(lock_path: Path, deadline: float) -> bool:
+    end = time.monotonic() + deadline
+    # "r+": a missing lock file raises instead of being created free.
+    with lock_path.open("r+") as lock:
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                if time.monotonic() > end:
+                    return False
+                time.sleep(0.01)
+            else:
+                return True
+
+
+def test_returns_streams_when_child_exits(tmp_path: Path) -> None:
+    script = "import os, sys; sys.stdout.write(os.getcwd() + ' ' + os.environ['WORD']);"
+    script += " sys.stderr.write('err'); sys.exit(3)"
+
+    result = run_child([*PYTHON, "-c", script], cwd=tmp_path, env={"WORD": "out"}, timeout=None)
+
+    assert result == ChildResult(returncode=3, stdout=f"{tmp_path} out".encode(), stderr=b"err")
+
+
+def test_kills_group_when_timed_out(tmp_path: Path) -> None:
+    with grandchild_reaped(tmp_path), pytest.raises(ChildTimedOutError):
+        run_child([*PYTHON, "-c", CHILD], cwd=tmp_path, env={}, timeout=CHILD_TIMEOUT)
+
+
+def test_kills_group_when_interrupted(tmp_path: Path) -> None:
+    def interrupt(_signal: int, _frame: FrameType | None) -> None:
+        raise Interrupted
+
+    previous = signal.signal(signal.SIGALRM, interrupt)
+    try:
+        with grandchild_reaped(tmp_path), pytest.raises(Interrupted):
+            signal.setitimer(signal.ITIMER_REAL, INTERRUPT_AFTER)
+            run_child([*PYTHON, "-c", CHILD], cwd=tmp_path, env={}, timeout=SLEEP_FOREVER / 2)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def test_raises_when_tool_missing(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        run_child([str(tmp_path / "no-such-tool")], cwd=tmp_path, env={}, timeout=None)
+
+
+def test_keeps_caller_group_when_own_session_off(tmp_path: Path) -> None:
+    # A timed-out child in the caller's group is killed alone; what it started stays in the
+    # caller's group, so a kill of that group (the SessionStart hook's) still reaches it.
+    with grandchild_reaped_by_caller(tmp_path), pytest.raises(ChildTimedOutError):
+        run_child(
+            [*PYTHON, "-c", CHILD], cwd=tmp_path, env={}, timeout=CHILD_TIMEOUT, own_session=False
+        )
+
+    assert (tmp_path / "group").read_text() == str(os.getpgrp())
+
+
+@contextlib.contextmanager
+def grandchild_reaped_by_caller(folder: Path) -> Iterator[None]:
+    """After the block, the grandchild runs in this process's group; it is killed afterwards."""
+    try:
+        yield
+        assert (folder / "started").exists(), "the grandchild never started"
+        pid = int((folder / "started").read_text())
+        (folder / "group").write_text(str(os.getpgid(pid)))
+    finally:
+        with contextlib.suppress(FileNotFoundError, ProcessLookupError, ValueError):
+            os.kill(int((folder / "started").read_text()), signal.SIGKILL)
+
+
+OUTPUT_LIMIT = 1024
+LOUD_BYTES = (1 << 20) + 3
+LOUD = textwrap.dedent(
+    """
+    import sys
+    sys.stdout.write("a" * (1 << 20) + "END")
+    sys.stderr.write("e" * (1 << 18) + "ERR")
+    """
+)
+
+
+def test_keeps_output_tail_when_limit_set(tmp_path: Path) -> None:
+    result = run_child(
+        [*PYTHON, "-c", LOUD], cwd=tmp_path, env={}, timeout=None, output_limit=OUTPUT_LIMIT
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == b"a" * (OUTPUT_LIMIT - 3) + b"END"
+    assert result.stderr == b"e" * (OUTPUT_LIMIT - 3) + b"ERR"
+
+
+def test_keeps_whole_stdout_in_file_when_path_given(tmp_path: Path) -> None:
+    kept = tmp_path / "out.txt"
+    kept.write_bytes(b"old content, emptied first\n" * 100_000)
+
+    result = run_child(
+        [*PYTHON, "-c", LOUD],
+        cwd=tmp_path,
+        env={},
+        timeout=None,
+        output_limit=OUTPUT_LIMIT,
+        stdout_path=kept,
+    )
+
+    assert result.returncode == 0
+    assert kept.read_bytes() == b"a" * (LOUD_BYTES - 3) + b"END"
+    assert result.stdout == b"a" * (OUTPUT_LIMIT - 3) + b"END"
+    assert result.stderr == b"e" * (OUTPUT_LIMIT - 3) + b"ERR"
+
+
+def test_refuses_stdout_path_when_no_limit(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="stdout_path needs output_limit"):
+        run_child(
+            [*PYTHON, "-c", "pass"],
+            cwd=tmp_path,
+            env={},
+            timeout=None,
+            stdout_path=tmp_path / "out.txt",
+        )
+
+    assert not (tmp_path / "out.txt").exists()
+
+
+# The child starts the grandchild, then outlives the timeout itself.
+SLEEPING_CHILD = CHILD + f"time.sleep({SLEEP_FOREVER})\n"
+
+
+def test_returns_when_limited_child_times_out_leaving_grandchild(tmp_path: Path) -> None:
+    # The output goes to files, not pipes: the grandchild left alive holds no pipe, so the run
+    # ends at the timeout; the grandchild stays in the caller's group (E6's residual).
+    with grandchild_reaped_by_caller(tmp_path), pytest.raises(ChildTimedOutError):
+        run_child(
+            [*PYTHON, "-c", SLEEPING_CHILD],
+            cwd=tmp_path,
+            env={},
+            timeout=CHILD_TIMEOUT,
+            own_session=False,
+            output_limit=OUTPUT_LIMIT,
+        )
+
+    assert (tmp_path / "group").read_text() == str(os.getpgrp())
+
+
+@pytest.mark.parametrize("limit", [None, OUTPUT_LIMIT], ids=["pipes", "files"])
+def test_reports_pid_when_child_starts(tmp_path: Path, *, limit: int | None) -> None:
+    started: list[int] = []
+
+    result = run_child(
+        [*PYTHON, "-c", "import os; print(os.getpid(), os.getpgrp())"],
+        cwd=tmp_path,
+        env={},
+        timeout=CHILD_TIMEOUT,
+        own_session=True,
+        output_limit=limit,
+        on_start=started.append,
+    )
+
+    pid, group = (int(word) for word in result.stdout.split())
+    # Its own session: the pid names the group a caller can kill.
+    assert started == [pid]
+    assert group == pid
+
+
+@pytest.mark.parametrize("limit", [None, 1 << 20])
+def test_writes_input_to_stdin_when_given(tmp_path: Path, limit: int | None) -> None:
+    data = b"x" * 200_000 + b"\x00end"
+    echo = "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())"
+
+    result = run_child(
+        [*PYTHON, "-c", echo], cwd=tmp_path, env={}, timeout=5, output_limit=limit, stdin=data
+    )
+
+    assert (result.returncode, result.stdout) == (0, data)

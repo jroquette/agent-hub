@@ -1,0 +1,416 @@
+"""The ``AgentSessionStore`` contract suite: the in-memory fake and the SQLite store honour it.
+
+An implementation's ``tests/contract/`` provides an ``agent_session_store`` fixture (an empty
+store) and declares ``class Test<Implementation>(AgentSessionStoreContract)``. Checks raise
+``AssertionError`` by hand: core ships this suite without depending on pytest.
+"""
+
+from collections.abc import Callable, Sequence
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+
+from agent_hub.core.agent_sessions.agent_session import (
+    AgentSession,
+    AgentSessionStatus,
+    ChangedFile,
+    EndReason,
+    ReviewTarget,
+)
+from agent_hub.core.agent_sessions.errors import AgentSessionNotFoundError, StoreSequenceError
+from agent_hub.core.agent_sessions.records import LogRecord, RecordKind
+from agent_hub.core.agent_sessions.store import AgentSessionStore
+from agent_hub.core.sessions.session import TokenUsage
+from agent_hub.core.testing.read_model_builders import (
+    a_log_record,
+    an_agent_session,
+    an_open_permission,
+)
+
+T0 = datetime(2026, 10, 13, 9, 0, 0, 125000, tzinfo=UTC)
+FIRST = "01929a4e-7a11-7c00-8a00-00000000b001"
+SECOND = "01929a4e-7a11-7c00-8a00-00000000b002"
+THIRD = "01929a4e-7a11-7c00-8a00-00000000b003"
+CLAUDE_ID = "5091b986-0000-4000-8000-0000000000b1"
+
+
+def _check(condition: bool, message: str) -> None:  # noqa: FBT001 -- an assertion's condition
+    if not condition:
+        raise AssertionError(message)
+
+
+def _session(agent_session_id: str, minutes: int = 0, **fields: object) -> AgentSession:
+    at = T0 + timedelta(minutes=minutes)
+    base: dict[str, object] = {
+        "id": agent_session_id,
+        "created_at": at,
+        "updated_at": at,
+        "last_seq": 0,
+        "claude_session_id": None,
+        "cost_usd": None,
+        "usage": None,
+    }
+    return an_agent_session(**(base | fields))
+
+
+def _records(first: int, count: int) -> list[LogRecord]:
+    kinds: tuple[RecordKind, ...] = ("user.message", "init", "text", "result")
+    return [
+        a_log_record(kinds[(seq - 1) % len(kinds)], seq, at=T0 + timedelta(seconds=seq))
+        for seq in range(first, first + count)
+    ]
+
+
+def _raises_not_found(action: Callable[[], object]) -> bool:
+    try:
+        action()
+    except AgentSessionNotFoundError:
+        return True
+    return False
+
+
+def _ids(sessions: Sequence[AgentSession]) -> list[str]:
+    return [session.id for session in sessions]
+
+
+class AgentSessionStoreContract:
+    """Gap-free logs in order, filters, links, restart, retention and delete."""
+
+    def test_gets_session_when_created(self, agent_session_store: AgentSessionStore) -> None:
+        session = _session(FIRST, open_permission=an_open_permission())
+
+        agent_session_store.create(session)
+
+        stored = agent_session_store.get(FIRST)
+        expected = session.model_copy(update={"open_permission": None})
+        _check(stored == expected, f"the session reads back as created: {stored}")
+
+    def test_appends_records_in_order_when_seq_gap_free(
+        self, agent_session_store: AgentSessionStore
+    ) -> None:
+        agent_session_store.create(_session(FIRST))
+        records = _records(1, 4)
+
+        agent_session_store.append(FIRST, records[:1])
+        agent_session_store.append(FIRST, records[1:])
+
+        _check(list(agent_session_store.records(FIRST)) == records, "records read back in order")
+        _check(agent_session_store.get(FIRST).last_seq == 4, "last_seq follows the log")
+
+    def test_refuses_append_when_seq_skips_or_repeats(
+        self, agent_session_store: AgentSessionStore
+    ) -> None:
+        agent_session_store.create(_session(FIRST))
+        agent_session_store.append(FIRST, _records(1, 2))
+
+        for batch in (_records(2, 1), _records(4, 1), [*_records(3, 1), *_records(5, 1)]):
+            try:
+                agent_session_store.append(FIRST, batch)
+            except StoreSequenceError:
+                continue
+            raise AssertionError(f"a batch from seq {batch[0].seq} must be refused")
+
+        _check(len(agent_session_store.records(FIRST)) == 2, "a refused batch writes nothing")
+        _check(agent_session_store.get(FIRST).last_seq == 2, "last_seq does not move")
+
+    def test_pages_records_when_after_and_limit_given(
+        self, agent_session_store: AgentSessionStore
+    ) -> None:
+        agent_session_store.create(_session(FIRST))
+        agent_session_store.append(FIRST, _records(1, 6))
+
+        page = agent_session_store.records(FIRST, after=2, limit=3)
+
+        _check([record.seq for record in page] == [3, 4, 5], f"a page after 2: {page}")
+
+    def test_updates_fields_when_changed(self, agent_session_store: AgentSessionStore) -> None:
+        agent_session_store.create(_session(FIRST))
+        ended = T0 + timedelta(hours=1)
+        usage = TokenUsage(input=40, output=9, cache_read=3, cache_write=1)
+
+        updated = agent_session_store.update(
+            FIRST,
+            claude_session_id=CLAUDE_ID,
+            status=AgentSessionStatus.ENDED,
+            end_reason=EndReason.CLOSED,
+            ended_at=ended,
+            updated_at=ended,
+            mode="plan",
+            model="opus",
+            cost_usd=Decimal("0.0123"),
+            usage=usage,
+            title="Fix the flaky test",
+        )
+
+        _check(updated == agent_session_store.get(FIRST), "update answers the stored session")
+        _check(
+            (updated.status, updated.end_reason, updated.ended_at)
+            == (AgentSessionStatus.ENDED, EndReason.CLOSED, ended),
+            "status, reason and end time change",
+        )
+        _check((updated.mode, updated.model) == ("plan", "opus"), "mode and model change")
+        _check((updated.cost_usd, updated.usage) == (Decimal("0.0123"), usage), "cost kept")
+        _check(updated.claude_session_id == CLAUDE_ID, "the Claude session id is linked")
+
+    def test_keeps_effort_and_ultracode_when_created_and_updated(
+        self, agent_session_store: AgentSessionStore
+    ) -> None:
+        """AC-681.3, AC-681.9: what a reopened session starts with is what the store kept."""
+        agent_session_store.create(_session(FIRST, effort="high", ultracode=True))
+        created = agent_session_store.get(FIRST)
+
+        updated = agent_session_store.update(FIRST, effort="max", ultracode=False)
+
+        _check((created.effort, created.ultracode) == ("high", True), f"created: {created}")
+        _check(updated == agent_session_store.get(FIRST), "update answers the stored session")
+        _check((updated.effort, updated.ultracode) == ("max", False), f"updated: {updated}")
+
+    def test_keeps_digest_when_updated(self, agent_session_store: AgentSessionStore) -> None:
+        agent_session_store.create(_session(FIRST))
+        files = (
+            ChangedFile(path="/repo/b.py", last_change_id="toolu_2"),
+            ChangedFile(path="/repo/a.py", last_change_id="toolu_1"),
+        )
+
+        updated = agent_session_store.update(
+            FIRST, last_prompt="Fix it.", last_reply="Fixed.", changed_files=files
+        )
+
+        _check(updated == agent_session_store.get(FIRST), "update answers the stored session")
+        _check(
+            (updated.last_prompt, updated.last_reply, updated.changed_files)
+            == ("Fix it.", "Fixed.", files),
+            f"the digest reads back in order: {updated}",
+        )
+        _check(agent_session_store.list()[0].changed_files == files, "the list shows it too")
+
+    def test_keeps_review_targets_when_updated(
+        self, agent_session_store: AgentSessionStore
+    ) -> None:
+        agent_session_store.create(_session(FIRST))
+        targets = (
+            ReviewTarget(
+                repo="api",
+                label="api/dem-1",
+                root="/hubs/api/.claude/worktrees/dem-1",
+                branch="dem-1",
+                base="origin/main",
+                base_sha="a" * 40,
+                head_sha="b" * 40,
+                pr_number=7,
+                pr_url="https://github.com/acme/api/pull/7",
+            ),
+        )
+
+        updated = agent_session_store.update(FIRST, review_targets=targets)
+
+        _check(updated == agent_session_store.get(FIRST), "update answers the stored session")
+        _check(updated.review_targets == targets, f"the targets read back: {updated}")
+
+    def test_keeps_tool_access_when_updated(self, agent_session_store: AgentSessionStore) -> None:
+        agent_session_store.create(_session(FIRST).model_copy(update={"tool_access": "read_only"}))
+
+        updated = agent_session_store.update(FIRST, title="Find services")
+
+        _check(updated.tool_access == "read_only", "update keeps the tool access")
+        _check(agent_session_store.get(FIRST).tool_access == "read_only", "get reads it back")
+
+    def test_starts_with_empty_digest_when_created(
+        self, agent_session_store: AgentSessionStore
+    ) -> None:
+        agent_session_store.create(_session(FIRST))
+
+        stored = agent_session_store.get(FIRST)
+
+        _check(
+            (stored.last_prompt, stored.last_reply, stored.changed_files) == (None, None, ()),
+            f"no digest yet: {stored}",
+        )
+
+    def test_pages_only_kinds_when_kinds_given(
+        self, agent_session_store: AgentSessionStore
+    ) -> None:
+        agent_session_store.create(_session(FIRST))
+        agent_session_store.append(FIRST, _records(1, 8))
+
+        first = agent_session_store.records(FIRST, limit=3, kinds={"user.message", "text"})
+        rest = agent_session_store.records(FIRST, after=first[-1].seq, kinds={"text"})
+
+        _check([record.seq for record in first] == [1, 3, 5], f"kinds kept: {first}")
+        _check([record.seq for record in rest] == [7], f"after a filtered page: {rest}")
+
+    def test_lists_newest_first_when_filtered(self, agent_session_store: AgentSessionStore) -> None:
+        agent_session_store.create(_session(FIRST, 0))
+        agent_session_store.create(_session(SECOND, 1, project="other"))
+        agent_session_store.create(
+            _session(THIRD, 2, kind="cloud", cloud_id="cse_01x", status=AgentSessionStatus.ENDED)
+        )
+
+        store = agent_session_store
+        _check(_ids(store.list()) == [THIRD, SECOND, FIRST], "newest first")
+        _check(_ids(store.list(project="demo")) == [THIRD, FIRST], "filtered by project")
+        idle = store.list(status=AgentSessionStatus.IDLE)
+        _check(_ids(idle) == [SECOND, FIRST], "filtered by status")
+        _check(_ids(store.list(kind="cloud")) == [THIRD], "filtered by kind")
+        _check(_ids(store.list(limit=1)) == [THIRD], "at most limit")
+
+    def test_lists_only_writers_of_a_file_when_wrote_given(
+        self, agent_session_store: AgentSessionStore
+    ) -> None:
+        hub = "/work/agent-hub-hub/brain/features/real_cost/spec.md"
+
+        def call(seq: int, name: str, path: str) -> LogRecord:
+            body = {"tool_use_id": f"t{seq}", "name": name, "input": {"file_path": path}}
+            return a_log_record("tool.call", seq, body=body)
+
+        store = agent_session_store
+        for minutes, agent_session_id in enumerate((FIRST, SECOND, THIRD)):
+            store.create(_session(agent_session_id, minutes))
+        store.append(FIRST, [call(1, "Write", hub)])
+        store.append(SECOND, [call(1, "Read", hub)])
+        store.append(THIRD, [call(1, "Edit", hub), call(2, "Write", "/w/xbrain/features/a.md")])
+
+        spec = "brain/features/real_cost/spec.md"
+        _check(_ids(store.list(wrote=spec)) == [THIRD, FIRST], "the writers, newest first")
+        _check(_ids(store.list(wrote=hub)) == [THIRD, FIRST], "an absolute path too")
+        _check(_ids(store.list(wrote="brain/features/real%cost/spec.md")) == [], "% is literal")
+        _check(_ids(store.list(wrote="brain/features/a.md")) == [], "a whole path segment")
+
+    def test_finds_link_when_claude_session_id_known(
+        self, agent_session_store: AgentSessionStore
+    ) -> None:
+        agent_session_store.create(_session(FIRST, 0, claude_session_id=CLAUDE_ID))
+        agent_session_store.create(_session(SECOND, 1, claude_session_id=CLAUDE_ID))
+
+        _check(agent_session_store.link_of("demo", CLAUDE_ID) == SECOND, "the newest links")
+        _check(agent_session_store.link_of("other", CLAUDE_ID) is None, "per project")
+        _check(agent_session_store.link_of("demo", "unknown") is None, "unknown: no link")
+
+    def test_finds_each_link_as_link_of_when_ids_are_batched(
+        self, agent_session_store: AgentSessionStore
+    ) -> None:
+        fourth = "01929a4e-7a11-7c00-8a00-00000000b004"
+        other_id = "5091b986-0000-4000-8000-0000000000b3"
+        late_id = "5091b986-0000-4000-8000-0000000000b4"
+        store = agent_session_store
+        store.create(_session(FIRST, 0, claude_session_id=CLAUDE_ID))
+        store.create(_session(SECOND, 1, claude_session_id=CLAUDE_ID))
+        store.create(_session(THIRD, 2, project="other", claude_session_id=other_id))
+        store.create(_session(fourth, 3, claude_session_id=late_id))
+        unknown = [f"5091b986-0000-4000-9000-{number:012d}" for number in range(1_000)]
+        asked = [CLAUDE_ID, other_id, "unknown", *unknown, late_id]
+        _check(len(asked) == 1_004, f"1,004 ids, more than two chunks of 500: {len(asked)}")
+
+        found = dict(store.links_of("demo", asked))
+
+        one_by_one = {
+            claude_id: link
+            for claude_id in asked
+            if (link := store.link_of("demo", claude_id)) is not None
+        }
+        _check(found == one_by_one, f"each id answers as link_of: {found} != {one_by_one}")
+        _check(found == {CLAUDE_ID: SECOND, late_id: fourth}, f"the newest, the last id: {found}")
+        _check(dict(store.links_of("demo", [])) == {}, "no id asked: no link")
+
+    def test_reads_first_record_of_kinds_when_sessions_are_batched(
+        self, agent_session_store: AgentSessionStore
+    ) -> None:
+        def record(kind: RecordKind, seq: int) -> LogRecord:
+            return a_log_record(kind, seq, at=T0 + timedelta(seconds=seq))
+
+        store = agent_session_store
+        for minutes, agent_session_id in enumerate((FIRST, SECOND, THIRD)):
+            store.create(_session(agent_session_id, minutes))
+        first_log = [
+            record("init", 1),
+            record("user.message", 2),
+            record("text", 3),
+            record("user.message", 4),
+        ]
+        third_prompt = record("user.message", 1)
+        store.append(FIRST, first_log)
+        store.append(SECOND, [record("init", 1), record("text", 2)])
+        store.append(THIRD, [third_prompt])
+        synthetic = [f"01929a4e-7a11-7c00-9a00-{number:012d}" for number in range(600)]
+        asked = [FIRST, SECOND, "unknown", *synthetic, THIRD]
+        _check(asked.index(THIRD) >= 500, "THIRD is asked in the second chunk of 500 ids")
+
+        found = dict(store.first_records(asked, kinds={"user.message"}))
+
+        expected = {FIRST: first_log[1], THIRD: third_prompt}
+        _check(found == expected, f"each session's first record of the kinds: {found}")
+
+    def test_ends_unfinished_when_server_restarts(
+        self, agent_session_store: AgentSessionStore
+    ) -> None:
+        agent_session_store.create(_session(FIRST, 0, status=AgentSessionStatus.RUNNING))
+        agent_session_store.create(
+            _session(SECOND, 1, status=AgentSessionStatus.WAITING_PERMISSION)
+        )
+        failed_at = T0 + timedelta(minutes=5)
+        agent_session_store.create(
+            _session(
+                THIRD,
+                2,
+                status=AgentSessionStatus.FAILED,
+                end_reason=EndReason.FAILED,
+                ended_at=failed_at,
+            )
+        )
+        at = T0 + timedelta(hours=2)
+
+        count = agent_session_store.end_unfinished(at, EndReason.SERVER_STOPPED)
+
+        _check(count == 2, f"two sessions were unfinished, got {count}")
+        for agent_session_id in (FIRST, SECOND):
+            session = agent_session_store.get(agent_session_id)
+            _check(
+                (session.status, session.end_reason, session.ended_at)
+                == (AgentSessionStatus.ENDED, EndReason.SERVER_STOPPED, at),
+                f"{agent_session_id} ends server_stopped",
+            )
+        third = agent_session_store.get(THIRD)
+        _check((third.status, third.ended_at) == (AgentSessionStatus.FAILED, failed_at), "kept")
+
+    def test_purges_only_ended_before_cutoff_when_swept(
+        self, agent_session_store: AgentSessionStore
+    ) -> None:
+        cutoff = T0 + timedelta(days=1)
+        old = {"status": AgentSessionStatus.ENDED, "end_reason": EndReason.CLOSED}
+        agent_session_store.create(_session(FIRST, 0, **old, ended_at=T0))
+        agent_session_store.create(_session(SECOND, 1, **old, ended_at=cutoff + timedelta(1)))
+        agent_session_store.create(_session(THIRD, 2))
+        agent_session_store.append(FIRST, _records(1, 2))
+
+        count = agent_session_store.purge_ended_before(cutoff)
+
+        _check(count == 1, f"only the old ended session goes, got {count}")
+        _check(_raises_not_found(lambda: agent_session_store.get(FIRST)), "it is gone")
+        _check(_raises_not_found(lambda: agent_session_store.records(FIRST)), "its records too")
+        kept = {session.id for session in agent_session_store.list()}
+        _check(kept == {SECOND, THIRD}, f"recent and live sessions stay: {kept}")
+
+    def test_deletes_records_when_session_deleted(
+        self, agent_session_store: AgentSessionStore
+    ) -> None:
+        agent_session_store.create(_session(FIRST))
+        agent_session_store.create(_session(SECOND, 1))
+        agent_session_store.append(FIRST, _records(1, 3))
+        agent_session_store.append(SECOND, _records(1, 1))
+
+        agent_session_store.delete(FIRST)
+
+        _check(_raises_not_found(lambda: agent_session_store.get(FIRST)), "the session is gone")
+        _check(_raises_not_found(lambda: agent_session_store.records(FIRST)), "records too")
+        _check(len(agent_session_store.records(SECOND)) == 1, "other logs stay")
+
+    def test_raises_not_found_when_id_unknown(self, agent_session_store: AgentSessionStore) -> None:
+        unknown = "01929a4e-7a11-7c00-8a00-0000000000ff"
+
+        for action in (
+            lambda: agent_session_store.get(unknown),
+            lambda: agent_session_store.records(unknown),
+            lambda: agent_session_store.append(unknown, _records(1, 1)),
+            lambda: agent_session_store.update(unknown, title="x"),
+            lambda: agent_session_store.delete(unknown),
+        ):
+            _check(_raises_not_found(action), "an unknown id raises AgentSessionNotFoundError")

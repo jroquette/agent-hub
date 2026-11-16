@@ -1,0 +1,66 @@
+# AC-2: every check fails: no gate, no mitigation; the postmortem stays open.
+workflow: incident
+inputs: {report: "Checkout fails since Tuesday."}
+stubs:
+  config:
+    output: {default_branch: main, branch_prefix: jdoe/, author_name: null, author_email: null, ready_label: agent-ready, teams: [DEM], hub: {github: acme/demo-hub, default_branch: main, target: {github: acme/demo-hub, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}, repos: [{dir: demo-api, github: acme/demo-api, default_branch: main, check_fast: make check-fast, check: make check, target: {github: acme/demo-api, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}]}
+  evidence:
+    output:
+      since: 72h
+      since_iso: "YYYY-MM-DDT12:00:00+00:00"
+      repos:
+        - dir: demo-api
+          ref: origin/main
+          head: 0a1b2c3d4e5f60718293a4b5c6d7e8f901234567
+          commits:
+            - sha: 0a1b2c3d4e5f60718293a4b5c6d7e8f901234567
+              at: "YYYY-MM-DDT09:00:00+00:00"
+              subject: "feat(api): retry the payment call (DEM-7)"
+              merge: false
+              paths: [app/payment.py]
+              more_paths: 0
+          more_commits: 0
+          tags: []
+      unreadable: []
+      left_out: ["failing checks on main (GitHub, no token in script nodes)", "logs (hub.json declares no log paths)"]
+      trimmed: false
+  recall: {output: {matches: [], summary: No past incident matches.}}
+  hypotheses:
+    output:
+      hypotheses:
+        - id: H1
+          rank: 1
+          statement: The payment retry drops the session token.
+          repo: demo-api
+          check: [git, grep, -q, retry_without_token, --, app/payment.py]
+          confirms_when: The pattern is found.
+          mitigation: {summary: Revert the retry commit., undo: Re-apply the commit.}
+        - id: H2
+          rank: 2
+          statement: The checkout config changed.
+          repo: demo-api
+          check: [test, -f, app/checkout.toml]
+          confirms_when: The file exists.
+          mitigation: null
+  check:
+    output:
+      results:
+        - {id: H1, rank: 1, repo: demo-api, status: failed, exit_code: 1, reason: "", tail: ""}
+        - {id: H2, rank: 2, repo: demo-api, status: failed, exit_code: 1, reason: "", tail: ""}
+      confirmed: 0
+      mitigations: 0
+      menu: "H1 failed\nH2 failed"
+  handoff: {output: {path: brain/_inbox/incident-YYYY-MM-DD-run00001-handoff.md, confirmed: 0, mitigation: ""}}
+  postmortem:
+    output:
+      title: Checkout fails after the payment retry
+      summary: The payment retry dropped the session token.
+      timeline: [{at: "YYYY-MM-DDT09:00Z", what: The retry commit merged.}]
+      root_cause: The retry builds a new request without the token.
+      detection_gap: No test covers a retried payment.
+      what_fixed_it: ""
+      follow_ups: [Add a test for a retried payment.]
+      learnings: []
+  note: {output: {status: open, path: brain/_inbox/incident-YYYY-MM-DD-run00001-postmortem.md}}
+expect: {status: done, outcome: open}
+reached: [config, evidence, recall, hypotheses, check, handoff, postmortem, note]

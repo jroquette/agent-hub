@@ -1,0 +1,187 @@
+# Hub doctor: pluggable rules
+
+## Purpose
+
+`hub doctor` checks that a hub and the repos it lists are healthy: the config is valid, the generated files match the
+lock, links resolve, agent instructions stay short, true and safe, and nothing from the brain leaks into a code repo.
+It will replace the hub's config lint and feature-tracker check. This file is the Phase 1 contract for the rule
+interface, the rule set, the output, the exit codes and the per-project configuration.
+
+## Contract
+
+### Rule interface
+
+A rule is a pure function in core with metadata. The CLI builds a read-only snapshot through an adapter and passes it
+to every enabled rule; no rule touches the disk, the network or git itself.
+
+| Field | Meaning |
+|---|---|
+| `id` | dotted `<area>.<name>`, unique, stable across releases (a rename is a breaking change) |
+| `severity` | default level of its findings: `error`, `warning` or `info` |
+| `summary` | one line: what it checks |
+| `module` | the module that owns it, or none for a base rule |
+| `check(snapshot) -> findings` | the check itself |
+
+A finding has `rule`, `severity`, `path`, `line` (optional), `message` and `fix` (one line saying how to repair it).
+The snapshot is read from the cwd's real path (no walk-up) and holds the validated config (or the validation errors),
+the files of the hub and the fixed set of paths the rules read by name. Two inputs are read only when a selected rule
+needs them: the parsed `hub.lock` and its managed paths, looked at by path (`lock.drift`), and the release's base hooks
+block, built by the templates package installed with the running CLI, so doctor still renders no file
+(`settings.weakening`). A third, read only when a repo rule (`brain.leak`, `instructions.read_cap`, `links.dead`, `repos.agents`, `repos.ui_paths`) is selected, is
+the files of each `repos[].dir` checkout at `../<dir>`: a missing or non-folder `../<dir>` gives one `info`, a checkout
+that cannot be listed one `error` (its cause), both at `../<dir>` on the first selected repo rule by id, never retuned;
+the repo rules skip both. The hub's CI clones each repo there before `make check` (the repos step,
+[hub-adopt.md](hub-adopt.md#in-the-hubs-ci)), so the repo rules run in CI too, except for a private repo when CI has no
+read token for it: that repo is skipped and its rules run locally only. A linked `../<dir>` is resolved once to
+its real path. A root with no `.git` entry, a hub
+inside a larger repository included, is walked, skipping `.git` and nested repositories. A root with a `.git` entry is
+listed with `git ls-files -z --cached --others --exclude-standard`, and git must name the root as the work-tree top;
+`HubFiles.listed_by_git` says whether git made the listing. Git missing, failing, timing out or naming another top is a
+tree problem, never a walk. No link is followed, and git runs only when a selected rule needs a listing. A tree problem
+(a failed listing or read of the hub) is one `error` finding at path `.` on the first selected rule, by id, that reads
+the listing, else the first by id other than `config.schema` and `platform.version` (none when only those run), never
+retuned; its message is the cause (`could not list the files: …` or `could not read the files: <path>: …`), its fix one
+line. Fixed paths are read one by one before the listing, so a failed listing keeps them; after a failed read no rule
+calls an absent path missing. A rule whose check raises gives one `error` of that rule at `.` (`rule crashed: <type>:
+<message>`), never retuned, and the other rules keep running. An instruction or plugin file that is not UTF-8 text (a
+NUL included) is one `error` at its path (`not UTF-8 text: …`), never retuned, from the first selected rule in registry
+order that reads it; the other rules skip it. Proof: one unit test per rule on an in-memory snapshot, plus one e2e test
+of the command on a synthetic hub. A rule's `module` comes from core's `RULE_MODULES`; a module's rules are core
+functions registered when the module ships.
+
+### Rules
+
+| Rule id | Default | Checks | Origin |
+|---|---|---|---|
+| `config.schema` | error | `hub.json` against `HubConfig`, including `schema_version` and `doctor.rules` ids, and `hub.local.json` (its environments, repos and services against a valid `hub.json` too, as the CLI checks them); cannot be disabled or retuned | [ADR 0010](../adr/0010-hub-json-config-contract.md) |
+| `platform.version` | error | the running CLI equals `platform.version` (a shim always runs the pin; a direct `hub` may not); one finding only; its `doctor.rules` entry has no effect on findings | [ADR 0013](../adr/0013-release-by-git-tags.md) |
+| `lock.drift` | error | each managed file (bytes and executable bit) and link (target, not followed) matches its `hub.lock` entry (a missing one: `hub sync` restores it); a lock `platform_version` older than the pin, compared as numbers: warning "sync pending"; newer: warning "downgrade"; no `hub.lock`: warning "not adopted"; a lock `platform_commit` ([ADR 0054](../adr/0054-pin-the-platform-release-by-commit.md)) at the pinned version: its `platform_repository` other than the one in use: warning; the tag `v<version>` naming another commit, or missing: error, fix `run hub sync`; a lock with no commit: nothing | [ADR 0009](../adr/0009-hub-sync-by-file-ownership.md), [hub-sync.md](hub-sync.md) |
+| `links.dead` | error | in each listed UTF-8 `.md` file of the hub and the repos, inline links, images and reference definitions (CommonMark: a definition only when nothing or a title follows it) resolve from the file's folder, `#fragment`/`?query` cut, to a listed file or folder; skipped: any URI scheme, absolute and fragment-only links, code spans, fenced blocks and HTML comments; a hub link into `../<dir>` is checked against that repo's listing (skipped when the checkout is missing or cannot be listed); any other link leaving the hub or a repo is skipped | new |
+| `instructions.size` | error | line limits of the listed regular instruction files (root `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md`, `GEMINI.md`; `.github/copilot-instructions.md` and every `.md` under `.claude/{rules,agents,skills,commands}` or `.github/instructions`): root `AGENTS.md` 100, `CLAUDE.md` 150, `CLAUDE.local.md` 50, every nested one 80, `GEMINI.md` none; `max_lines` merges over them (exact key before glob, then the longest glob). A link is not an instruction file, so a plugin agent linked into `.claude/agents/` gets no `instructions.*` check (it keeps `rules.frontmatter`, `secrets.config` and `attribution.ai` as a plugin file) | config lint |
+| `instructions.refs` | error | paths, `make` targets and `pnpm` scripts an instruction file names below its frontmatter exist: a path resolves against the listed paths and the fixed paths present, and their folders, from the file's folder or the root, then by name or ending (a reference of at most 32 segments); nothing out of the hub or under a link resolves; targets are `Makefile`'s, `Makefile.project`'s and those of `mk/<id>.mk` of selected modules, scripts `package.json`'s (not read when linked or not text); `hub.lock` is ignored by design (its absence is `lock.drift`'s), and so is exactly `hub.local.json` (each developer's, gitignored); links are not instruction files | config lint |
+| `instructions.duplicates` | error | the same normalized instruction line (60 or more characters; not a table, fence or heading line) in two instruction files, flagged on the later path naming the first; repeats within a file are not; links are not instruction files | config lint |
+| `instructions.read_cap` | warning | no listed regular instruction file of the hub (as `instructions.size` lists them), plugin agent or skill (as `rules.frontmatter` lists them), or instruction file of a checked-out repo, sends agents to a doc over the Read tool's cap: Claude Code refuses a file over 25,000 tokens read whole, and the snapshot has bytes, not tokens, so the cap is pinned at 65,536 bytes (agent-hub's `docs/SPEC.md` was 139,404 bytes for about 53,000 tokens). Each path a line names (a link target or a code span shaped like a path, as `instructions.refs` reads them) that resolves, from the file's folder or the tree's root, to a listed regular `.md`, `.mdx`, `.markdown`, `.rst` or `.txt` file of the same tree over the cap is one warning at the file's first line naming it (a repo's at `../<dir>/<path>`), message `sends agents to <doc> (<size> bytes), over the Read tool's cap of about 25000 tokens (65536 bytes): one Read cannot hold it`, fix "split <doc> into docs under the cap, or name the section to read (Read with offset and limit, or grep)"; a missing or unlisted doc, a doc of another tree and any other file give nothing; never an error, so no hub gate turns red | AGH-699 |
+| `rules.frontmatter` | error | at line 1 of each listed regular instruction or plugin (`plugin/…/{agents,skills}/…/*.md`) file: a `---` frontmatter is terminated; a `.claude/rules` file with frontmatter has a non-empty `paths:` list whose globs (braces expanded) each match a file or folder in the hub (listed or a fixed path present); an agent or skill file has a `name` and a `description`. A glob over 256 characters or expanding to more than 64 globs is its own finding and not matched; the globs past a run budget of 64,000,000 path characters get `was not checked` | config lint |
+| `settings.valid` | error | `.claude/settings.json` (strict, as `settings.weakening` reads it) and `.mcp.json` (lenient, as the old lint) parse to a JSON object; settings hold no deprecated key (`allowedTools`, `ignorePatterns`); a linked file gives no finding | config lint |
+| `settings.weakening` | error | neither `.claude/settings.project.json` nor `.claude/settings.json` sets `disableAllHooks` or `permissions.defaultMode`; both parse as strict JSON; `settings.json` holds every group of the release's base hooks block, compared by JSON form | [ADR 0009](../adr/0009-hub-sync-by-file-ownership.md) |
+| `permissions.bypass` | error | no `bypassPermissions` default mode in `.claude/settings.json`; no skip-permissions flag in a key or string of it or `.mcp.json` (both read leniently, so a `settings.valid` error never hides one), nor in a line of a hub file (listed, or a fixed path present) under `scripts/` or `.github/workflows/`, `Makefile` or `package.json` | config lint |
+| `secrets.config` | error | no secret shape (eight kinds: JWT, AWS access key, private key, API key, GitHub token, Linear API key, credential assignment, Fernet-like key) in the instruction and plugin files, `.mcp.json`, `.claude/settings.json`, `CONTRIBUTING.md` or the PR template; once per kind per line, naming the kind, never the text; plus one info at `hub.json` per non-empty `guard.readable_env_files` and `guard.secret_env_files`, naming the env files the guard releases or always denies | config lint |
+| `mcp.pinned` | error | each `.mcp.json` server is not `@latest` and, run by `npx`, names a version (`@<digit>`); a server whose `args` are not all strings is skipped; settings' `mcpServers` are not checked | config lint |
+| `attribution.ai` | error | no AI co-author trailer, "Generated with Claude Code" line or `claude/` branch prefix in the files `secrets.config` reads | config lint |
+| `brain.leak` | error | no trimmed line of `min_line_length` (default 60, 1–10000) or more characters of a listed UTF-8 file under `brain/` (frontmatter, an unterminated one read as text, fenced blocks and table rows skipped) is a trimmed line of a listed text file in a repo; reported at the repo `path:line`, naming the brain `path:line`, never the leaked line. Built-in exception: a line of an ADR draft (a brain path that matches `(?:^\|/)adr-(?:\d+-)?draft`) is no leak in a repo file under `docs/adr/`, whatever its number; there only the brain files that are no ADR draft count, and `--fix` judges a draft only by the repo files outside `docs/adr/` | [SPEC](../SPEC.md) direction 2 |
+| `hooks.guard-extension` | error | static, never imported or run: the extension (at most 1 MiB, UTF-8) parses from its raw bytes as Python 3.9 (BOM and coding cookie as the runner reads them; best-effort: newer f-string syntax passes), and the last top-level binding of `check` is a `def` that `check(event, cfg)` can call; no file: no finding | [hub-generator.md](hub-generator.md) |
+| `makefile.override` | warning | `Makefile.project` does not redefine a target parsed from the managed `Makefile` (and the targets of `mk/<id>.mk` of selected modules; grouped `&:` rules read; `$(T):` targets not expanded; no other included file is followed) | [hub-generator.md](hub-generator.md) |
+| `features.tracker` | error | each listed `brain/features/*/features.json`: shape, AC ids, evidence, and the cross-check with a listed sibling `spec.md`; links are not followed. A warning on the record when a sibling `issues.md` is listed but no tracker id is recorded, neither in its `linear` (absent or `[]`), nor as a planned ticket's `id` (AGH-136), nor in the spec's frontmatter `linear:` (read as `hub web` reads it, in its first 64 KiB; only ids of a team key count, so a placeholder does not): "issues.md exists but `linear` holds no tracker id, here or in spec.md", fix "write the created issue ids into features.json → linear"; none when the record is not an object, its `linear` is malformed or the spec cannot be read (each already an error). Warnings on each recorded folder's agent outputs, `evals/*.json` and `reviews/<ticket>/*.json` (hidden names skipped; a folder without `features.json` gets none, AGH-139): one without its `evals/<name>.md` or `reviews/<ticket>.md`; one not read as a regular file; one that fails validation (an eval with the folder's record), as "invalid <kind> output: <n> problems, first: <path>: <message>", fix `run ./hub validate-output <kind> <path>`; per feature, the first 200 eval and 500 review outputs by path; one 4 MiB validation budget per run, which the features spend in listing order: an output is validated when it fits the remaining budget, and the skipped outputs are counted in one info line on `brain/features`, "<n> agent outputs not validated (over the doctor's budget)". A `doctor.rules` severity retunes it with the rule's errors | feature check, AGH-143 |
+| `bench.tasks` | error | module `bench`, snapshot only (no git, no process): listed `brain/workflow/bench/tasks.json` is a strict JSON list (at most 1 MiB, 200 cases; absent or `[]` is clean); each case an object with `id` (`[A-Za-z0-9._-]{1,64}`, unique ignoring case), `repo` (a `repos[].dir` unless `excluded`), `merge` (a 7–40 hex sha), `prompt` (1–20 000 characters, not starting with `-`), `hidden_tests` (1–100 literal relative paths of at most 1 024 characters: no glob or `\`, no leading `/`, `-` or `:` (pathspec magic), no empty, `.`, `..` or `.git` segment in any case, no control, format or surrogate character), `test_cmd` (1–32 non-empty strings of at most 1 024 characters); optional `setup_cmd` (at most 4 096 characters), `env` (at most 32 keys `[A-Za-z_][A-Za-z0-9_]*`, values string, number or boolean), `excluded` (boolean); no NUL in a string a process gets; one finding per problem | module `bench` |
+| `config.identity` | info | the branch prefix this developer gets when no file sets one: derived from the effective email (named with its source); can be disabled, cannot be retuned (a `severity` is a `config.schema` error), so every developer's run exits alike | AGH-65 |
+| `repos.agents` | warning | each checked-out repo's root holds `AGENTS.md` as the repo rules list it (a file or a link, not followed; empty passes; a gitignored or deleted file does not count, an unreadable one does; `CLAUDE.md`, a nested or differently cased name do not count); the fix names the hub's seeded `docs/app-repo-AGENTS.md` and the repo's `check_fast` (unless absent or blank) and `check` (escaped, cut); missing or unlistable checkouts are the runner's | AGH-76 |
+| `config.stop_gate` | warning | each repo with no `check_stop` whose `check_fast` is absent, empty or blank: `no Stop gate for <dir>` at `repos[<i>].check_fast`; can be disabled, cannot be retuned (a `severity` is a `config.schema` error) | AGH-52, AGH-619 |
+| `repos.ui_paths` | warning | each glob of a repo's `ui_paths` matches at least one path of its checkout's listing (as the repo rules list it: a gitignored file does not count), matched from the checkout root as [project-config.md](project-config.md) states; one finding per glob that matches nothing, at `hub.json`, message `repos[<i>].ui_paths[<j>]: <glob> matches no file in ../<dir>` (glob cut); a repo without the key gives none; missing or unlistable checkouts are the runner's (it reads the checkouts even when no repo sets the key, so with the other repo rules off it carries the runner's checkout findings) | AGH-474 |
+| `environments.production` | warning | one finding per production environment (the `production` flag, never a name) of `hub.json` and `hub.local.json`, at its source (the file its effective `access` comes from), message `production environment: <name> (access <a>, <source>)`: a warning for `write` or `ask` (ending `; actions: writes and destroys are denied there`, the access policy of [scenarios.md](scenarios.md)), an info for `read`; a local file `config.schema` refuses adds nothing; an ordinary `doctor.rules` entry (disabled or retuned like the others) | [environments.md](environments.md) |
+| `environments.env_file` | warning | each env file a declared environment or endpoint names (`credentials.env_file`, both files), at the file that declares it: `env file <path> of <env> is missing`, `is outside the hub and every declared repo` (by real path: a link leading out of them is outside), `is not ignored by git in <dir>` (`git check-ignore` in that checkout; a tracked file is never ignored), or `is reached through a link` (a link on its path below the hub's or repo's folder it names, which `hub action run` refuses to follow); no finding without a declared env file | [scenarios.md](scenarios.md) |
+| `workflows.starts` | error | each `schedules[]` and `events[]` entry of `hub.json` names a workflow that loads and plans (the hub's or a built-in, as `workflows.valid` reads them) and is not `issue-to-pr`: one finding per entry at `hub.json`, message `<list>[<i>].workflow: unknown workflow <name>` (fix "name a workflow that hub workflow list shows, or add it under workflows/") or `<list>[<i>].workflow: issue-to-pr writes to the tracker and cannot start from hub web` (fix "start issue-to-pr with hub run, or remove this entry"); no finding when no workflow was read | AGH-481, [ADR 0048](../adr/0048-scheduled-and-event-starts-in-hub-web.md) |
+| `scenarios.graph_format` | warning | each scenario of the hub's `scenarios/<pack>/` (core's `WorkflowSource`, filled by the generator's scenario discovery, as `hub scenario` reads them) whose `version` is the integer 1 (the graph format, `nodes`): one finding per file at its `version` line, message `scenario <name> is in the graph format (version 1), which a later release removes`, fix `run hub scenario migrate <name> to write it as blocks (version 2)`; a file the reader refused or with another version is skipped; never an error (a graph scenario still loads and runs); `hub init` seeds `demo-service-up` as blocks, so a fresh hub has none | [ADR 0049](../adr/0049-scenario-blocks-and-run-control.md) |
+| `brain.memory` | warning | personal memory in `brain/auto/workspace/` stays out of git: (a) on a git listing only (`listed_by_git`), each tracked or not-ignored path under the folder but its `.gitkeep` (at most 10, then one `N more` at the folder); (b) the root `.gitignore` has no line ignoring the folder (a line match, not git's matcher: a nested `.gitignore` and a later `!` line are not evaluated). Paths and counts only. Details, messages, fix and limits: [memory-layers.md](memory-layers.md#doctor-rule-brainmemory) | AGH-48 |
+| `sandbox.workflow` | error | the hub's own commands work inside the Claude Code sandbox the managed settings turn on: with `.claude/settings.json` → `sandbox.enabled` not `true`, one info (nothing to check); with it on, one error naming each command of `WORKFLOW_EXCLUDED_COMMANDS` (`gh *`, `git push/fetch/pull/clone/ls-remote *`, `./hub worktree *`, `hub worktree *`, `make worktree *`, `make worktree-remove *`, `./hub pr-watch *`, `hub pr-watch *`, `./hub claim *`, `hub claim *`) missing from `sandbox.excludedCommands`; run from a Claude Code session (`CLAUDECODE=1`, so `hub doctor` itself runs sandboxed), each git checkout of `repos` gets `git ls-remote -q origin HEAD` (20 s, no prompt) and a failure is a warning at `../<dir>` whose fix names the bare `./hub worktree` call and the `git fetch` + `--no-fetch` path. A missing or invalid `settings.json` is `settings.weakening`'s. `uv`'s folders are the `hub` shim's (it moves them to `.hub-uv/` when they cannot be written), not a settings key | AGH-134 |
+| `permissions.writing` | warning | no `permissions.allow` rule of `.claude/settings.json` lets a command that writes run with no permission prompt. The rule reads the merged file, as Claude Code does: the managed rules and the project's, which `hub sync` merges from `.claude/settings.project.json`, so a rule added there gives nothing before the sync. Each allow rule is tried alone, with the file's `permissions.deny`, against core's `WRITING_COMMANDS`, the list of writing commands and the matching model (`agent_hub.core.hub_files.writing_commands`) that the managed settings' own test uses. One warning per rule that lets a command through, in the file's order, each rule once, at `.claude/settings.json` with no line: message ``permissions.allow rule `<rule>` lets a command that writes run with no prompt, such as `<command>` `` (the rule cut to 80 characters, the command the first of the list the rule lets through), fix "narrow or remove the rule in .claude/settings.project.json, then run hub sync; for a rule that is not there, run hub sync alone". The managed rules alone give none once the hub is synced; a hub not synced since the release that added the write denies gets one warning per `git diff`, `git log` and `git show` rule until `hub sync`. Only `Bash` rules are judged, and only against that list, so no finding does not prove a rule read-only: `Bash(make *)`, `Write` or an MCP tool give none. A value of the wrong type (`permissions`, its `allow`, an item that is not a string) is skipped, and a `deny` that is not a list is no deny; a missing or invalid `settings.json` is `settings.weakening`'s (one that does not parse is `settings.valid`'s too) and a linked one is not read; an ordinary `doctor.rules` entry (disabled or retuned like the others); never an error, so no hub gate turns red | AGH-823 (related: AGH-394, a planned `settings.valid` warning on `Bash` rules that hold a shell operator) |
+| `workflows.valid` | error | every workflow of the hub's `workflows/` and the built-ins loads and plans, as `hub workflow validate` reads them (core's `WorkflowSource`, filled by the generator): one finding per problem at its file and line (a built-in's file shown as `<builtin>/…`), message `<key>: <problem>`, fix "fix the workflow file; hub workflow validate lists each problem"; fixtures are not run (the hub's `make check` runs `hub workflow test`) | AGH-227 |
+| `workflows.shadow` | warning | no hub workflow that loads overrides a built-in of its name (discovery runs the hub's, [ADR 0032](../adr/0032-workflow-engine.md)): `hub sync` never refreshes a seeded pack, so a copy hides each later release's changes to the built-in. The generator compares every file of the built-in's pack (hidden names and `__pycache__` aside) with the same path in the hub's pack, bytes and all, with no link followed (a link differs; the hub's extra files do not count; a file of another size differs unread; each pair of packs once). One warning per such workflow at its file. Identical: message `overrides the built-in workflow <name>, and workflows/<pack>/ is identical to the built-in <pack> pack of this release (<version>), so it only hides the changes of later releases`, fix "delete workflows/<pack>/ to run the built-in (move any file of your own out of it first)". Differs: message `overrides the built-in workflow <name>, and workflows/<pack>/ differs from the built-in <pack> pack of this release (<version>)`, fix "compare workflows/<pack>/ with packages/core/src/agent_hub/core/workflows/builtin/<pack>/ at the platform's tag v<version> and merge what you need, or delete workflows/<pack>/ to run the built-in (move any file of your own out of it first)". An override in a hub pack of another name reads `overrides the built-in workflow <name> of the built-in <builtin> pack of this release (<version>) from another pack, workflows/<pack>/`, followed by `, which holds that pack identical, so it only hides the changes of later releases` when identical, and its fix names the workflow's file in place of the pack, which holds the hub's other workflows ("delete <file> to run the built-in", or the compare fix). `hub init` seeds every built-in pack, so a fresh hub gets one warning per seeded workflow until its packs are deleted (sync neither seeds them again nor reports them); a hub file that does not load is `workflows.valid`'s | AGH-699 |
+| `items.leftovers` | warning | no `.<name>.hub-tmp-<8 hex>` entry (a folder, file or link) an interrupted `hub web` Publish or Restore left directly in `.claude`, `.claude/skills`, `.claude/agents`, `plugin/<p>/skills`, `plugin/<p>/agents`, `plugin/<p>/hooks`, `plugin/<p>/scripts` or `workflows/<pack>`, or a Studio draft a Publish's draft removal renamed aside in `.hub-drafts` (scanned by name, links not followed, nothing inside an entry read): a skill's stage or old folder, which may hold the only copy of its hidden files; one warning per entry in path order, at most 10, then one `N more` at `.`; fix "check it holds nothing you need (a skill's hidden files may be only there), then remove it". `hub init` and `hub sync` remove only temp-shaped files and links in the folders they plan | AGH-297 |
+
+"config lint" and "feature check" are the hub scripts these rules replace ([hub-generator.md](hub-generator.md),
+Commands). Each ported rule keeps the old check's behavior, pinned first by characterization tests, but for what its
+row states. This release registers every rule.
+
+### Output
+
+One line per finding, sorted by rule id, path (a finding without one first) and line:
+
+```text
+error instructions.size AGENTS.md: 132 lines, limit 100 Fix: keep it a map, not a manual: move details to docs or the brain
+warning makefile.override Makefile.project:12: redefines target 'check' Fix: rename the project target
+1 error, 1 warning, 0 infos
+```
+
+The format is `<severity> <rule> <path>[:<line>]: <message> Fix: <fix>`, or `<severity> <rule>: <message> Fix: <fix>`
+without a path, then the totals: three counts, singular at 1; with no finding: `0 errors, 0 warnings, 0 infos`.
+The release probe: when `lock.drift` is selected and the lock records a commit for the pin and repository in use,
+the CLI reads the tag with one `git ls-remote` (no terminal prompt, 5 s timeout). A remote that cannot be read is one
+note on stderr (`lock.drift: hub.lock's release commit not checked: <reason>`), never a finding; with `--only` not
+naming `lock.drift` (e.g. `--only features.tracker`), or a lock with no commit, no probe runs. The control plane's
+doctor snapshot passes no probe, and neither does `hub setup`'s doctor item.
+`--only RULE` (repeatable) runs just those rules, plus `config.schema` always; skills use
+`hub doctor --only features.tracker`. `--json` prints one object with a `findings` list (the finding fields above)
+and the totals (keys `errors`, `warnings`, `infos` with integer counts), for scripts and the Layer 2 control plane.
+
+### At commit time: `--staged`
+
+`hub doctor --staged` is the check a commit runs: the hub's `.githooks/pre-commit` calls it through `./hub`
+([ADR 0061](../adr/0061-hub-git-hooks-check-the-staged-commit.md)). It reads git's index, never the working tree
+(`GIT_INDEX_FILE` as git sets it, so `git commit <paths>` is checked on what it commits), and checks only what the
+commit stages:
+
+- each staged regular file's hygiene, rule `files.hygiene` (error): no trailing whitespace (first line and count),
+  exactly one newline at the end, valid JSON without a repeated key for `*.json`, one valid YAML document for `*.yaml`
+  and `*.yml`. A binary or non-UTF-8 file gets none; a link is never read. It reports and never rewrites;
+- `features.tracker` on each `brain/features/<name>/` with a staged path (added, changed or deleted), on that
+  folder's index files only;
+- the config rules only when `hub.json` is staged. The config is always the index's `hub.json`; when it cannot be
+  used and is not staged, the feature checks are skipped with a note on stderr, and CI reports it.
+
+No lock, repo, remote or release tag is read, and `hub.local.json` is not checked. `--staged` takes no `--only` or
+`--fix` (exit 2); `--json` works. Exit 1 when a finding is an error, or when git cannot read the index. The whole
+`hub doctor` runs in CI (`make check`) on the merged state: hub-wide rules such as `lock.drift`, `links.dead` or every
+feature stay there.
+
+### Exit codes
+
+0 when no finding has severity `error`; 1 when at least one does; 2 on a usage error, an unknown rule id in `--only`,
+a rule in `--only` whose module is not selected or that is not in this release, or a directory that is not a hub (no
+`hub.json` entry in the cwd; the message says so). An unusable `hub.json` is a `config.schema` error. A rule in
+`--only` that `doctor.rules` disables does not run; stderr notes it. The pin is checked before `schema_version`, as in
+`hub sync` ([hub-sync.md](hub-sync.md)): on a pin mismatch the `platform.version` error is reported and `config.schema`
+reports no `schema_version` mismatch (the pinned release, which fixes both, judges it). On an invalid config only the
+two config rules run: `config.schema` reports the config problems, `platform.version` a pin mismatch; `--only` names
+are then only checked to be known ids (an unshipped id does not exit 2). A missing `hub.lock` does not stop the other
+rules.
+
+### Configuration
+
+A project tunes rules in `hub.json` → `doctor.rules.<id>` ([project-config.md](project-config.md)):
+
+```json
+{"doctor": {"rules": {"instructions.duplicates": {"enabled": false},
+                      "makefile.override": {"severity": "error"},
+                      "instructions.size": {"max_lines": {"AGENTS.md": 120}}}}}
+```
+
+`enabled` (default `true`), `severity` (overrides the default; not for `config.schema`, `config.identity` or
+`config.stop_gate`) and rule options, validated per rule. An unknown rule id or option is a `config.schema` error.
+Options in Phase 1: `instructions.size.max_lines` (file or glob to limit, merged over the defaults; keys of 1 to 1024
+characters, at most 256 of them, `_` comment keys aside) and `brain.leak.min_line_length` (1 to 10000; the ADR-draft
+exception of `brain.leak` is built in, not an option). A rule
+declares its `module`; the rules of a module that is not selected in `modules` never run and cannot be configured (a
+cross-field check of the model, not of the JSON Schema: [project-config.md](project-config.md)).
+
+## Invariants
+
+- Read-only: `hub doctor` never writes a file, never commits and never calls the network.
+- Deterministic: the same snapshot gives the same findings in the same order.
+- The rule list and the tuned settings come only from the release and `hub.json`; there is no per-machine state.
+- `config.schema` always runs, so a broken config is never silently skipped.
+
+## Decisions
+
+- [ADR 0010](../adr/0010-hub-json-config-contract.md): config validity comes from the same model the CLI uses.
+- [ADR 0012](../adr/0012-cli-subsumes-hub-scripts.md): the config lint and the feature-tracker check become rules.
+- [ADR 0009](../adr/0009-hub-sync-by-file-ownership.md): `lock.drift` reads the same lock that `hub sync` writes.
+- [ADR 0002](../adr/0002-lean-hexagonal-architecture.md): rules are pure core functions over a snapshot, so no port.
+- `instructions.read_cap` (AGH-699) reads every instruction file `instructions.size` lists, the plugins' agents and
+  skills, and each repo's instruction files, not only the hub's `AGENTS.md`/`CLAUDE.md` and a repo's `AGENTS.md`
+  that the audit (E-6) named: a skill, an agent or a `.claude/rules` file that sends a session to a doc over the
+  Read cap costs it the same failed read, and these files are already in the snapshot, so the wider scope reads
+  nothing more.
+
+## Open questions
+
+- Whether each code repo's own CI also runs the repo-scoped rules (it needs the hub checkout for `brain.leak`).

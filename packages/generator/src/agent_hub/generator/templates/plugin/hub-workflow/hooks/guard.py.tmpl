@@ -1,0 +1,2717 @@
+#!/usr/bin/env python3
+"""PreToolUse guard for a hub workspace (hub.json + sibling repos).
+
+deny  = hard block (secrets (guard.secret_env_files added, guard.readable_env_files released), force-push / push to the default branch, curl|sh, docker volumes, infra commands
+        (with guard.infra: a production marker anywhere, or a part or one of its calls (also split at a single
+        &, $( ), backticks, <( ), ( ), { }) with no allowed environment outside a ` #` comment and not a
+        local-only form; without it: the fixed infra rule; both see a redirection glued to the tool word,
+        aws>/dev/null; values in their reasons are escaped and capped), AI attribution in commits/PRs/branches,
+        editing .git internals, network to guard.deny_hosts, reading or changing paths in guard.deny_paths,
+        from a file tool or any Bash token; on a Bash call, before every other rule, `./hub claim`,
+        `./hub pr-watch` or `./hub worktree` (LAUNCHER_VERBS: they leave the sandbox, and `./hub` is the
+        file of the folder a call runs in) run behind a NAME=value word or a wrapper, from any folder but the hub root (the event's
+        cwd; no cwd and hooks in a plugin cache are refused too), or in a call that changes folder (cd,
+        pushd, popd anywhere; -C or --chdir among the run's arguments): launcher_folder, ADR 0067;
+        then, first of the other rules, a blocked word (guard.blocked_words of hub.json,
+        hub.local.json and $HUB_CONFIG together, ignoring ASCII case, no letter beside it) in the Bash
+        command, raw, joined or with its quotes removed, in a scanned session variable's value (the infra
+        selectors, the usual stage and connection names, credentials.env and guard.blocked_words_env names),
+        in a file tool's path (file_path, notebook_path, path, Grep's glob, Glob's pattern, WebFetch's url),
+        or in the contents of a .env* or guard.blocked_words_files file (as named or linked to) that a Read, a
+        Grep (its path or the cwd walked, no links, BLOCKED_WALK_SKIPPED and .claude/worktrees skipped) or a
+        Bash token (braces and globs expanded; not after ls, test, [, stat) reads; a secret file, by any case
+        or link, is never opened, so it keeps the secret-file reason), or in any key or string value of the
+        input of an input tool (WebSearch, Task, Agent, SendMessage, mcp__*; walked in order, the tool name
+        not scanned; the only rule these tools get)
+      right after it, a declared env file (credentials.env_file of an environment or an endpoint, in
+        hub.json, hub.local.json or $HUB_CONFIG; in every session, HUB_RUN_ENVIRONMENT or not): a file tool
+        on it (its path from the event's cwd, by real path, so a link or `..` is caught), a Grep on it or
+        on the folder holding it, or whose non-empty glob can reach it, a Glob whose root holds one and
+        whose pattern can reach it, or a Bash command or WebFetch URL
+        naming it (its file name as a whole word, in the command's views; a Bash token, braces and globs
+        expanded, or a file:// URL whose real path is it); the reason names the environment only
+ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an allowed environment, anywhere
+        after the tool (aws's s3 … rm and cloudformation … deploy too, quoted or not); with guard.infra, a
+        command it would let through that holds a character other than ASCII letters, digits, space, tab,
+        _ - . / : = @ , + % and the joins ; && || | newline, or a word that always asks: a shell, python*,
+        perl, node, ruby, php, xargs, eval, exec, source, `.` as a command, env -i/-u, sudo, su, doas, --,
+        parallel, a sed that runs text (e command or flag, -f), or a part that sets the environment twice,
+        under one spelling or two),
+        removing test assertions (`assert`, `expect(`, `pytest.raises`,
+        `.assert_*(`, unittest's `.assertX(` and `self.fail(`) or adding skip/xfail/quarantine markers,
+        deleting or sed-editing tests from Bash, editing the hub's guard files: plugin/hub-workflow/hooks/,
+        plugin/<project>/hooks/, .claude/settings*.json, hub.lock, hub.json and hub.local.json, in the hub or a hub worktree,
+        and the hub/agent launchers (a Bash write asks only when one is its target, so running them never asks);
+        editing paths in guard.ask_before_edit, writing the hub's brain/ (its checkout or a hub worktree, or a
+        brain/ beside a hub.json; a relative Bash word read from the event's cwd or a leading `cd <folder> &&`,
+        and by its text when it holds $ or a backtick or the command changes folder otherwise) or brain/ itself
+        outside now.md, journal/, _inbox/, auto/, features/,
+        a mutating hub env (add, set, remove, service add|remove; list and show pass) or hub repo
+        (add, set, remove; list passes),
+        with HUB_RUN_ENVIRONMENT naming a declared environment of access read or production (an agent
+        node of a workflow that declares it), a Bash command naming one of its endpoints' hosts or
+        resources, or a WebFetch of a URL on one of its hosts (environment_endpoint, after the env-file
+        rule; best effort: a command that hides a host passes; the reason names the environment only),
+        and any Bash or file-tool call while blocked words cannot be checked: a command or a listed file over
+        1 MiB, over 64 listed files or 4 MiB of them in one call, a listed file that is not regular, the
+        rule's 300 ms spent, a blocked list of any layer unusable, or a hub.local.json that exists but is
+        unusable; an unreadable listed file gets no verdict; an input tool's input over 1 MiB or 50000
+        values), and a hook event that is not a JSON object
+        while blocked words (or a blocked-list problem) are in effect; a call the env-file rule cannot
+        check (the command over 1 MiB, too many words, its 300 ms spent; an unreadable event while an
+        env file is declared)
+Project values (default branch, tracker team, guard lists) come from hub.json. The branch prefix of a deny's
+hint is the developer's: hub.local.json, else hub.json, else the local part of git config user.email plus `/`
+(git runs only on that deny); with none, the hint has no prefix. A list entry `@hub/<path>` is <path> in the hub that holds this file; with no such hub (plugin cache) it is skipped.
+Then, for Bash and the file tools (EXTENSION_TOOLS) and unless the verdict is deny (final), the project's extension plugin/<project>/hooks/project_guard.py
+of the hub that holds this file (never one found from $CLAUDE_PROJECT_DIR, the cwd or the tool input;
+none in the plugin cache) runs in a child, project_guard_runner.py's main in a fork of this hook (no
+new interpreter), with a 3 s timeout that kills the child's whole process group (no fork: an ask
+naming the cause). When that hub.json names no project (unreadable, or no project.name), the one
+plugin/*/hooks/project_guard.py there is, if exactly one, runs. It only tightens: its ask or deny
+replaces a weaker verdict, and anything else it does (another answer, extra output, a crash, the
+timeout, a file that resolves outside the hub) is an ask naming the cause, added to a base ask's reason.
+That guarantee covers a buggy extension, not a hostile one: it runs as the user, with the user's
+rights, so its trust boundary is the ask on every edit of plugin/<project>/hooks/ (and of this folder).
+Everything else passes through to the normal permission rules.
+After a deny or an ask is printed, the guard sends it to the local control plane through the event
+sensor's send_decision (event_sensor.py beside it): the hook input, its content reduced to sizes
+(reduce_hook: no file content or edit strings leave the machine), with
+decision {by: guard, kind, rule}, rule a stable id read from the reason (RULE_IDS). The send is
+bounded by the sensor's 0.5 s, prints nothing and never changes the decision or the exit code.
+Claude Code runs pre_tool_use.py on PreToolUse, which imports this module, prints answer's verdict
+and sends the same decision itself; run alone, this file still prints and sends it (main).
+"""
+
+from __future__ import annotations
+
+import bisect
+import itertools
+import json
+import os
+import re
+import select
+import signal
+import stat
+import sys
+import time
+from fnmatch import fnmatch, fnmatchcase
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from hubhooks import Config, emit, load_config, read_event, run_hook
+    from stdlib_reader import LazyPattern
+except Exception as error:  # a partial install: ask, never let the call through unchecked
+    import json
+
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
+                                             "permissionDecisionReason": f"[hub guard] could not check this call ({type(error).__name__}); confirm"}}))
+    sys.exit(0)
+
+# For a type checker only: annotations are never evaluated here, so the hook does not load typing,
+# which would add to its start-up on every call.
+TYPE_CHECKING = False
+if TYPE_CHECKING:
+    from typing import IO, Callable, Optional
+
+    Verdict = Optional[tuple[str, str]]
+
+NON_SECRET_ENV = {".env.example", ".env.development", ".env.staging", ".env.test", ".env.sample", ".env.template"}
+KEY_FILE = LazyPattern(r"\.(pem|key|p12|pfx)$")  # never released, whatever a list says
+SECRET_FILE = LazyPattern(r"(^|/)(\.env(\.[\w.-]+)?|[^/]*\.(pem|key|p12|pfx)|id_(rsa|ed25519)[^/]*)$")
+AI_ATTRIBUTION = LazyPattern(r"co-authored-by:\s*[^\n]*(claude|anthropic|openai|copilot|\bai\b)|generated with \[?claude|generated by \[claude code\]|claude-session:|🤖", re.I)
+SECRET_TOKEN = LazyPattern(
+    r"(?<![\w-])[<'\"]?(\S*/)?(\.env(\.[\w.-]+)?|[\w.-]+\.(pem|key|p12|pfx)|id_(rsa|ed25519|ecdsa)[\w.-]*)(?=[\s'\";|&)<>]|$)"
+)
+# SECRET_TOKEN's matches, found by _secret_tokens in time linear in the command's length:
+# the regex rescans the rest of a word from each start (`(\S*/)?`, `[\w.-]+`), quadratic on quote- or
+# dot-dense text. A name ends where its run of `[\w.-]` (a chunk) ends, so only a chunk holding one of
+# the names' fixed parts (SECRET_CHUNK) can end a match.
+SECRET_CHUNK = LazyPattern(r"(?<![\w.-])[\w.-]*(?:\.env|\.(?:pem|key|p12|pfx)|id_(?:rsa|ed25519|ecdsa))[\w.-]*")
+SECRET_AFTER = LazyPattern(r"[\s'\";|&)<>]")
+SECRET_WORDISH = LazyPattern(r"[\w-]")
+SECRET_BLANK = LazyPattern(r"\s")
+SECRET_KEY_ENDS = (".pem", ".key", ".p12", ".pfx")
+SECRET_ID_NAMES = ("id_rsa", "id_ed25519", "id_ecdsa")
+SAFE_ON_SECRETS = {"ls", "test", "[", "stat"}  # these never print file contents
+SECRET_READ_REASON = "reading secret file {} is not allowed (any command, not just cat); reference the variable name instead"
+SECRET_FILE_REASON = "{} may hold secrets; reference variable names instead of reading it"
+GIT = r"\bgit(\s+-[Cc]\s+\S+)*\s+"
+SKIP_MARKERS = LazyPattern(
+    r"@pytest\.mark\.(skip|skipif|xfail|quarantine)\b|\bpytest\.(skip|xfail)\(|\b(test|it|describe)\.(skip|fixme|todo)\(|\bx(it|describe)\("
+)
+TEST_PATH = r"(?:(\S*/)?(tests?|__tests__)/\S+|\S+\.(test|spec)\.[jt]sx?\b|['\"]?(\S*/)?test_\w+\.py\b)"
+# guard.infra: the covered tools, each as a word followed by an optional closing quote, blanks and
+# an argument (group 2 starts at it; a lookahead, so a tool word that is another tool's first
+# argument is a mention too), by a redirection glued to it (`aws>/dev/null`, `aws&>log`), or by
+# nothing but blanks up to the end of its part or call, or by a `$`, `,` or `}` (`xargs aws`, `(aws)`,
+# `aws$x`, `{aws,s3}`; these two have no group 2, never a local form), anywhere in a part, so
+# wrappers, quotes, expansions and redirections do not hide it.
+INFRA_TOOLS = ("aws", "cdk", "terraform", "pulumi", "kubectl", "helm", "sam", "serverless")
+INFRA_TOOL = LazyPattern(
+    r"\b(" + "|".join(INFRA_TOOLS) + r")\b(?:['\"]?\s+(?=(\S))|(?=\d*[<>]|&>)|(?=['\"]?\s*(?:[&()`{}$,]|\Z)))"
+)
+# The parts of a command: split at `&&`, `||`, `;`, `|` and newlines; each part is checked whole,
+# then each tool mention in it against the call that holds it (the part split at a single `&`, `(`,
+# `)`, a backtick, `{` and `}`, so `$(…)`, `<(…)`, subshells and groups), so an allowed call never
+# covers another one beside it.
+INFRA_PART = LazyPattern(r"&&|\|\||[;|\n]")
+INFRA_CALL = LazyPattern(r"[&()`{}]")
+# The characters the shell reader looks at: quotes ('…', "…", and `$'…'`, where a backslash escapes
+# the next character; `$$` is a token of its own), backslashes, a comment's `#` (at the start or
+# after a blank or an operator) and newlines.
+INFRA_LEX = LazyPattern(r"[\\'\"#\n$]")
+INFRA_WORD_BREAK = LazyPattern(r"[\s;&|()<>]")
+# E23 safe characters: an infra allow (or a local form) holds only for a command made of ASCII
+# letters and digits, space, tab and `_ - . / : = @ , + %`, joined by `;`, `&&`, `||`, `|` or a
+# newline; the first other character (a match that is not `&&`) makes it ask.
+INFRA_UNSAFE = LazyPattern(r"&&|[^A-Za-z0-9 \t_\-./:=@,+%;|\n]")
+# E23 words that always ask in such a command (by the word's last path component): shells,
+# interpreters, xargs, eval, exec, source, sudo, su, doas; also a lone `--`, `.` in command
+# position, and env's -i or -u in any spelling before its command.
+INFRA_RISKY = LazyPattern(r"(?:sh|bash|zsh|dash|ksh|fish|perl|node|ruby|php|xargs|eval|exec|source|sudo|su|doas|python.*)\Z")
+INFRA_ASSIGNMENT = LazyPattern(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
+INFRA_PREFIX_WORDS = {"if", "then", "else", "elif", "do", "while", "until", "time", "command", "builtin", "coproc"}
+INFRA_ENV_CLEAR = LazyPattern(r"-\Z|-[^-]*[iu]|--[iu]")  # `-`, `-i`, `-u`, `-0i`, `-uNAME`, `--unset`, `--ignore-…`
+INFRA_ENV_VALUE = {"-C", "-S", "--chdir", "--split-string"}  # env options whose value is the next word
+# E24: parallel runs its input or arguments as commands, and so does sed's e (its e command, or
+# the s command's e flag) or a sed script read from a file (-f/--file): such a word asks.
+INFRA_RUNS = LazyPattern(r"parallel\Z")
+INFRA_SED = LazyPattern(r"g?sed\Z")
+# E24: the environment settings counted per part (a `NAME=` or `NAME+=` word anywhere in it; a
+# flag as `--x v` or `--x=v`, terraform's chdir and var-file with one dash or two); a second one of
+# a name asks. E25: so does a second spelling of one setting: the AWS profile (either variable or
+# --profile), pulumi's stack (--stack, -s) and serverless's stage (--stage, -s).
+INFRA_ENV_SETTING = LazyPattern(
+    r"(AWS_PROFILE|AWS_DEFAULT_PROFILE|KUBECONFIG|KUBE_CONTEXT)\+?=|(--profile|--context|--kube-context|-?-chdir"
+    r"|--stack|--workspace|--stage|-s|-?-var-file)(?:=|\Z)"
+)
+INFRA_ENV_ALIASES = (
+    {"AWS_PROFILE", "AWS_DEFAULT_PROFILE", "--profile"},
+    {"--stack", "-s"},
+    {"--stage", "-s"},
+)
+# E27: the environment selectors the guard knows. Each one in a part must lie inside an allow
+# match: a word anywhere in any part that holds a listed name as an identifier (E28: not only
+# `NAME=`, so `printf -v NAME`, `for NAME in`, `declare -n P=NAME`, `read NAME`, `export NAME` and
+# env's `--split-string=NAME=…` or `-SNAME=…`, a name glued to a one-dash option); a flag word, as
+# `--x v` (with the next word) or `--x=v`, in a part that names a covered tool (pulumi's -C only
+# beside pulumi).
+INFRA_SELECTOR_NAMES = (
+    r"(?:AWS_PROFILE|AWS_DEFAULT_PROFILE|KUBECONFIG|KUBE_CONTEXT|HELM_KUBECONTEXT|TF_WORKSPACE|TF_DATA_DIR"
+    r"|TF_CLI_ARGS(?:_[A-Za-z0-9_]+)?|PULUMI_BACKEND_URL|AWS_CONFIG_FILE|AWS_SHARED_CREDENTIALS_FILE"
+    r"|AWS_ROLE_ARN|CDK_DEFAULT_ACCOUNT)(?![A-Za-z0-9_])"
+)
+INFRA_SELECTOR_ENV = LazyPattern(r"(?<![A-Za-z0-9_])" + INFRA_SELECTOR_NAMES)
+INFRA_SELECTOR_GLUED = LazyPattern(r"-[A-Za-z0-9]+?" + INFRA_SELECTOR_NAMES)
+INFRA_SELECTOR_FLAG = LazyPattern(
+    r"(?:--profile|--aws-profile|--context|--kube-context|--cluster|--server|--user|--kubeconfig"
+    r"|--kube-apiserver|-?-chdir|--cwd|--stack|-s|--stage|--workspace|-?-var-file|-?-backend-config)(=|\Z)"
+)
+INFRA_PULUMI_FLAG = LazyPattern(r"-C(=|\Z)")
+INFRA_BLANK_WORD = LazyPattern(r"[^ \t]+")
+INFRA_END = r"(?![\w-])"
+INFRA_WORD = r"(?<![\w-])({})" + INFRA_END
+# Local-only forms, matched at the tool's first argument; kubectl's version needs --client in the
+# call, terraform's init needs -backend=false, each with no later `--client=` (other than `true`) or
+# `-backend=` (the last flag wins).
+INFRA_LOCAL_ANY = LazyPattern(r"(--version|version|help|--help)" + INFRA_END)
+INFRA_LOCAL = {
+    "cdk": LazyPattern(r"(synth|ls|list|init|doctor|context)" + INFRA_END),
+    "terraform": LazyPattern(r"(fmt|validate)" + INFRA_END),
+    "helm": LazyPattern(r"(template|lint)" + INFRA_END),
+    "sam": LazyPattern(r"(build|validate)" + INFRA_END),
+}
+INFRA_KUBECTL_VERSION = LazyPattern(r"(version|--version)" + INFRA_END)
+INFRA_FLAG_END = r"(?=\s|$)"
+INFRA_KUBECTL_CLIENT = LazyPattern(r"(?<![\w-])--client" + INFRA_FLAG_END)
+INFRA_TERRAFORM_INIT = LazyPattern(r"init" + INFRA_END)
+INFRA_NO_BACKEND = LazyPattern(r"(?<![\w-])-backend=false" + INFRA_FLAG_END)
+# (needed flag, flags that keep it, flag word): the needed flag counts when the last flag word (in
+# any spelling, quoted too) lies in a flag that keeps it.
+INFRA_CLIENT = (INFRA_KUBECTL_CLIENT, LazyPattern(r"(?<![\w-])--client(?:=true)?" + INFRA_FLAG_END),
+                LazyPattern(r"client(?![\w-])"))
+INFRA_BACKEND = (INFRA_NO_BACKEND, INFRA_NO_BACKEND, LazyPattern(r"backend(?![\w-])"))
+
+
+class _Verbs:
+    """A tool's ask verbs (words, quotes allowed): ``search(part, pos)`` is the reason's name of the
+    first one at or after pos, or None. A ``(lead, verbs)`` pair asks when one of ``verbs`` comes
+    anywhere after ``lead`` (aws `s3 … rm`); each search runs once from pos, so a part costs one
+    linear pass per pattern."""
+
+    def __init__(self, words: str, *pairs: tuple[str, str]) -> None:
+        self.words = LazyPattern(INFRA_WORD.format(words))
+        self.pairs = [(LazyPattern(INFRA_WORD.format(lead)), LazyPattern(INFRA_WORD.format(verbs)))
+                      for lead, verbs in pairs]
+
+    def search(self, part: str, pos: int) -> str | None:
+        found = []
+        word = self.words.search(part, pos)
+        if word:
+            found.append((word.start(), word.group(1)))
+        for lead, verbs in self.pairs:
+            first = lead.search(part, pos)
+            verb = verbs.search(part, first.end()) if first else None
+            if first and verb:
+                found.append((first.start(), f"{first.group(1)} {verb.group(1)}"))
+        return min(found)[1] if found else None
+
+
+# Verbs that ask on an allowed environment, searched as words anywhere after the tool's first
+# mention in the part, once per tool.
+INFRA_ASK_VERBS = {
+    "aws": _Verbs(r"(?:delete|remove|terminate|deregister)-[\w-]+", ("s3", "rm|rb"),
+                  ("cloudformation", "deploy|delete-stack")),
+    "cdk": _Verbs("deploy|destroy"),
+    "terraform": _Verbs("apply|destroy|import"),
+    "pulumi": _Verbs("up|destroy"),
+    "kubectl": _Verbs("apply|create|delete|replace|patch|scale"),
+    "helm": _Verbs("install|upgrade|uninstall|rollback"),
+    "sam": _Verbs("deploy|delete"),
+    "serverless": _Verbs("deploy|remove"),
+}
+# E27: the commands that change a tool's own configuration (profiles, contexts, workspaces) ask
+# whatever their environment: a lead word anywhere after the tool's first mention in the part,
+# then one of its verbs anywhere after it (E28: also kubectl's `config use|set|rename-context|
+# delete-context` and pulumi's `stack select`).
+INFRA_CONFIG_VERBS = {
+    tool: (LazyPattern(INFRA_WORD.format(lead)), LazyPattern(INFRA_WORD.format(verbs)))
+    for tool, lead, verbs in (
+        ("aws", "configure", "set|import"),
+        ("kubectl", "config", "set-context|use-context|set-cluster|set-credentials|use|set|rename-context"
+                              "|delete-context"),
+        ("terraform", "workspace", "select|new"),
+        ("pulumi", "stack", "select"),
+    )
+}
+BASH_WRITE = LazyPattern(r">>?|\btee\b|\bsed\s+(-\w*i\w*|--in-place)\b|\b(rm|mv|cp|truncate|ln)\b")
+WORKTREE_SEG = LazyPattern(r"/\.claude/worktrees/[^/]+(?=/)")
+SETTINGS_FILE = LazyPattern(r"\.claude/settings[^/]*\.json")
+# The hub-root launchers: the managed settings allow `./hub doctor` with no prompt.
+LAUNCHERS = ("hub", "agent")
+# The launcher verbs that leave the sandbox (sandbox.excludedCommands): `./hub` is the file of the
+# folder a call runs in, so they run only as the bare command, from the hub root. A part of a call
+# ends at LAUNCHER_PART. For LAUNCHER_WORD a redirect with its target is no word (`2>log`, `> log`,
+# `<in`): group 1 is a word. LAUNCHER_LEX is what can keep bash reading past a part's end (a quote,
+# a backslash, a backtick, `(`, `${` and `$[`) and what closes it.
+LAUNCHER_VERBS = ("claim", "pr-watch", "worktree")
+LAUNCHER_WRAPPERS = ("timeout", "time", "nice", "nohup", "stdbuf", "env", "command", "exec")
+LAUNCHER_PREFIXES = frozenset(LAUNCHER_WRAPPERS) | INFRA_PREFIX_WORDS | {"!"}
+LAUNCHER_PART = LazyPattern(r"[;&|\n]")
+LAUNCHER_WORD = LazyPattern(r"\d*[<>]+[ \t]*[^\s<>]*|([^\s<>]+)")
+LAUNCHER_LEX = LazyPattern(r"[\\'\"`()}\]]|\$[{\[]")
+LAUNCHER_DOLLAR_QUOTE = LazyPattern(r"\$(?=['\"])")
+LAUNCHER_MOVE = LazyPattern(r"(?<![\w./-])(?:cd|pushd|popd)(?![\w./-])")
+LAUNCHER_CHDIR = LazyPattern(r"(?<![\w-])-[A-Za-z]*C|--chdir(?![\w-])")
+LAUNCHER_FOLDER_START = "`./hub {}` runs only from the hub folder, as a call of its own"
+LAUNCHER_TEXT_HINT = (" If the call only names the command in a text (a commit message, a PR body, a search "
+                      "pattern), do not run it: read the text from a file, or reword it")
+LAUNCHER_FOLDER_REASON = LAUNCHER_FOLDER_START + (": set the cwd to the hub folder in a call of its own, then run the "
+                                                  "bare command.") + LAUNCHER_TEXT_HINT
+LAUNCHER_BARE_REASON = LAUNCHER_FOLDER_START + (", with no word before `./hub`: a `NAME=value` word or a wrapper "
+                                                "(`timeout`, `env`, `nohup` and the like) is refused in every "
+                                                "folder. Run the bare command from the hub folder, in a call of its "
+                                                "own.") + LAUNCHER_TEXT_HINT
+LAUNCHER_NO_HUB_REASON = LAUNCHER_FOLDER_START + (": these hooks run from a plugin cache and know no hub, so no folder "
+                                                  "passes here; hand the command to the user")
+WRITE_TARGET = LazyPattern(r">>?\s*([^\s;&|<>()`]+)")
+WRITE_ARGS = LazyPattern(r"\b(?:tee|sed\s+(?:-\w*i\w*|--in-place)|rm|mv|cp|truncate|ln)\b(.*)")
+BRAIN_CURATED_REASON = ("brain/ is curated: agents write only now.md, journal/, _inbox/, auto/ and features/; "
+                        "propose via /learn or confirm")
+BRAIN_UNRESOLVED_REASON = BRAIN_CURATED_REASON + (" ({} may be the hub's brain/: the guard reads a word with $ or a "
+                                                  "backtick, or a relative one in a command that changes folder other "
+                                                  "than by a leading `cd <folder> &&`, as text; a literal path outside "
+                                                  "the hub's brain/ passes)")
+BRAIN_OPEN = LazyPattern(r"now\.md|journal/|_inbox/|auto/|features/")  # matched at the start of a path in brain/
+# A word in a folder the guard cannot resolve: a `brain` part, then a path outside the open folders.
+BRAIN_TEXT = LazyPattern(r"(?:^|/)brain/(?!now\.md|journal/|_inbox/|auto/|features/).")
+BRAIN_DYNAMIC = LazyPattern(r"[$`]")
+BRAIN_JOIN_CAP = 1 << 20  # folder characters joined to relative words; past it, they are read as text
+# A leading `cd <folder> &&`: a literal folder (no option, quote, $, backtick, glob, brace or #),
+# or one in single quotes, or in double quotes without $, a backtick or a backslash.
+LEAD_CD = LazyPattern(r"\s*cd[ \t]+(?:((?!-)[^\s;&|()<>$`'\"\\*?\[{}#]+)|'([^'\n]*)'|\"([^\"$`\\\n]*)\")[ \t]*&&")
+# Anything that may change the folder a word is read from (a superset: more only asks on text),
+# searched in the command without its quotes and backslashes (c''d is cd).
+FOLDER_CHANGE = LazyPattern(r"(?<![\w./-])(?:cd|pushd|popd)(?![\w./-])|(?<![\w-])-[A-Za-z]*C|--(?:chdir|work-tree|"
+                            r"git-dir|directory|dir|workdir|working-directory|cwd|prefix)(?![\w-])|\bGIT_(?:WORK_TREE|DIR)\b")
+# What ends a leading cd's `&&` chain: after it, a command may run in the session's folder (the cd
+# failed, or its chain went to the background): `;`, a newline, `||` or a lone `&`.
+CHAIN_BREAK = LazyPattern(r";|\n|\|\||(?<![&>|])&(?![&>])")
+HUB_PREFIX = "@hub"
+# A `hub env` verb that writes hub.json or hub.local.json, behind a launcher path (`./hub`, a tool
+# runner's `--from x hub`), searched in each of the blocked-words rule's command views, so quotes and
+# backslashes the shell removes (`'hub'`, `"env"`, `a''dd`, `hub\ env`) do not hide it; a mention
+# (`grep 'hub env add'`) asks too. Each part of the pattern is a fixed word or one run of blanks,
+# so a search stays linear in the command's length. An optional `--` (the end of options, which Click
+# accepts before each subcommand: `hub -- env add`, `hub env -- set`) may sit between the words.
+ENV_COMMAND = LazyPattern(
+    r"(?<![\w.-])hub['\"]?[ \t]+(?:--[ \t]+)?env[ \t]+(?:--[ \t]+)?"
+    r"(service[ \t]+(?:--[ \t]+)?(?:add|remove)|add|set|remove)(?![\w-])"
+)
+# The blanks and `--` inside the matched verb (`service -- add`) that the reason shows as one space.
+ENV_VERB_GAP = LazyPattern(r"[ \t]+(?:--[ \t]+)?")
+ENV_COMMAND_REASON = "hub env {} changes the agents' environments (hub.json or hub.local.json); confirm"
+# A `hub repo` verb that writes hub.json's repos (and so the checks the Stop hook runs), found as
+# ENV_COMMAND is (an optional `--` included); `hub repo list` passes.
+REPO_COMMAND = LazyPattern(
+    r"(?<![\w.-])hub['\"]?[ \t]+(?:--[ \t]+)?repo[ \t]+(?:--[ \t]+)?(add|set|remove)(?![\w-])"
+)
+REPO_COMMAND_REASON = "hub repo {} changes hub.json's repos (the checks the Stop hook runs); confirm"
+AUTO_MODE_SUFFIX = (
+    " (denied in auto mode, which never stops to confirm: take another way, or ask the user to"
+    " switch the session out of auto mode to approve it)"
+)
+
+
+def _str(value: object) -> str:
+    """A tool field as text: anything that is not a string counts as absent."""
+    return value if isinstance(value, str) else ""
+
+
+def _edits(ti: dict) -> list[dict]:
+    """MultiEdit's edits: a list of objects, other items (and a non-list) dropped."""
+    edits = ti.get("edits")
+    return [e for e in edits if isinstance(e, dict)] if isinstance(edits, list) else []
+
+
+def _read_text(path: str) -> str:
+    """A file's text for the assertion and marker counts; "" when unreadable or not UTF-8."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+    except (OSError, ValueError):
+        return ""
+
+
+def _secret_name(seg: str, p: int, end: int) -> bool:
+    """SECRET_TOKEN's name part matches seg[p:end], where end is the end of p's chunk."""
+    if seg.startswith(".env", p) and (end == p + 4 or (seg[p + 4] == "." and end >= p + 6)):
+        return True
+    return (end - p >= 5 and seg[end - 4 : end] in SECRET_KEY_ENDS) or seg.startswith(SECRET_ID_NAMES, p)
+
+
+def _secret_dotted(seg: str, start: int, end: int) -> int | None:
+    """The first p inside the chunk seg[start:end] that follows a `.` and starts a name (a `.env` or
+    `id_` one: a key-file name that fits there fits at the chunk's start too), or None."""
+    firsts = [seg.find("." + name, start, end) for name in SECRET_ID_NAMES]
+    at = seg.find("..env", start, end)
+    while at != -1 and not _secret_name(seg, at + 1, end):
+        at = seg.find("..env", at + 1, end)
+    firsts.append(at)
+    found = [first + 1 for first in firsts if first != -1]
+    return min(found) if found else None
+
+
+def _secret_tokens(seg: str) -> list[str]:
+    """SECRET_TOKEN.finditer(seg)'s matches, in order, each chunk looked at once. A match is a chunk
+    that ends before SECRET_AFTER or the end and starts a name: after a `/`, the regex's first start in
+    that word takes everything from the word's start to the last such chunk; else it starts at the
+    chunk (or the `<`, `'` or `"` just before it), or after a `.` inside it."""
+    chunks = [(m.start(), m.end()) for m in SECRET_CHUNK.finditer(seg)
+              if m.end() == len(seg) or SECRET_AFTER.match(seg, m.end())]
+    found: list[tuple[int, int]] = []
+    taken = len(seg) + 1  # the start of the word a `/` match took, from the end backwards
+    backwards = ""
+    for start, end in reversed(chunks):
+        if start >= taken:
+            continue
+        named = _secret_name(seg, start, end)
+        if named and start and seg[start - 1] == "/":
+            backwards = backwards or seg[::-1]
+            blank = SECRET_BLANK.search(backwards, len(seg) - start)
+            taken = len(seg) - blank.start() if blank else 0
+            found.append((taken, end))
+        elif named:
+            quoted = start and seg[start - 1] in "<'\"" and not (start > 1 and SECRET_WORDISH.match(seg, start - 2))
+            found.append((start - 1 if quoted else start, end))
+        else:
+            dotted = _secret_dotted(seg, start, end)
+            if dotted is not None:
+                found.append((dotted, end))
+    return [seg[start:end] for start, end in reversed(found)]
+
+
+def _secret_path(path: str, cfg: Config) -> bool:
+    """A secret file: guard.secret_env_files and key files always, NON_SECRET_ENV and
+    guard.readable_env_files never, else by SECRET_FILE. Names are matched against the path's last
+    component."""
+    name = os.path.basename(path)
+    if name in cfg.secret_env_files or KEY_FILE.search(name):
+        return True
+    if name in NON_SECRET_ENV or name in cfg.readable_env_files:
+        return False
+    return bool(SECRET_FILE.search(path))
+
+
+def _branch_hint(cfg: Config) -> str:
+    """``<prefix>dem-<N>-<desc>`` for one team, ``<prefix><app|ops>-<N>-<desc>`` for several."""
+    keys = [key.lower() for key in cfg.tracker_teams]
+    segment = keys[0] if len(keys) == 1 else "<" + "|".join(keys) + ">"
+    team = f"{segment}-<N>-" if keys else ""
+    return f"{cfg.branch_prefix}{team}<desc>"
+
+
+def _host_regex(pattern: str) -> str:
+    """deny_hosts entry → regex; `*.example.com` covers subdomains, anything else is an exact host."""
+    body = re.escape(pattern.strip().lower()).replace(r"\*", r"[\w-]+(?:\.[\w-]+)*")
+    return r"(?<![\w.-])" + body + r"(?![\w-]|\.[\w-])"
+
+
+def denied_host(text: str, cfg: Config) -> str | None:
+    for h in cfg.deny_hosts:
+        if re.search(_host_regex(h), text, re.I):
+            return h
+    return None
+
+
+def _candidates(path: str, cfg: Config) -> list[str]:
+    """path as given, absolute after `~` expansion, and with symlinks and `..` resolved (worktree segments
+    dropped), plus each absolute form relative to the workspace. Lowercased: macOS file systems ignore case."""
+    expanded = os.path.expanduser(path)
+    full = os.path.abspath(expanded)
+    try:
+        real = os.path.realpath(expanded)  # not of full: abspath drops `..` before a link is followed
+    except (OSError, ValueError):  # a NUL byte in the path
+        real = full
+    absolute = list(dict.fromkeys(WORKTREE_SEG.sub("", p).lower() for p in (full, real)))
+    cands = [*absolute, path.lower()]
+    if cfg.workspace:
+        ws = str(cfg.workspace).rstrip("/").lower() + "/"
+        cands += [p[len(ws):] for p in absolute if p.startswith(ws)]
+    return cands
+
+
+def _globs(pattern: str) -> list[str]:
+    return [pattern] if any(c in pattern for c in "*?[") else [pattern.rstrip("/"), pattern.rstrip("/") + "/*"]
+
+
+def _rules(entries: tuple[str, ...], cfg: Config) -> list[tuple[str, list[str], bool]]:
+    """(entry, globs, anchored) per list entry. `@hub/<rest>` is anchored at the hub holding this file
+    (its main checkout, so a hub worktree is covered too); with none, the entry is skipped."""
+    rules = []
+    for entry in entries:
+        pat = entry.strip()
+        if pat == HUB_PREFIX or pat.startswith(HUB_PREFIX + "/"):
+            if cfg.root_hub is None:
+                continue
+            base = re.sub(r"([*?[])", r"[\1]", str(cfg.root_hub).rstrip("/"))
+            rules.append((pat, [base + g for g in _globs(pat[len(HUB_PREFIX):])], True))
+        else:
+            rules.append((pat, _globs(pat), False))
+    return rules
+
+
+def _match(path: str, entries: tuple[str, ...], cfg: Config) -> str | None:
+    """The list entry that covers path, if any.
+
+    Entries are globs (fnmatch, `*` crosses `/`) matched against the absolute path, the path relative to the
+    workspace, and any path suffix; an entry without glob characters is a file or directory prefix.
+    Worktree segments (`<repo>/.claude/worktrees/<t>/`) are dropped first, so `app/src/auth/*` covers
+    the same file in every worktree of `app`. `@hub/<rest>` entries match the absolute path only."""
+    if not entries or not path:
+        return None
+    cands = _candidates(path, cfg)
+    for pat, globs, anchored in _rules(entries, cfg):
+        for g in (g.lower() for g in globs):
+            for c in cands:
+                if fnmatch(c, g) or (not anchored and fnmatch(c, "*/" + g.lstrip("/"))):
+                    return pat
+    return None
+
+
+def protected(path: str, cfg: Config) -> str | None:
+    """The guard.ask_before_edit entry that covers path, if any (see _match)."""
+    return _match(path, cfg.ask_before_edit, cfg)
+
+
+def denied_path(path: str, cfg: Config) -> str | None:
+    """The guard.deny_paths entry that covers path, if any (see _match)."""
+    return _match(path, cfg.deny_paths, cfg)
+
+
+def _guard_dirs(cfg: Config) -> list[str]:
+    project = cfg.root_project.lower()
+    return ["plugin/hub-workflow/hooks"] + ([f"plugin/{project}/hooks"] if project and "/" not in project else [])
+
+
+def _hub_base(cfg: Config) -> str | None:
+    base = cfg.root_hub or cfg.hub
+    return str(base).rstrip("/").lower() if base else None
+
+
+def guard_file(path: str, cfg: Config, launchers: bool = True) -> str | None:
+    """path relative to the hub when it is one of the guard's own files: its hooks, the project's
+    hooks (the guard extension), .claude/settings*.json, hub.lock, hub.json or hub.local.json, or (with launchers)
+    the hub and agent launchers, in the hub holding this file or one of its worktrees (in the
+    plugin cache: the hub found). Case is ignored."""
+    base = _hub_base(cfg)
+    if base is None or not path:
+        return None
+    head = base + "/"
+    dirs = _guard_dirs(cfg)
+    for c in _candidates(path, cfg):
+        if not c.startswith(head):
+            continue
+        rel = c[len(head):]
+        if any(rel == d or rel.startswith(d + "/") for d in dirs) or SETTINGS_FILE.fullmatch(rel) or rel in ("hub.lock", "hub.json", "hub.local.json") or (launchers and rel in LAUNCHERS):
+            return rel
+    return None
+
+
+def guard_parent(path: str, cfg: Config) -> str | None:
+    """The folder path names when it holds guard files: the hub itself, a folder above it, or a folder
+    on the way to a guard file (.claude, plugin, plugin/hub-workflow, plugin/<project>, ...)."""
+    base = _hub_base(cfg)
+    if base is None or not path:
+        return None
+    parents = {"", ".claude"}
+    for d in _guard_dirs(cfg):
+        parts = d.split("/")
+        parents |= {"/".join(parts[:n]) for n in range(1, len(parts) + 1)}
+    for c in _candidates(path, cfg):
+        c = c.rstrip("/") or "/"
+        if c == base or (base + "/").startswith(c if c.endswith("/") else c + "/"):
+            return c
+        if c.startswith(base + "/") and c[len(base) + 1 :] in parents:
+            return c[len(base) + 1 :]
+    return None
+
+
+def _segments(command: str) -> list[str]:
+    """The command's segments split at `&&`, `||`, `;`, `|` and newlines, then also at a single `&`
+    (both splits are kept, so a split only adds segments)."""
+    first = re.split(r"&&|\|\||[;|\n]", command)
+    known = set(first)
+    more = [seg for seg in re.split(r"&&|\|\||[;|&\n]", command) if seg not in known]
+    return first + more
+
+
+def _write_targets(segment: str) -> list[str]:
+    """The words a write segment may change: redirect targets, and the words after tee, sed -i,
+    rm, mv, cp, truncate or ln. Running `./hub doctor > out` names ./hub, but does not write it."""
+    targets = [t for target in WRITE_TARGET.findall(segment) for t in _tokens(target)]
+    args = WRITE_ARGS.search(segment)
+    return targets + (_tokens(args.group(1)) if args else [])
+
+
+def _tokens(segment: str) -> list[str]:
+    """The segment's words that may name a path, options dropped: each with its outer quotes stripped,
+    and again with every quote and backslash removed (`h"ub".json`, `hub\\.json`). Words split at
+    blanks and redirections, and again also at parentheses and backticks (both kept: only adds words)."""
+    toks: list[str] = []
+    seen: set[str] = set()
+    for word in dict.fromkeys([*re.split(r"[\s<>]+", segment), *re.split(r"[\s<>()`]+", segment)]):
+        for tok in (word.strip("'\""), re.sub(r"['\"\\\\]", "", word)):
+            if tok and not tok.startswith("-") and tok not in seen:
+                seen.add(tok)
+                toks.append(tok)
+    return toks
+
+
+DENY_PATH_REASON = "{} is under guard.deny_paths `{}` (hub.json); agents neither read nor change it"
+GUARD_PARENT_REASON = "{} holds the hub's guard files ({}); removing or moving it changes the guard, confirm first"
+GUARD_FILE_REASON = ("{} is the hub's own guard or config ({}): hooks, the project guard extension, settings, "
+                     "hub.lock, hub.json, hub.local.json and the hub/agent launchers change only with the user's "
+                     "confirmation")
+INFRA_MARKER_REASON = "this command matches guard.infra.prod_markers `{}` (hub.json): production infrastructure is human-only"
+INFRA_UNKNOWN_REASON = ("{}: environment not recognised by guard.infra.allow (hub.json); put the environment on this "
+                        "command, e.g. `--profile <env>` or an `AWS_PROFILE=<env> ` prefix (an exported or inherited "
+                        "one does not count)")
+INFRA_ASK_REASON = "`{} {}` changes infrastructure on an allowed environment; confirm first"
+INFRA_CONFIG_REASON = "{} (hub.json) cannot be used ({}); infrastructure commands are denied until it is fixed"
+INFRA_UNSAFE_REASON = ("`{}` is a character guard.infra does not check (it passes only letters, digits, blanks, "
+                       "`_-./:=@,+%` and the joins `;` `&&` `||` `|` newline); confirm this infrastructure command first")
+INFRA_RISKY_REASON = ("`{}` can run a command, or change its environment, out of guard.infra's sight (a shell, an "
+                      "interpreter, xargs, eval, exec, source, `.`, env -i/-u, sudo, su, doas, a lone `--`); confirm first")
+INFRA_RUNS_REASON = ("`{}` runs text as a command out of guard.infra's sight (parallel, or sed's e command or a "
+                     "sed script file); confirm first")
+INFRA_REPEATED_REASON = ("`{}` is set twice in one call: guard.infra checks the value it sees, the tool may use "
+                         "another; confirm first")
+INFRA_SELECTOR_REASON = ("`{}` selects an environment outside every guard.infra.allow match (hub.json): each "
+                         "profile, context, kubeconfig, cluster, stack, stage, workspace, chdir or var-file setting "
+                         "must lie in one; confirm first")
+INFRA_CONFIG_VERB_REASON = ("`{} {}` changes the tool's own configuration (profiles, contexts, workspaces), which "
+                            "later commands use out of guard.infra's sight; confirm first")
+INFRA_VALUE_CAP = 100  # characters of a value from hub.json or the command in an infra reason
+LEGACY_INFRA = LazyPattern(
+    r"\bterraform\s+(apply|destroy|import)\b|\baws\s+\S+|\bpulumi\s+(up|destroy)\b|\bkubectl\s+(apply|delete)\b"
+    r"|\bcdk\s+(deploy|destroy)\b|\b(terraform|aws|pulumi|kubectl|cdk)(\d*[<>]|&>)"
+)
+
+
+def _escaped(text: str) -> str:
+    """text with quotes, backslashes, control characters and non-ASCII as JSON escapes: a location
+    read from hub.json goes into a reason as plain text."""
+    return json.dumps(text)[1:-1]
+
+
+def _printable(text: str) -> str:
+    """text with control characters and non-ASCII as JSON escapes (as _escaped), printable ASCII
+    kept: a pattern stays as written."""
+    return "".join(ch if " " <= ch <= "~" else _escaped(ch) for ch in text)
+
+
+def _code_escaped(text: str) -> str:
+    """text as _escaped, a backtick too (as \\u0060), so it cannot close a reason's code span."""
+    return _escaped(text).replace("`", "\\u0060")
+
+
+def _infra_value(text: str, escape: Callable[[str], str] = _escaped) -> str:
+    """text escaped, at most INFRA_VALUE_CAP characters ("..." marks a cut), so an infra reason
+    stays one short line whatever hub.json or the command holds."""
+    shown = escape(text[:INFRA_VALUE_CAP])
+    if len(text) > INFRA_VALUE_CAP or len(shown) > INFRA_VALUE_CAP:
+        return shown[:INFRA_VALUE_CAP - 3] + "..."
+    return shown
+
+
+def _infra_compiled(key: str, patterns: tuple[str, ...]) -> tuple[list[re.Pattern[str]], Verdict]:
+    """(each guard.infra.<key> pattern compiled, None), or ([], the deny naming the first one this
+    interpreter cannot compile)."""
+    compiled = []
+    for index, pattern in enumerate(patterns):
+        try:
+            compiled.append(re.compile(pattern))
+        except (re.error, OverflowError, RecursionError) as error:
+            location = f"guard.infra.{key}[{index}]"
+            return [], ("deny", INFRA_CONFIG_REASON.format(location, _infra_value(f"not a Python regex here: {error}", _printable)))
+    return compiled, None
+
+
+def _infra_shell(text: str) -> tuple[list[int], int, int, bool, list[tuple[int, int]]]:
+    """How bash reads text's quotes, comments and backslashes: (where each backslash-newline it
+    joins starts: after an odd run of backslashes, outside a comment, '…' and $'…'; where its first
+    comment starts, or -1; where its first `#` inside a quote at a word start is, or -1; whether a
+    quote is left open; each quoted region, '…', "…" or $'…', as (start, end) with its quotes, in
+    order, an open one up to the end of text)."""
+    joins: list[int] = []
+    spans: list[tuple[int, int]] = []
+    quote, comment, quoted, pos, opened = "", -1, -1, 0, 0
+    while True:
+        found = INFRA_LEX.search(text, pos)
+        if not found:
+            unclosed = quote not in ("", "#")
+            return joins, comment, quoted, unclosed, spans + [(opened, len(text))] * unclosed
+        at, char = found.start(), found.group(0)
+        pos = at + 1
+        word_start = at == 0 or bool(INFRA_WORD_BREAK.match(text, at - 1))
+        closes = False
+        if quote == "#":
+            quote = "" if char == "\n" else quote
+        elif quote == "'":
+            closes = char == "'"
+        elif quote == "$'":
+            pos = at + 2 if char == "\\" else pos
+            closes = char == "'"
+        elif char == "\\":
+            if text[at + 1:at + 2] == "\n":
+                joins.append(at)
+            pos = at + 2
+        elif quote == '"':
+            closes = char == '"'
+        elif char == "$" and text[at + 1:at + 2] == "$":
+            pos = at + 2
+        elif char == "$" and text[at + 1:at + 2] == "'":
+            quote, pos, opened = "$'", at + 2, at
+        elif char in "'\"":
+            quote, opened = char, at
+        elif char == "#" and word_start:
+            quote, comment = "#", at if comment < 0 else comment
+        if closes:
+            quote = ""
+            spans.append((opened, at + 1))
+        if char == "#" and word_start and quote not in ("", "#") and quoted < 0:
+            quoted = at
+
+
+def _infra_joined(cmd: str) -> str:
+    """cmd with each backslash-newline bash joins removed (nothing put in its place, as bash does);
+    any other newline stays a part boundary."""
+    if "\\\n" not in cmd:
+        return cmd
+    joins = _infra_shell(cmd)[0]
+    starts = [0] + [at + 2 for at in joins]
+    return "".join(cmd[start:end] for start, end in zip(starts, joins + [len(cmd)]))
+
+
+def _uncommented(text: str) -> str:
+    """text up to its first comment (an unquoted `#` at the start or after a blank or operator);
+    `'…'`, `"…"` and `$'…'` (where a backslash escapes) are quotes, `$$` is a token. When the quotes
+    do not close, up to its first such `#` quoted or not (when unsure, cut)."""
+    if "#" not in text:
+        return text
+    _, comment, quoted, unclosed, _ = _infra_shell(text)
+    if comment >= 0:
+        return text[:comment]
+    return text[:quoted] if unclosed and quoted >= 0 else text
+
+
+def _infra_unsafe(cmd: str) -> str | None:
+    """The first character of cmd outside the E23 safe list (a `&` not in `&&` included), or None."""
+    for found in INFRA_UNSAFE.finditer(cmd):
+        if found.group(0) != "&&":
+            return found.group(0)
+    return None
+
+
+def _infra_sed(words: list[str]) -> dict[int, str]:
+    """{index: "<sed> <script>"} for each sed word of a part's words whose arguments (the words
+    after it, as GNU sed reads them: options anywhere, short ones clustered, long ones by any unique
+    prefix) give it a script holding an `e` (from -e or --expression, else its first operand) or a
+    script file (-f or --file) (E24). One pass over words (E27): a later sed's arguments are a
+    suffix of an earlier one's and read alike after the later sed word, which never takes the next
+    word as a value, so each sed keeps the scripts and operands found after it."""
+    seds: list[tuple[int, str]] = []
+    scripts: list[tuple[int, str, bool]] = []  # (option's index, as shown, whether it runs text)
+    operands: list[tuple[int, str]] = []
+    take, taken_at = "", 0
+    for index, word in enumerate(words):
+        sed = INFRA_SED.match(word.rsplit("/", 1)[-1])
+        if not seds:
+            if sed:
+                seds.append((index, word))
+            continue
+        if sed:
+            seds.append((index, word))
+        if take:
+            if take[-1] in "ef":
+                scripts.append((taken_at, f"{take[:-1]} {word}", take[-1] == "f" or "e" in word))
+            take = ""
+        elif word.startswith("--") and len(word) > 2:
+            name, eq, value = word[2:].partition("=")
+            kind = ("e" if "expression".startswith(name) else "f" if len(name) > 1 and "file".startswith(name)
+                    else "l" if "line-length".startswith(name) else "")
+            if kind and eq and kind in "ef":
+                scripts.append((index, word, kind == "f" or "e" in value))
+            elif kind and not eq:
+                take, taken_at = word + kind, index
+        elif word.startswith("-") and len(word) > 1:
+            for at, char in enumerate(word[1:], 2):
+                if char in "efl":
+                    if word[at:] and char in "ef":
+                        scripts.append((index, word, char == "f" or "e" in word[at:]))
+                    elif not word[at:]:
+                        take, taken_at = f"-{char}{char}", index
+                    break
+                if char == "i":  # -i[SUFFIX]: the rest is its suffix
+                    break
+        else:
+            operands.append((index, word))
+    runs_from: list[str | None] = [None] * (len(scripts) + 1)
+    for at in range(len(scripts) - 1, -1, -1):
+        runs_from[at] = scripts[at][1] if scripts[at][2] else runs_from[at + 1]
+    found: dict[int, str] = {}
+    script = operand = 0
+    for index, sed_word in seds:
+        while script < len(scripts) and scripts[script][0] <= index:
+            script += 1
+        while operand < len(operands) and operands[operand][0] <= index:
+            operand += 1
+        if script < len(scripts):
+            shown = runs_from[script]
+        else:
+            first = operands[operand][1] if operand < len(operands) else ""
+            shown = first if "e" in first else None
+        if shown:
+            found[index] = f"{sed_word} {shown}"
+    return found
+
+
+def _infra_risky(cmd: str) -> tuple[str, str] | None:
+    """The first word of cmd (a command of safe characters only) that always asks, as written,
+    with its reason: a shell, interpreter, xargs, eval, exec, source, sudo, su or doas word
+    anywhere, a lone `--`, `.` in command position (after assignments, options and keywords such
+    as `then`, `time`, `command`), or env's -i/-u in any spelling among its options (then "env
+    <option>") (E23); parallel anywhere, or a sed that runs text (then "sed <script>") (E24);
+    else None."""
+    for part in INFRA_PART.split(cmd):
+        command, env, value = True, "", False
+        words = part.split()
+        seds = _infra_sed(words)
+        for index, word in enumerate(words):
+            name = word.rsplit("/", 1)[-1]
+            if word == "--" or INFRA_RISKY.match(name):
+                return INFRA_RISKY_REASON, word
+            if INFRA_RUNS.match(name):
+                return INFRA_RUNS_REASON, word
+            if index in seds:
+                return INFRA_RUNS_REASON, seds[index]
+            if env and (value or word.startswith("-")):
+                if not value and INFRA_ENV_CLEAR.match(word):
+                    return INFRA_RISKY_REASON, f"{env} {word}"
+                value = not value and word in INFRA_ENV_VALUE
+                continue
+            env = ""
+            if command and word == ".":
+                return INFRA_RISKY_REASON, word
+            if command and (INFRA_ASSIGNMENT.match(word) or word in INFRA_PREFIX_WORDS or word.startswith("-")):
+                continue
+            command = False
+            env = word if word.rsplit("/", 1)[-1] == "env" else ""
+    return None
+
+
+def _infra_repeated(cmd: str) -> str | None:
+    """The first environment setting (E24's names and flags) that a part of cmd (a command of safe
+    characters only, so a part is one call) sets a second time, as its name; else (E25) the first
+    two spellings of one setting in a part, as `first`/`second`; else None."""
+    for part in INFRA_PART.split(cmd):
+        names = []
+        for word in part.split():
+            found = INFRA_ENV_SETTING.match(word)
+            if found:
+                name = found.group(1) or found.group(2)
+                names.append(name[1:] if name in ("--chdir", "--var-file") else name)
+        for index, name in enumerate(names):
+            if name in names[:index]:
+                return name
+        for index, name in enumerate(names):
+            for earlier in names[:index]:
+                if any(earlier in group and name in group for group in INFRA_ENV_ALIASES):
+                    return f"{earlier}`/`{name}"
+    return None
+
+
+def _infra_selectors(cmd: str, allow: list[re.Pattern[str]]) -> str | None:
+    """The first environment selector (E27) in a part of cmd (a command of safe characters only,
+    so a part is one call, with no quote or comment) that lies inside no allow match on that part,
+    as written (a flag with the word after it, blanks collapsed); else None."""
+    for part in INFRA_PART.split(cmd):
+        tools = {mention.group(1) for mention in INFRA_TOOL.finditer(part)}
+        words = [(word.start(), word.end()) for word in INFRA_BLANK_WORD.finditer(part)]
+        selectors = []
+        for index, (start, end) in enumerate(words):
+            if INFRA_SELECTOR_ENV.search(part, start, end) or INFRA_SELECTOR_GLUED.match(part, start, end):
+                selectors.append((start, end))
+                continue
+            flag = None
+            if tools:
+                flag = INFRA_SELECTOR_FLAG.match(part, start, end)
+                if not flag and "pulumi" in tools:
+                    flag = INFRA_PULUMI_FLAG.match(part, start, end)
+            if flag:
+                with_value = not flag.group(1) and index + 1 < len(words)
+                selectors.append((start, words[index + 1][1] if with_value else end))
+        if not selectors:
+            continue
+        matches = sorted((found.start(), found.end()) for pattern in allow for found in pattern.finditer(part))
+        starts, reach, furthest = [], [], -1
+        for start, end in matches:
+            furthest = max(furthest, end)
+            starts.append(start)
+            reach.append(furthest)
+        for start, end in selectors:
+            index = bisect.bisect_right(starts, start) - 1
+            if index < 0 or reach[index] < end:
+                return " ".join(part[start:end].split())
+    return None
+
+
+def _infra_config_verb(cmd: str) -> tuple[str, str] | None:
+    """(tool, "<lead> <verb>") for the first part of cmd where a command that changes a tool's own
+    configuration follows that tool's first mention (E27), one search per distinct tool; else None."""
+    for part in INFRA_PART.split(cmd):
+        seen = set()
+        for mention in INFRA_TOOL.finditer(part):
+            tool = mention.group(1)
+            if tool in seen or tool not in INFRA_CONFIG_VERBS:
+                continue
+            seen.add(tool)
+            lead, verbs = INFRA_CONFIG_VERBS[tool]
+            first = lead.search(part, mention.end(1))
+            verb = verbs.search(part, first.end()) if first else None
+            if first and verb:
+                return tool, f"{first.group(1)} {verb.group(1)}"
+            if len(seen) == len(INFRA_CONFIG_VERBS):
+                break
+    return None
+
+
+class _Evidence:
+    """A part's or call's text without its comment, and whether its `--client` and `-backend=false`
+    flags hold (each searched at most once)."""
+
+    def __init__(self, text: str) -> None:
+        self.text = _uncommented(text)
+        self.flags: dict[str, bool] = {}
+
+    def has(self, flag: tuple[LazyPattern, LazyPattern, LazyPattern]) -> bool:
+        needed, keeps, word = flag
+        if word.pattern not in self.flags:
+            words, kept = list(word.finditer(self.text)), list(keeps.finditer(self.text))
+            self.flags[word.pattern] = bool(
+                needed.search(self.text) and words and kept
+                and kept[-1].start() <= words[-1].start() < kept[-1].end())
+        return self.flags[word.pattern]
+
+
+class _Quoted:
+    """A command's quoted regions ('…', "…" and $'…', with their quotes), as bash reads them."""
+
+    def __init__(self, text: str) -> None:
+        spans = _infra_shell(text)[4]
+        self.starts = [start for start, _ in spans]
+        self.ends = [end for _, end in spans]
+
+    def overlaps(self, start: int, end: int) -> bool:
+        """Whether text[start:end] (an empty one as its first character) overlaps a quoted region."""
+        index = bisect.bisect_left(self.starts, max(end, start + 1)) - 1
+        return index >= 0 and self.ends[index] > start
+
+
+def _infra_match(evidence: _Evidence, base: int, allow: list[re.Pattern[str]], quoted: _Quoted) -> tuple[bool, str | None]:
+    """(whether an allow pattern matches the evidence, which starts at base in the command, wholly
+    outside quotes; else the first match found, which overlaps a quoted region, or None) (E22)."""
+    first = None
+    for pattern in allow:
+        for found in pattern.finditer(evidence.text):
+            if not quoted.overlaps(base + found.start(), base + found.end()):
+                return True, None
+            first = found.group(0) if first is None else first
+    return False, first
+
+
+def _infra_local(text: str, mention: re.Match[str], evidence: _Evidence, end: int) -> bool:
+    """Whether a covered-tool mention is a local-only form (D5): its words right after the tool,
+    before end, the end of its call (a glued redirection, or blanks up to end, never are)."""
+    tool, at = mention.group(1), mention.start(2)
+    if not 0 <= at < end:
+        return False
+    if tool == "kubectl" and INFRA_KUBECTL_VERSION.match(text, at):
+        return evidence.has(INFRA_CLIENT)
+    if tool == "terraform" and INFRA_TERRAFORM_INIT.match(text, at):
+        return evidence.has(INFRA_BACKEND)
+    local = INFRA_LOCAL.get(tool)
+    return bool(INFRA_LOCAL_ANY.match(text, at) or (local and local.match(text, at)))
+
+
+def _infra_unknown(text: str, base: int, mentions: list[re.Match[str]], allow: list[re.Pattern[str]],
+                   quoted: _Quoted) -> tuple[bool, str | None]:
+    """(whether text, at base in the command and without its comment, matches an allow pattern
+    outside quotes; the tool a deny names: its first mention when it is not allowed, no match is
+    quoted and some mention is not a local form, else None). A part whose only matches are quoted
+    is neither allowed nor denied (E22): the safe-character gate asks for it (E23)."""
+    if not mentions:
+        return False, None
+    evidence = _Evidence(text)
+    allowed, match = _infra_match(evidence, base, allow, quoted)
+    if allowed:
+        return True, None
+    if all(_infra_local(text, mention, evidence, len(text)) for mention in mentions):
+        return False, None
+    return False, (mentions[0].group(1) if match is None else None)
+
+
+def _infra_calls(part: str, base: int, mentions: list[re.Match[str]], allow: list[re.Pattern[str]],
+                 quoted: _Quoted) -> tuple[bool, str | None]:
+    """Each mention of the part (at base in the command) checked against the call that holds it,
+    found by its offset: (whether such a call matches an allow pattern outside quotes; the tool a
+    deny names: the first mention of the first call where a mention is neither allowed, nor a local
+    form, nor in a call whose only matches are quoted, else None)."""
+    starts = [0] + [found.end() for found in INFRA_CALL.finditer(part)]
+    calls: dict[int, tuple[bool, str | None, _Evidence, str]] = {}
+    allowed = False
+    for mention in mentions:
+        index = bisect.bisect_right(starts, mention.start()) - 1
+        end = starts[index + 1] - 1 if index + 1 < len(starts) else len(part)
+        if index not in calls:
+            evidence = _Evidence(part[starts[index]:end])
+            calls[index] = (*_infra_match(evidence, base + starts[index], allow, quoted), evidence, mention.group(1))
+        call_allowed, match, evidence, first = calls[index]
+        allowed = allowed or call_allowed
+        if call_allowed or _infra_local(part, mention, evidence, end):
+            continue
+        if match is None:
+            return allowed, first
+    return allowed, None
+
+
+def _infra_ask(part: str) -> Verdict:
+    """The ask for the first ask verb after a tool's first mention in an allowed part, if any:
+    one search per distinct tool, from its first mention."""
+    seen = set()
+    for mention in INFRA_TOOL.finditer(part):
+        tool = mention.group(1)
+        if tool in seen:
+            continue
+        seen.add(tool)
+        verb = INFRA_ASK_VERBS[tool].search(part, mention.end(1))
+        if verb:
+            return "ask", INFRA_ASK_REASON.format(tool, _infra_value(" ".join(verb.split())))
+        if len(seen) == len(INFRA_TOOLS):
+            break
+    return None
+
+
+def check_infra(cmd: str, cfg: Config) -> Verdict:
+    """The infra rule on the command as given. Without guard.infra: the fixed rule (a deny or None),
+    on the command with every backslash-newline a blank. With it, on the command with only the
+    backslash-newlines bash joins joined, and only when a part names a covered tool: an unusable
+    guard.infra or pattern denies; a production marker anywhere in the command denies; then per
+    part, in order: the part, then the call that holds each tool mention, must match an allow
+    pattern (text after an unquoted ` #` does not count; a match that overlaps a quoted region
+    neither allows nor denies, E22) or hold only local-only forms, else deny; a part where
+    something matched an allow pattern asks on its first ask verb. What would pass then asks,
+    in this order, on the first character outside the safe list, then on the first word that
+    always asks (E23, E24), then on an environment set twice in a part (E24), also under two
+    spellings (E25), then on an environment selector outside every allow match, then on a command
+    that changes a tool's own configuration (E27); so an ask verb keeps its reason, and a deny is
+    never relaxed."""
+    infra = cfg.infra
+    spaced = cmd.replace("\\\n", " ")
+    if infra is None:
+        if LEGACY_INFRA.search(spaced):
+            return "deny", "infrastructure commands (terraform/aws/pulumi/kubectl) are human-only"
+        return None
+    c = _infra_joined(cmd)
+    bounds = [0] + [found.end() for found in INFRA_PART.finditer(c)]
+    ends = [found.start() for found in INFRA_PART.finditer(c)] + [len(c)]
+    parts = [(start, c[start:end]) for start, end in zip(bounds, ends) if INFRA_TOOL.search(c[start:end])]
+    if not parts:
+        return None
+    if infra.problem:
+        return "deny", INFRA_CONFIG_REASON.format(_infra_value(infra.problem), "malformed")
+    allow, failed = _infra_compiled("allow", infra.allow)
+    markers, failed_marker = _infra_compiled("prod_markers", infra.prod_markers)
+    if failed or failed_marker:
+        return failed or failed_marker
+    for pattern in markers:
+        if pattern.search(c) or pattern.search(spaced):
+            return "deny", INFRA_MARKER_REASON.format(_infra_value(pattern.pattern, _printable))
+    verdict: Verdict = None
+    quoted = _Quoted(c)
+    for base, part in parts:
+        mentions = list(INFRA_TOOL.finditer(part))
+        allowed, tool = _infra_unknown(part, base, mentions, allow, quoted)
+        if not tool and INFRA_CALL.search(part):
+            calls_allowed, tool = _infra_calls(part, base, mentions, allow, quoted)
+            allowed = allowed or calls_allowed
+        if tool:
+            return "deny", INFRA_UNKNOWN_REASON.format(tool)
+        if allowed and verdict is None:
+            verdict = _infra_ask(part)
+    if verdict:
+        return verdict
+    char = _infra_unsafe(cmd)
+    if char:
+        return "ask", INFRA_UNSAFE_REASON.format(_infra_value(char))
+    risky = _infra_risky(cmd)
+    if risky:
+        return "ask", risky[0].format(_infra_value(risky[1]))
+    name = _infra_repeated(cmd)
+    if name:
+        return "ask", INFRA_REPEATED_REASON.format(name)
+    selector = _infra_selectors(cmd, allow)
+    if selector:
+        return "ask", INFRA_SELECTOR_REASON.format(_infra_value(selector))
+    config = _infra_config_verb(cmd)
+    if config:
+        return "ask", INFRA_CONFIG_VERB_REASON.format(config[0], _infra_value(config[1]))
+    return None
+
+
+def _launcher_plain(text: str) -> str:
+    """text without its quotes and backslashes, and without a `$` just before a quote (as
+    _command_views removes them); text itself when it holds none of them."""
+    if "'" not in text and '"' not in text and "\\" not in text:
+        return text
+    return LAUNCHER_DOLLAR_QUOTE.sub("", text).translate(UNQUOTED)
+
+
+def _launcher_open(part: str, opened: list[str]) -> bool:
+    """Whether part ends on a backslash that escapes what follows it. part is read as bash reads
+    it, from what was open at its start: opened, innermost last (`'`, `$'`, `"`, a backtick, `(`,
+    `{` for `${`, `[` for `$[`), is changed in place to what is open at part's end. It is never
+    copied, so the time over all the parts of a command stays linear."""
+    pos = 0
+    while True:
+        found = LAUNCHER_LEX.search(part, pos)
+        if not found:
+            return False
+        at, char = found.start(), found.group(0)
+        pos = found.end()
+        top = opened[-1] if opened else ""
+        if top == "'":
+            if char == "'":
+                opened.pop()
+        elif char == "\\":
+            if at + 1 >= len(part):
+                return True
+            pos = at + 2
+        elif top == "$'":
+            if char == "'":
+                opened.pop()
+        elif char == '"':
+            if top == '"':
+                opened.pop()
+            else:
+                opened.append(char)
+        elif top == '"':  # inside "…" only `${`, `$[`, a backtick and a `(` right after a `$` open something
+            if char in ("${", "$[", "`") or (char == "(" and part[at - 1:at] == "$"):
+                opened.append(char[-1])
+        elif char == "'":
+            opened.append("$'" if part[at - 1:at] == "$" else "'")
+        elif char == "`":
+            if top == "`":
+                opened.pop()
+            else:
+                opened.append(char)
+        elif char in ("(", "${", "$["):
+            opened.append(char[-1])
+        elif (char == ")" and top == "(") or (char == "}" and top == "{") or (char == "]" and top == "["):
+            opened.pop()
+
+
+def _launcher_pair(words: list[str], start: int) -> str | None:
+    """The verb of the first pair of words `./hub`, <a launcher verb> at or after start; None
+    without one."""
+    for at in range(start, len(words) - 1):
+        if words[at] == "./hub" and words[at + 1] in LAUNCHER_VERBS:
+            return words[at + 1]
+    return None
+
+
+def _launcher_runs(view: str) -> list[tuple[str, bool, str]]:
+    """For each part of view that runs the launcher with a launcher verb: the verb, whether the run
+    is bare (no word before `./hub`), and the part without its quotes and backslashes. A run is the
+    part's command word `./hub` and a verb after it, or the pair behind a NAME=value word, a
+    wrapper or a shell word. A led part with no run, whose end bash reads past (something still
+    open, or a backslash before the separator), carries its lead into the parts after it, where
+    the pair is a run that is not bare, until what is open closes. One pass over the parts and
+    their words."""
+    found: list[tuple[str, bool, str]] = []
+    if "./hub" not in _launcher_plain(view):
+        return found
+    opened: list[str] = []
+    carried = False
+    for part in LAUNCHER_PART.split(view):
+        plain = _launcher_plain(part)
+        holds = "./hub" in plain
+        if carried:
+            verb = _launcher_pair([word for word in LAUNCHER_WORD.findall(plain) if word], 0) if holds else None
+            if verb:
+                found.append((verb, False, plain))
+            carried = _launcher_open(part, opened) or bool(opened)
+            continue
+        if not holds and not LAUNCHER_LEX.search(part):
+            continue
+        words = [word for word in LAUNCHER_WORD.findall(plain) if word]  # a redirect is no word
+        first = next((at for at, word in enumerate(words) if not INFRA_ASSIGNMENT.match(word)), len(words))
+        command = words[first] if first < len(words) else ""
+        led = first > 0 or command.rsplit("/", 1)[-1] in LAUNCHER_PREFIXES
+        verb = None
+        if command == "./hub":
+            if first + 1 < len(words) and words[first + 1] in LAUNCHER_VERBS:
+                verb = words[first + 1]
+                found.append((verb, first == 0, plain))
+        elif led:
+            verb = _launcher_pair(words, first + 1)
+            if verb:
+                found.append((verb, False, plain))
+        if led and not verb:
+            opened = []
+            carried = _launcher_open(part, opened) or bool(opened)
+    return found
+
+
+def _at_hub_root(cwd: str | None, cfg: Config) -> bool:
+    """Whether cwd is the root of the hub that holds this file: the same folder, so a link to it
+    and another spelling of it pass, and a hub worktree does not. False with no hub, with no cwd
+    or a relative one (it would be read from the hook process's folder), or when it cannot be read."""
+    if cfg.root_hub is None or not cwd or not os.path.isabs(cwd):
+        return False
+    try:
+        return os.path.samefile(cwd, str(cfg.root_hub))
+    except (OSError, ValueError):
+        return False
+
+
+def check_launcher(cmd: str, cfg: Config, cwd: str | None) -> Verdict:
+    """The launcher-folder rule, which decide asks first on a Bash call (ADR 0067): a deny when cmd
+    runs `./hub <a launcher verb>` with no hub (hooks in a plugin cache), behind a word, from any
+    folder but the hub root (cwd is the event's) or with a folder change; else None.
+    Known false denies: a call that only names the command in a text, when the name starts a line
+    of the text or follows `;`, `&` or `|` in it (a quoted or heredoc line that starts with the
+    run); a part led by a wrapper, a shell word or a NAME=value word that only names the pair
+    (`time echo ./hub worktree x`, `FOO=1 echo ./hub worktree x`), also when the pair is in a later
+    part of a quote that the led part leaves open (`MSG='…` line break `./hub pr-watch …'`,
+    `FOO=1 git commit -m 'x; ./hub pr-watch y'`); any cd, pushd or popd word in the call, and a
+    -C… or --chdir word among the run's own arguments, also at the hub root.
+    Not read, so left to the permission rules: a run inside `( )`, `$( )`, backticks or `{ }`; a
+    run behind a word outside LAUNCHER_PREFIXES (sudo, xargs, eval, setsid, a `{name}>file`
+    redirect before the command, `././hub`, `./hub -- pr-watch`); a lead whose `$( )`, backticks,
+    `${ }` or `$[ ]` holds a closing character that bash does not pair with it (a `)` in a case
+    pattern, a comment or a heredoc body); and `bash ./hub …`, `../<hub>/hub …`, the bare `hub …`
+    and `make worktree`, which no managed allow rule matches."""
+    runs = [run for view in dict.fromkeys((cmd, cmd.replace("\\\n", ""))) for run in _launcher_runs(view)]
+    if not runs:
+        return None
+    if cfg.root_hub is None:
+        return "deny", LAUNCHER_NO_HUB_REASON.format(runs[0][0])
+    worded = next((verb for verb, bare, _part in runs if not bare), None)
+    if worded:
+        return "deny", LAUNCHER_BARE_REASON.format(worded)
+    if _at_hub_root(cwd, cfg):
+        views = _command_views(cmd)
+        if (not any(LAUNCHER_MOVE.search(view) for view in views)
+                and not any(LAUNCHER_CHDIR.search(part) for _verb, _bare, part in runs)):
+            return None
+    return "deny", LAUNCHER_FOLDER_REASON.format(runs[0][0])
+
+
+def check_bash(cmd: str, cfg: Config | None = None, cwd: str | None = None) -> Verdict:
+    """The Bash rules on cmd; cwd is the folder the command runs in (the event's), None when not known."""
+    cfg = cfg or Config()
+    c = cmd.replace("\\\n", " ")
+    # longest first, so release/2 is named before release
+    branches = "|".join(re.escape(b) for b in sorted(cfg.protected_branches, key=lambda b: (-len(b), b)))
+    # Here and in _after_infra, a rule whose pattern needs a fixed word first checks that the word is
+    # there, which skips the regex's slower scan of a long command.
+    if "push" in c and re.search(GIT + r"push\b[^;&|\n]*(\s--force\b|\s-[a-zA-Z]*f[a-zA-Z]*\b|\s--force-with-lease\b|\s--mirror\b|\s\+\S)", c):
+        return "deny", "force-push is not allowed; push a new commit (or a merge) instead"
+    push = "push" in c and re.search(GIT + rf"push\b[^;&|\n]*(\s(origin\s+)?(?P<plain>{branches})\b|:(refs/heads/)?(?P<ref>{branches})\b)", c)
+    if push:
+        return "deny", f"pushing to {push.group('plain') or push.group('ref')} is not allowed; open a PR from a {_branch_hint(cfg)} branch"
+    if ("curl" in c or "wget" in c) and re.search(r"\b(curl|wget)\b[^|;&\n]*\|\s*(sudo\s+)?(ba|z|da)?sh\b", c):
+        return "deny", "curl|sh is not allowed; download, inspect, then run explicitly"
+    host = denied_host(c, cfg)
+    if host:
+        return "deny", f"{host} is in guard.deny_hosts (hub.json); agents do not reach it. Use fixtures or a sandbox endpoint"
+    if "docker" in c and re.search(r"\bdocker\s+volume\s+(rm|prune)\b|\bdocker\s+compose\b[^;&|\n]*\bdown\b[^;&|\n]*\s-v\b", c):
+        return "deny", "removing docker volumes deletes local data (databases, caches); a human does this"
+    infra = check_infra(cmd, cfg)
+    if infra and infra[0] == "deny":
+        return infra
+    return tighten(infra, _after_infra(c, cfg, cwd))
+
+
+def _after_infra(c: str, cfg: Config, cwd: str | None = None) -> Verdict:
+    """check_bash's rules after the infra rule (secrets, attribution, claude/ branches, .git,
+    deny_paths, guard files, tests, brain, ask_before_edit, a mutating hub env or hub repo): an infra ask or allow does not end the
+    check, so a later deny wins and a later ask keeps the infra reason. cwd is the command's folder (None: not known)."""
+    for seg in re.split(r"&&|\|\||[;|\n]", c):
+        words = seg.split()
+        if not words or words[0] in SAFE_ON_SECRETS:
+            continue
+        for found in _secret_tokens(seg):
+            tok = found.lstrip("<").strip("'\"")
+            if _secret_path(tok, cfg):
+                return "deny", SECRET_READ_REASON.format(tok)
+    if "git" in c and re.search(r"\bgit\s+(commit|tag)\b", c) and AI_ATTRIBUTION.search(c):
+        return "deny", "commits carry no AI attribution (no Co-Authored-By AI, no 'Generated with', no 🤖)"
+    if "gh" in c and re.search(r"\bgh\s+pr\s+(create|edit)\b", c) and AI_ATTRIBUTION.search(c):
+        return "deny", "PR text carries no AI attribution"
+    if "claude/" in c and re.search(r"\b(checkout\s+-b|switch\s+-c|branch(\s+-\w+)*|worktree\s+add\b[^;&|\n]*-b)\s+['\"]?claude/", c):
+        return "deny", f"branches are {_branch_hint(cfg)}, never claude/..."
+    if ".git" in c and (re.search(r"\b(rm|mv|cp|ln|truncate)\b[^;&|\n]*(^|[\s/'\"])\.git(/|\s|$|['\"])", c)
+                        or re.search(r">>?\s*(\S*/)?\.git(/|\s|$)", c)):
+        return "deny", ".git is git's own state (a worktree's .git file links it to the repo); use git commands, never edit it directly"
+    segments = _segments(c)
+    if cfg.deny_paths:
+        for seg in segments:
+            for tok in _tokens(seg):
+                pat = denied_path(tok, cfg)
+                if pat:
+                    return "deny", DENY_PATH_REASON.format(tok, pat)
+    for seg in segments:
+        if BASH_WRITE.search(seg):
+            for tok in _tokens(seg):
+                rel = guard_file(tok, cfg, launchers=False)
+                if rel:
+                    return "ask", GUARD_FILE_REASON.format(tok, rel)
+            for tok in _write_targets(seg):
+                rel = guard_file(tok, cfg)
+                if rel:
+                    return "ask", GUARD_FILE_REASON.format(tok, rel)
+        if re.search(r"\b(rm|mv)\b", seg):
+            for tok in _tokens(seg):
+                held = guard_parent(tok, cfg)
+                if held is not None:
+                    return "ask", GUARD_PARENT_REASON.format(tok, held or "the hub")
+    if re.search(r"\b(rm|mv|truncate)\b[^;&|\n]*\s" + TEST_PATH, c) or re.search(r"\bsed\s+(-\w*i\w*|--in-place)\b[^;&|\n]*\s" + TEST_PATH, c):
+        return "ask", "deleting or sed-editing tests from Bash bypasses the assertion guard; use Edit, or confirm this is intended"
+    brain = _brain_write(c, cfg, cwd)
+    if brain:
+        return brain
+    if cfg.ask_before_edit:
+        for seg in segments:
+            if not BASH_WRITE.search(seg):
+                continue
+            for tok in _tokens(seg):
+                pat = protected(tok, cfg)
+                if pat:
+                    return "ask", f"{tok} matches guard.ask_before_edit `{pat}` (hub.json); confirm this change is intended"
+    env = next((m for m in map(ENV_COMMAND.search, _command_views(c)) if m), None)
+    if env:
+        return "ask", ENV_COMMAND_REASON.format(ENV_VERB_GAP.sub(" ", env.group(1)))
+    repo = next((m for m in map(REPO_COMMAND.search, _command_views(c)) if m), None)
+    if repo:
+        return "ask", REPO_COMMAND_REASON.format(repo.group(1))
+    return None
+
+
+def _assert_count(s: str) -> int:
+    return len(re.findall(r"\bassert\b|\bexpect\(|\bpytest\.raises\b|\.assert_\w+\(|\.assert[A-Z]\w*\(|\bself\.fail\(", s or ""))
+
+
+def _brain_rel(path: str, cfg: Config) -> str | None:
+    """Path inside the hub's brain/ (main checkout or a hub worktree), relative to brain/."""
+    if cfg.hub:
+        m = re.search(re.escape(cfg.hub.name) + r"/(?:\.claude/worktrees/[^/]+/)?brain/(.+)$", path)
+        if m:
+            return m.group(1)
+    m = re.search(r"^(.*)/brain/(.+)$", path)
+    if m and os.path.isfile(os.path.join(m.group(1), "hub.json")):
+        return m.group(2)
+    m = re.search(r"^brain/(.+)$", path)
+    if m and os.path.isdir("brain"):
+        return m.group(1)
+    return None
+
+
+def _unquoted(text: str) -> str:
+    """text without its quotes and backslashes: the word the shell runs (br""ain is brain)."""
+    return text.replace("'", "").replace('"', "").replace("\\", "")
+
+
+def _command_dirs(c: str, cwd: str | None) -> list[str] | None:
+    """The folders a relative write word of command c may be read from, or None when one is not known.
+
+    It is the session's folder (cwd, when absolute). A leading `cd <folder> &&` (LEAD_CD: a literal,
+    a ~ path or a quoted folder without $ or a backtick) gives its folder, joined to the session's,
+    instead; or as well when the rest of c holds a CHAIN_BREAK, after which a command may run in the
+    session's folder. None without a cwd where one is needed, or when c changes folder anywhere else
+    (FOLDER_CHANGE, on c without quotes and backslashes: cd, pushd, popd, -C, --chdir, GIT_DIR, ...):
+    a cd that may or may not run, in a subshell, a `bash -c` or after `||`, would leave two folders,
+    so the guard does not follow it."""
+    here = cwd if cwd and os.path.isabs(cwd) else None
+    folders = [here]
+    rest = 0
+    lead = LEAD_CD.match(c)
+    if lead:
+        bare, single, double = lead.groups()
+        arg = single if single is not None else double if double is not None else bare
+        if bare is not None:
+            try:
+                arg = os.path.expanduser(arg)
+            except ValueError:  # a NUL byte or a lone surrogate in a ~name
+                return None
+            if arg.startswith("~"):
+                return None
+        there = arg if os.path.isabs(arg) else os.path.join(here, arg) if here else None
+        rest = lead.end()
+        folders = [there, here] if CHAIN_BREAK.search(c, rest) else [there]
+    if None in folders or FOLDER_CHANGE.search(_unquoted(c[rest:])):
+        return None
+    return list(dict.fromkeys(os.path.normpath(folder) for folder in folders if folder))
+
+
+def _curated_brain(path: str, cfg: Config) -> bool:
+    """Whether absolute, normalized path is in the hub's brain/ (_brain_rel) outside its open
+    folders, or is that brain/ folder itself (`rm -rf brain`, `cp x brain/`)."""
+    rel = _brain_rel(path, cfg)
+    if rel is None and path.endswith("/brain") and _brain_rel(path + "/x", cfg) == "x":
+        return True
+    return rel is not None and not BRAIN_OPEN.match(rel)
+
+
+def _brain_write(c: str, cfg: Config, cwd: str | None) -> Verdict:
+    """The curated-brain ask for Bash: a word after a segment's first write (a redirection, >|
+    included, tee, sed -i, rm, mv, cp, truncate or ln; an option's =value included) whose path is
+    in the hub's brain/ outside its open folders (_curated_brain). A relative word is joined to each
+    of _command_dirs' folders, at most BRAIN_JOIN_CAP folder characters in all. A word with $ or a
+    backtick, or a relative one while a folder is not known or the cap is spent, is judged on its
+    normalized text (BRAIN_TEXT), as the rule did before it resolved paths; that reason names the
+    word, escaped and capped as an infra value. So apps/web/src/screens/brain/x.tsx in a repo
+    passes. Linear in the command's length."""
+    c = c.replace(">|", "> ")
+    if "brain" not in _unquoted(c) and "brain" not in (cwd or "") and "brain" not in os.path.expanduser("~"):
+        return None
+    folders: list[str] | None = None
+    looked = False
+    spent = 0
+    seen: set[str] = set()
+    for seg in _segments(c):
+        write = BASH_WRITE.search(seg)
+        if not write:
+            continue
+        for tok in _tokens(seg[write.start():].replace("=", " ")):
+            if tok in seen:
+                continue
+            seen.add(tok)
+            if BRAIN_DYNAMIC.search(tok):
+                if BRAIN_TEXT.search(os.path.normpath(tok)):
+                    return "ask", BRAIN_UNRESOLVED_REASON.format(_infra_value(tok, _printable))
+                continue
+            try:
+                path = os.path.normpath(os.path.expanduser(tok))
+            except ValueError:  # a NUL byte or a lone surrogate in a ~name
+                path = os.path.normpath(tok)
+            fulls = [path]
+            if not os.path.isabs(path):
+                if not looked:
+                    folders, looked = _command_dirs(c, cwd), True
+                if folders is not None:
+                    spent += sum(len(folder) for folder in folders)
+                    if spent > BRAIN_JOIN_CAP:
+                        folders = None
+                if folders is None:
+                    if BRAIN_TEXT.search(path):
+                        return "ask", BRAIN_UNRESOLVED_REASON.format(_infra_value(tok, _printable))
+                    continue
+                # path is normalized: only a leading `.` or `..` part needs another pass once joined
+                up = path.startswith(".")
+                fulls = [os.path.normpath(os.path.join(d, path)) if up else os.path.join(d, path) for d in folders]
+            for full in fulls:
+                if "brain" in full and _curated_brain(full, cfg):
+                    return "ask", BRAIN_CURATED_REASON
+    return None
+
+
+def check_file(tool: str, ti: dict, cfg: Config | None = None) -> Verdict:
+    cfg = cfg or Config()
+    if tool == "WebFetch":
+        host = denied_host(_str(ti.get("url")), cfg)
+        return ("deny", f"{host} is in guard.deny_hosts (hub.json); agents do not reach it") if host else None
+    path = _str(ti.get("file_path")) or _str(ti.get("notebook_path")) or _str(ti.get("path"))
+    glob = _str(ti.get("glob"))
+    if tool == "Grep" and glob and re.search(r"(^|[/*{,])\.env\b", glob) and ".example" not in glob:
+        return "deny", "Grep over .env files may print secrets; reference variable names instead"
+    targets = [path] if path else []
+    if tool == "Glob" and _str(ti.get("pattern")):
+        targets.append(os.path.join(path, _str(ti.get("pattern"))) if path else _str(ti.get("pattern")))
+    for target in targets if cfg.deny_paths else []:
+        pat = denied_path(target, cfg)
+        if pat:
+            return "deny", DENY_PATH_REASON.format(target, pat)
+    if not path:
+        return None
+    if _secret_path(path, cfg):
+        return "deny", SECRET_FILE_REASON.format(os.path.basename(path))
+    if tool in ("Read", "Grep", "Glob"):
+        return None
+    if re.search(r"(^|/)\.git(/|$)", path):
+        return "deny", ".git is git's own state (a worktree's .git file links it to the repo); use git commands, never edit it directly"
+    rel = guard_file(path, cfg)
+    if rel:
+        return "ask", GUARD_FILE_REASON.format(path, rel)
+    if re.search(r"(^|/)(tests?|__tests__)/|\.(test|spec)\.[jt]sx?$|/test_[^/]+\.py$", path):
+        if tool == "Edit":
+            removed = _assert_count(_str(ti.get("old_string"))) - _assert_count(_str(ti.get("new_string")))
+        elif tool == "MultiEdit":
+            removed = sum(_assert_count(_str(e.get("old_string"))) - _assert_count(_str(e.get("new_string"))) for e in _edits(ti))
+        elif tool == "Write" and os.path.exists(path):
+            removed = _assert_count(_read_text(path)) - _assert_count(_str(ti.get("content")))
+        else:
+            removed = 0
+        if removed > 0:
+            return "ask", f"this edit removes {removed} assertion(s) from a test; acceptance tests are a contract, confirm first"
+        before = _str(ti.get("old_string")) if tool == "Edit" else "".join(_str(e.get("old_string")) for e in _edits(ti)) if tool == "MultiEdit" else ""
+        if tool == "Write" and os.path.exists(path):
+            before = _read_text(path)
+        after = _str(ti.get("new_string")) if tool == "Edit" else "".join(_str(e.get("new_string")) for e in _edits(ti)) if tool == "MultiEdit" else _str(ti.get("content"))
+        if len(SKIP_MARKERS.findall(after or "")) > len(SKIP_MARKERS.findall(before or "")):
+            return "ask", "this edit adds a skip/xfail/quarantine/fixme marker to a test; that weakens the suite, confirm first"
+    pat = protected(path, cfg)
+    if pat:
+        return "ask", f"{path} matches guard.ask_before_edit `{pat}` (hub.json): plan and approval first; confirm this change is intended"
+    rel = _brain_rel(path, cfg)
+    if rel is not None and not BRAIN_OPEN.match(rel):
+        return "ask", BRAIN_CURATED_REASON
+    return None
+
+
+# Blocked words (docs/design/environments.md § Blocked words): a word from guard.blocked_words of
+# any layer, matched ignoring ASCII case, with no ASCII letter just before or after it (digits,
+# `_`, `-`, `.`, `/` and the like are boundaries), denies the call. The reason names the word, its
+# layer and where it was seen, never the text that held it.
+BLOCKED_REASON = "blocked word `{}` (guard.blocked_words, {}) in {}: agents do not reach what a blocked word names"
+BLOCKED_UNCHECKED_REASON = "blocked words not checked: {}; confirm this call"
+BLOCKED_CONFIG_CAUSE = "{} cannot be used (fix it: docs/design/environments.md)"
+BLOCKED_TEXT_CAP = 1 << 20  # characters of a command the rule scans; a longer one asks (AM-7)
+BLOCKED_TOO_LARGE = "the command is over 1 MiB (too large)"
+BLOCKED_INPUT_CHARS = 1 << 20  # characters of an input tool's keys and strings; more asks
+BLOCKED_INPUT_NODES = 50_000  # objects, arrays, keys and scalars of an input tool's input; more asks
+BLOCKED_INPUT_TOO_LARGE = "the tool input is over 1 MiB (too large)"
+BLOCKED_INPUT_TOO_MANY = "the tool input has over 50000 values (too many values)"
+BLOCKED_SCAN_BUDGET = 0.3  # seconds for the command's views, the session variables and the files together
+BLOCKED_OUT_OF_TIME = "out of time (300 ms)"
+BLOCKED_UNREADABLE = "the tool input could not be read (not a JSON object)"
+BLOCKED_CHUNK = 1 << 16  # characters searched between two looks at the clock
+BLOCKED_WORD_MAX_CHARS = 64  # the longest blocked word (the reader's bound)
+# D-env: the session variables whose values are scanned (not every value: PATH, HOME and the like
+# hold folder and user names): the infra selectors and the usual stage and connection names, then
+# every credentials.env name declared and every guard.blocked_words_env name (`*`: a prefix).
+SESSION_SCAN_NAMES = frozenset((
+    "AWS_PROFILE", "AWS_DEFAULT_PROFILE", "KUBECONFIG", "KUBE_CONTEXT", "HELM_KUBECONTEXT", "TF_WORKSPACE",
+    "TF_DATA_DIR", "TF_CLI_ARGS", "PULUMI_BACKEND_URL", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE",
+    "AWS_ROLE_ARN", "CDK_DEFAULT_ACCOUNT", "STAGE", "SLS_STAGE", "ENV", "ENVIRONMENT", "APP_ENV", "NODE_ENV",
+    "RAILS_ENV", "RACK_ENV", "FLASK_ENV", "DATABASE_URL", "PGHOST", "PGSERVICE", "PGDATABASE", "MYSQL_HOST",
+    "REDIS_URL", "MONGODB_URI", "AWS_ENDPOINT_URL",
+))
+SESSION_SCAN_PREFIXES = ("TF_CLI_ARGS_",)
+
+
+class BlockedScanBudgetSpent(Exception):
+    """The rule's time budget ran out before its scan ended."""
+
+
+def _blocked_matcher(cfg: Config) -> tuple[re.Pattern[str], dict[str, tuple[str, str]]]:
+    """One pattern for every blocked word (longest first), and each word's lowercase form mapped
+    to (the word as listed, the first layer listing it)."""
+    first: dict[str, tuple[str, str]] = {}
+    for word, layer in cfg.blocked_words:
+        first.setdefault(word.lower(), (word, layer))
+    words = sorted(first, key=lambda w: (-len(w), w))
+    pattern = r"(?<![A-Za-z])(?:" + "|".join(re.escape(w) for w in words) + r")(?![A-Za-z])"
+    return re.compile(pattern, re.I | re.A), first
+
+
+def _blocked_hit(pattern: re.Pattern[str], text: str, deadline: float) -> str | None:
+    """The first blocked word in text, searched a chunk at a time so the budget is checked; each
+    chunk is read on past its end by a word's length, so a word across the cut is seen whole."""
+    start = 0
+    while start < len(text):
+        if time.monotonic() > deadline:
+            raise BlockedScanBudgetSpent
+        end = start + BLOCKED_CHUNK
+        found = pattern.search(text, start, end + BLOCKED_WORD_MAX_CHARS + 1)
+        if found and found.start() < end:
+            return found.group(0)
+        start = end
+    return None
+
+
+UNQUOTED = {ord("'"): None, ord('"'): None, ord("\\"): None}
+
+
+def _command_views(cmd: str) -> tuple[str, ...]:
+    """The raw command, with backslash-newlines removed (as bash joins them), and then with every
+    quote and backslash removed, and a `$` just before a quote (p''rod, p\\rod, p$''rod: bash's
+    ANSI-C and locale quotes); each distinct view once."""
+    joined = cmd.replace("\\\n", "")
+    unquoted = re.sub(r"\$(?=['\"])", "", joined).translate(UNQUOTED)
+    return tuple(dict.fromkeys((cmd, joined, unquoted)))
+
+
+def _scanned_variables(cfg: Config, environ: dict) -> list[str]:
+    """The names in environ whose values the rule scans (D-env), sorted."""
+    exact = set(SESSION_SCAN_NAMES) | set(cfg.credential_env)
+    prefixes = list(SESSION_SCAN_PREFIXES)
+    for name, _layer in cfg.blocked_env:
+        if name.endswith("*"):
+            prefixes.append(name[:-1])
+        else:
+            exact.add(name)
+    return sorted(name for name in environ if name in exact or name.startswith(tuple(prefixes)))
+
+
+# D-files: the files whose contents the rule reads, within D-limits. A secret file (_secret_path)
+# is never opened: the secret-file rule keeps its reason (AM-6).
+BLOCKED_FILE_CAP = 1 << 20  # bytes of one listed file; a larger one asks
+BLOCKED_FILES_CAP = 64  # listed files one call reads (a Grep walk's, a Bash call's tokens and globs)
+BLOCKED_BYTES_CAP = 4 << 20  # bytes of the listed files one call reads together
+# The folders a Grep walk skips (plus .claude/worktrees, below): git's own state, vendored
+# packages and hidden tool caches, heavy trees that hold no project config. build, dist, target
+# and venv are walked: ripgrep searches them unless an ignore file says otherwise.
+BLOCKED_WALK_SKIPPED = frozenset((
+    ".git", "node_modules", ".venv", "__pycache__", ".tox", ".mypy_cache", ".pytest_cache",
+    ".ruff_cache", ".terraform", ".next",
+))
+BLOCKED_BRACES_CAP = 64  # words a Bash token's braces expand to; more asks (too many files)
+BLOCKED_BRACE_TOKEN_CAP = 4096  # characters of a Bash token with a `{`; a longer one asks (too many files)
+BLOCKED_HIDDEN_NAME = "<a listed file>"  # a name read from disk that is not plain
+# A plain segment of a path read from disk: no run of 20 letters and digits (a key's shape).
+BLOCKED_PLAIN_SEGMENT = LazyPattern(r"[A-Za-z0-9._-]{1,64}")
+BLOCKED_KEY_RUN = LazyPattern(r"[A-Za-z0-9]{20}")
+BLOCKED_FILE_TOO_LARGE = "{} is over 1 MiB (too large)"
+BLOCKED_NOT_REGULAR = "{} is not a regular file"
+BLOCKED_TOO_MANY = "over 64 files to read (too many files)"
+BLOCKED_BYTES_TOO_LARGE = "over 4 MiB of files to read (too large)"
+# The path fields of a file tool that the rule checks for a word (Grep's search pattern and edit
+# contents are not: code text).
+BLOCKED_PATH_FIELDS = ("file_path", "notebook_path", "path")
+BLOCKED_TOOL_PATH_FIELDS = {"Grep": ("glob",), "Glob": ("pattern",), "WebFetch": ("url",)}
+
+
+class BlockedScanUnchecked(Exception):
+    """A listed file the rule cannot read within D-limits, or a tool input over D-bounds; the
+    message is the ask's cause."""
+
+
+class BlockedSecretFile(Exception):
+    """A file the rule found secret only by case or link, which the secret-file rule, reading
+    the path as written, would let through; the message is that rule's deny reason."""
+
+
+def _trailing_match(entry: str, path: str) -> bool:
+    """Whether a guard.blocked_words_files glob matches path: without `/`, its last component;
+    with `/`, a trailing run of its segments (`*` within a segment, `**` any run). Case is
+    ignored. One pass per glob segment, so a glob of many `**` stays linear."""
+    parts = [part for part in path.lower().replace(os.sep, "/").split("/") if part]
+    segments = [part for part in entry.lower().split("/") if part]
+    if not segments:
+        return False
+    reach = [True] * (len(parts) + 1)  # a leading `**`: the run may start anywhere
+    for segment in segments:
+        if segment == "**":
+            for j in range(1, len(reach)):
+                reach[j] = reach[j] or reach[j - 1]
+        else:
+            reach = [False] + [reach[j] and fnmatchcase(parts[j], segment) for j in range(len(parts))]
+    return reach[-1]
+
+
+def _realpath(path: str) -> str:
+    try:
+        return os.path.realpath(path)
+    except (OSError, ValueError):
+        return path
+
+
+def _file_kind(path: str, cfg: Config, real: str | None = None) -> str:
+    """"secret" when _secret_path calls path or its real path (real, when the caller knows it;
+    links resolved) secret, also lowercased (macOS ignores case); else "listed" when either
+    form's last component starts with `.env` or a guard.blocked_words_files glob matches it;
+    else ""."""
+    forms = list(dict.fromkeys((path, real if real is not None else _realpath(path))))
+    if any(_secret_path(form, cfg) or _secret_path(form.lower(), cfg) for form in forms):
+        return "secret"
+    for form in forms:
+        name = os.path.basename(form.rstrip("/")).lower()
+        if name and (name.startswith(".env") or any(_trailing_match(e, form) for e, _ in cfg.blocked_files)):
+            return "listed"
+    return ""
+
+
+def _disk_shown(shown: str) -> str:
+    """A path read from disk as a reason shows it: as found when every segment is plain, else
+    BLOCKED_HIDDEN_NAME, so a file name never carries a key into a reason."""
+    for segment in shown.split("/"):
+        if segment and (not BLOCKED_PLAIN_SEGMENT.fullmatch(segment) or BLOCKED_KEY_RUN.search(segment)):
+            return BLOCKED_HIDDEN_NAME
+    return shown
+
+
+class _BlockedScan:
+    """One call's scan: the words' pattern, the 300 ms deadline for the command's views, the
+    session variables and the files together, and the bytes of listed files read so far."""
+
+    def __init__(self, cfg: Config, cwd: str | None) -> None:
+        self.cfg = cfg
+        self.pattern, self.first = _blocked_matcher(cfg)
+        self.deadline = time.monotonic() + BLOCKED_SCAN_BUDGET
+        self.cwd = cwd or os.getcwd()
+        self.read = 0
+
+    def tick(self) -> None:
+        """One more folder entry examined: past the deadline, the scan stops (out of time)."""
+        if time.monotonic() > self.deadline:
+            raise BlockedScanBudgetSpent
+
+    def entries(self, folder: str) -> list[os.DirEntry]:
+        """folder's entries in the system's order (a sort of a huge folder would outrun the
+        deadline), the deadline checked per entry; [] when unreadable."""
+        found = []
+        try:
+            with os.scandir(folder) as listing:
+                for entry in listing:
+                    self.tick()
+                    found.append(entry)
+        except (OSError, ValueError):
+            return []
+        return found
+
+    def hit(self, text: str) -> str | None:
+        return _blocked_hit(self.pattern, text, self.deadline)
+
+    def resolve(self, path: str) -> str:
+        """path from the event's cwd (else the process cwd), `~` expanded."""
+        return os.path.join(self.cwd, os.path.expanduser(path))
+
+    def contents(self, path: str, shown: str) -> str | None:
+        """The first word in a listed file's contents (read as latin-1 bytes); None when it holds
+        none, is a folder, or cannot be opened (the tool would fail too). A file that is not
+        regular, or over a cap, raises BlockedScanUnchecked."""
+        try:
+            fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+        except (OSError, ValueError):
+            return None
+        try:
+            mode = os.fstat(fd).st_mode
+            if stat.S_ISDIR(mode):
+                return None
+            if not stat.S_ISREG(mode):
+                raise BlockedScanUnchecked(BLOCKED_NOT_REGULAR.format(_infra_value(shown)))
+            data = _read_capped(fd)
+        except OSError:
+            return None
+        finally:
+            os.close(fd)
+        if len(data) > BLOCKED_FILE_CAP:
+            raise BlockedScanUnchecked(BLOCKED_FILE_TOO_LARGE.format(_infra_value(shown)))
+        self.read += len(data)
+        if self.read > BLOCKED_BYTES_CAP:
+            raise BlockedScanUnchecked(BLOCKED_BYTES_TOO_LARGE)
+        return self.hit(data.decode("latin-1"))
+
+    def files(self, found: dict[str, str]) -> tuple[str, str] | None:
+        """(word, where) for the first listed file of found ({path: as shown}) holding a word."""
+        if len(found) > BLOCKED_FILES_CAP:
+            raise BlockedScanUnchecked(BLOCKED_TOO_MANY)
+        for path, shown in sorted(found.items()):  # at most 64: the first one named is stable
+            word = self.contents(path, shown)
+            if word:
+                return word, f"the contents of {_infra_value(shown)}"
+        return None
+
+
+def _read_capped(fd: int) -> bytes:
+    """At most BLOCKED_FILE_CAP + 1 bytes of fd, so a larger file is seen as one."""
+    chunks, left = [], BLOCKED_FILE_CAP + 1
+    while left > 0:
+        chunk = os.read(fd, min(left, 1 << 16))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        left -= len(chunk)
+    return b"".join(chunks)
+
+
+def _add_listed(
+    found: dict[str, str], path: str, shown: str, cfg: Config, *, real: str | None = None, secret: str = "",
+    literal_seen: bool = True,
+) -> None:
+    """Add path (shown as shown) to found when the rule reads it; a secret one is never added. With
+    secret (the secret-file reason for this call), a secret file the secret-file rule would not
+    deny raises BlockedSecretFile with it: one secret only by case or link, or any one when that
+    rule never sees the path as written (literal_seen false: a glob match)."""
+    if path in found:
+        return
+    kind = _file_kind(path, cfg, real)
+    if kind == "secret":
+        if secret and (not literal_seen or not _secret_path(path, cfg)):
+            raise BlockedSecretFile(secret)
+        return
+    if kind == "listed":
+        found[path] = shown
+        if len(found) > BLOCKED_FILES_CAP:
+            raise BlockedScanUnchecked(BLOCKED_TOO_MANY)
+
+
+def _grep_glob_passes(rels: tuple[str, ...], grep_glob: str) -> bool:
+    """Whether a walked file passes Grep's glob filter, against its path from the walked folder
+    and from the event's cwd (ripgrep anchors a glob with `/` there); a filter the rule does not
+    read as a plain glob (braces, a `!` negation) passes everything, so it only adds files."""
+    if not grep_glob or "{" in grep_glob or grep_glob.startswith("!"):
+        return True
+    pattern = grep_glob.lower()
+    plain = pattern[3:] if pattern.startswith("**/") else pattern
+    for rel in (rel.lower() for rel in rels):
+        if fnmatch(os.path.basename(rel), plain) or fnmatch(rel, pattern) or fnmatch(rel, plain):
+            return True
+    return False
+
+
+def _entry_is(entry: os.DirEntry, kind: str) -> bool:
+    """entry.is_dir() (kind "dir", links followed), its is_dir without following ("folder") or
+    is_symlink() ("link"); False when the system refuses to say (a /proc entry)."""
+    try:
+        if kind == "link":
+            return entry.is_symlink()
+        return entry.is_dir(follow_symlinks=kind == "dir")
+    except OSError:
+        return False
+
+
+def _skipped_folder(entry: os.DirEntry, parent: str) -> bool:
+    return entry.name in BLOCKED_WALK_SKIPPED or (
+        entry.name == "worktrees" and os.path.basename(parent) == ".claude")
+
+
+def _grep_walk(scan: _BlockedScan, root: str, shown: str, grep_glob: str) -> dict[str, str]:
+    """The listed files under a Grep folder that pass its glob: no link followed, the
+    BLOCKED_WALK_SKIPPED folders and .claude/worktrees skipped, the deadline checked per entry
+    listed and per entry handled; an explicit stack, so no depth can overflow. Paths from the
+    root are built as it goes (no relpath per entry), and a file is matched against the lists
+    before anything is built for its reason."""
+    found: dict[str, str] = {}
+    real_root = _realpath(root)  # links are skipped, so an entry's real path is under it
+    stack = [(root, "")]
+    while stack:
+        folder, prefix = stack.pop()
+        folders = []
+        for entry in scan.entries(folder):
+            scan.tick()
+            if _entry_is(entry, "link"):
+                continue
+            rel = prefix + entry.name
+            if _entry_is(entry, "folder"):
+                if not _skipped_folder(entry, folder):
+                    folders.append((entry.path, rel + "/"))
+                continue
+            real = real_root + "/" + rel
+            if entry.path in found or not _file_kind(entry.path, scan.cfg, real):
+                continue
+            if _grep_glob_passes((rel, os.path.relpath(entry.path, scan.cwd)), grep_glob):
+                shown_rel = _disk_shown(os.path.normpath(os.path.join(shown, rel)))
+                _add_listed(found, entry.path, shown_rel, scan.cfg, real=real)
+        stack.extend(sorted(folders, reverse=True))
+    return found
+
+
+def _file_tool_found(scan: _BlockedScan, tool: str, ti: dict) -> tuple[str, str] | None:
+    """(word, where) for a word in a file tool's path fields, else in the contents of the listed
+    file a Read or Grep reads (a Grep folder walked; with no path, the cwd)."""
+    for field in BLOCKED_PATH_FIELDS + BLOCKED_TOOL_PATH_FIELDS.get(tool, ()):
+        value = _str(ti.get(field))
+        word = scan.hit(value) if value else None
+        if word:
+            return word, f"the path {_infra_value(value)}"
+    if tool not in ("Read", "Grep"):
+        return None
+    shown = _str(ti.get("file_path" if tool == "Read" else "path"))
+    if not shown and tool == "Read":
+        return None
+    path = scan.resolve(shown) if shown else scan.cwd
+    if tool == "Grep" and os.path.isdir(path):
+        return scan.files(_grep_walk(scan, path, shown, _str(ti.get("glob"))))
+    found: dict[str, str] = {}
+    _add_listed(found, path, shown, scan.cfg, secret=SECRET_FILE_REASON.format(os.path.basename(shown)))
+    return scan.files(found)
+
+
+def _input_found(scan: _BlockedScan, tool: str, ti: dict) -> tuple[str, str] | None:
+    """(word, where) for a word in any key or string value of an input tool's input, walked in
+    document order (an object's key, then its value) with a stack of iterators: no recursion and
+    no copy of a container. Numbers, booleans and null are counted, not scanned; the tool name is
+    not scanned. Bounds (D-bounds): BLOCKED_INPUT_NODES values (each object, array, key and
+    scalar, the root included) and BLOCKED_INPUT_CHARS characters of keys and strings; over one,
+    BlockedScanUnchecked. The first hit or the first bound crossed ends the walk."""
+    end = object()
+    stack: list = [iter((ti,))]
+    nodes = chars = 0
+    while stack:
+        value = next(stack[-1], end)
+        if value is end:
+            stack.pop()
+            continue
+        nodes += 1
+        if nodes > BLOCKED_INPUT_NODES:
+            raise BlockedScanUnchecked(BLOCKED_INPUT_TOO_MANY)
+        scan.tick()
+        if isinstance(value, str):
+            chars += len(value)
+            if chars > BLOCKED_INPUT_CHARS:
+                raise BlockedScanUnchecked(BLOCKED_INPUT_TOO_LARGE)
+            word = scan.hit(value)
+            if word:
+                return word, f"the input of `{_infra_value(tool, _code_escaped)}`"
+        elif isinstance(value, dict):
+            stack.append(itertools.chain.from_iterable(value.items()))
+        elif isinstance(value, list):
+            stack.append(iter(value))
+    return None
+
+
+def _brace_list(word: str) -> tuple[int, int] | None:
+    """(start, end) of word's first simple brace list (`{a,b}`: a `{`, no `{` or `}` inside, a
+    comma, a `}`), by index scans that never look back, or None."""
+    start = word.find("{")
+    while start >= 0:
+        end = word.find("}", start + 1)
+        if end < 0:
+            return None
+        inner_open = word.rfind("{", start + 1, end)
+        start = inner_open if inner_open >= 0 else start
+        if word.find(",", start + 1, end) >= 0:
+            return start, end + 1
+        start = word.find("{", end + 1)
+    return None
+
+
+def _braces(token: str) -> list[str]:
+    """token with each simple brace list (`{a,b}`, not nested) expanded, as bash does, at most
+    BLOCKED_BRACES_CAP words; more, or a token with a `{` over BLOCKED_BRACE_TOKEN_CAP
+    characters, asks (too many files)."""
+    if "{" not in token:
+        return [token]
+    if len(token) > BLOCKED_BRACE_TOKEN_CAP:
+        raise BlockedScanUnchecked(BLOCKED_TOO_MANY)
+    words, done = [token], []
+    while words:
+        word = words.pop()
+        found = _brace_list(word)
+        if not found:
+            done.append(word)
+        else:
+            head, body, tail = word[:found[0]], word[found[0] + 1:found[1] - 1], word[found[1]:]
+            words.extend(head + alt + tail for alt in reversed(body.split(",")))
+        if len(words) + len(done) > BLOCKED_BRACES_CAP:
+            raise BlockedScanUnchecked(BLOCKED_TOO_MANY)
+    return done
+
+
+def _expanded(scan: _BlockedScan, path: str) -> list[tuple[str, str | None]]:
+    """(path, its real path or None when unknown) for each path a glob path names, one segment
+    at a time through scan.entries (the deadline checked per entry); a name starting with `.`
+    only for a segment that does; no recursion. A folder's real path is resolved once, so an
+    entry that is not a link needs no realpath of its own."""
+    head, *segments = path.split("/")
+    paths: list[tuple[str, str | None]] = [(head or "/", None)]
+    for index, segment in enumerate(segments):
+        if not segment:
+            continue
+        if not any(c in segment for c in "*?["):
+            paths = [(os.path.join(p, segment), None) for p, _ in paths]
+            continue
+        last = index == len(segments) - 1
+        found: list[tuple[str, str | None]] = []
+        for folder, real in paths:
+            real_folder = real if real is not None else _realpath(folder)
+            for entry in scan.entries(folder):
+                if (segment.startswith(".") or not entry.name.startswith(".")) and fnmatchcase(entry.name, segment) and (
+                        last or _entry_is(entry, "dir")):
+                    linked = _entry_is(entry, "link")
+                    found.append((entry.path, None if linked else os.path.join(real_folder, entry.name)))
+        paths = found
+    return paths
+
+
+def _bash_listed(scan: _BlockedScan, cmd: str) -> dict[str, str]:
+    """The listed files a Bash command's tokens name from the event's cwd (braces and glob
+    tokens expanded), in every segment but one led by ls, test, [ or stat."""
+    found: dict[str, str] = {}
+    for seg in _segments(cmd.replace("\\\n", "")):
+        words = seg.split()
+        if not words or words[0] in SAFE_ON_SECRETS:
+            continue
+        for tok in (word for token in _tokens(seg) for word in _braces(token)):
+            scan.tick()
+            path = scan.resolve(tok)
+            if not any(c in tok for c in "*?["):
+                _add_listed(found, path, tok, scan.cfg, secret=SECRET_READ_REASON.format(_infra_value(tok)))
+                continue
+            for match, real in _expanded(scan, path):
+                scan.tick()
+                shown = _disk_shown(match if os.path.isabs(os.path.expanduser(tok)) else os.path.relpath(match, scan.cwd))
+                _add_listed(found, match, shown, scan.cfg, real=real, secret=SECRET_READ_REASON.format(shown),
+                            literal_seen=False)
+    return found
+
+
+def _bash_found(scan: _BlockedScan, cmd: str, environ: dict) -> tuple[str, str] | None:
+    """(word, where) for a word in the command's views, a scanned session variable's value, or a
+    listed file a token names; the views and the files only for a command within the cap."""
+    within = len(cmd) <= BLOCKED_TEXT_CAP
+    for view in _command_views(cmd) if within else ():
+        word = scan.hit(view)
+        if word:
+            return word, "the command"
+    for name in _scanned_variables(scan.cfg, environ):
+        word = scan.hit(_str(environ[name]))
+        if word:
+            return word, f"the session variable {_infra_value(name)}"
+    return scan.files(_bash_listed(scan, cmd)) if within else None
+
+
+def check_blocked(tool: str, ti: dict, cfg: Config, environ: dict | None = None, *, cwd: str | None = None) -> Verdict:
+    """The blocked-word rule, before every other rule but the launcher-folder rule's deny of a Bash
+    call (ADR 0067): a deny for a word in a Bash command (three
+    views), in a scanned session variable (Bash only), in a file tool's path fields, in the
+    contents of a listed file a Read, a Grep or a Bash token reads (D-files), or in any key or
+    string of an input tool's input; an ask when it
+    cannot check (the command or a file is too large, too many files, a file not regular, the
+    budget spent, or a layer's blocked list cannot be used); else None."""
+    if not cfg.blocked_words and not cfg.blocked_problem:
+        return None
+    unchecked = None
+    if cfg.blocked_words:
+        scan = _BlockedScan(cfg, cwd)
+        found = None
+        try:
+            if tool == "Bash":
+                found = _bash_found(scan, _str(ti.get("command")), environ or {})
+            elif _input_tool(tool):
+                found = _input_found(scan, tool, ti)
+            else:
+                found = _file_tool_found(scan, tool, ti)
+        except BlockedScanBudgetSpent:
+            unchecked = BLOCKED_OUT_OF_TIME
+        except BlockedScanUnchecked as error:
+            unchecked = str(error)
+        except BlockedSecretFile as error:
+            return "deny", str(error)
+        if found:
+            return "deny", BLOCKED_REASON.format(*scan.first[found[0].lower()], found[1])
+        if tool == "Bash" and len(_str(ti.get("command"))) > BLOCKED_TEXT_CAP:
+            unchecked = BLOCKED_TOO_LARGE
+    if unchecked:
+        return "ask", BLOCKED_UNCHECKED_REASON.format(unchecked)
+    if cfg.blocked_problem:
+        cause = BLOCKED_CONFIG_CAUSE.format(_infra_value(cfg.blocked_problem))
+        return "ask", BLOCKED_UNCHECKED_REASON.format(cause)
+    return None
+
+
+# Env files (docs/design/scenarios.md § Credentials, P-25): a file only actions read. Every session
+# is denied any call that reaches one through a guarded tool; the guard is not a sandbox (a process
+# outside these tools can still read it). The reason names the environment, never the path or the
+# file's contents.
+ENV_FILE_REASON = "env file: {} names the env file of {}"
+ENV_FILE_UNCHECKED_REASON = "env file: {} not checked against the env files: {}; confirm this call"
+ENV_FILE_PATH_TOOLS = {"Read": "file_path", "Edit": "file_path", "Write": "file_path", "MultiEdit": "file_path",
+                       "NotebookEdit": "notebook_path"}
+# A file name as a whole word: no file-name character just before or after it.
+ENV_FILE_WORD = r"(?<![A-Za-z0-9_.-])(?:{})(?![A-Za-z0-9_.-])"
+# A Bash call's parts in order (a single `&` splits too), and the words that move to another
+# folder: a glob after one may name an env file there, so it is matched by name.
+ENV_FILE_PART = LazyPattern(r"&&|\|\||[;|&\n]")
+ENV_FILE_MOVES = frozenset(("cd", "pushd", "popd"))
+# What may wrap such a word: quotes, `$(`, `(`, `{`, backticks (`echo $(cd x`, `bash -c 'cd x`).
+ENV_FILE_WORD_EDGES = "'\"$(){}`"
+# What a glob segment holds besides its wildcards and bracket expressions: it names a file only
+# with a letter, digit, `_` or `-` there (so `*`, `.*` and `*.*` never do).
+GLOB_WILDCARDS = LazyPattern(r"\[[^\]]*\]|[*?]")
+NAME_CHARACTER = LazyPattern(r"[A-Za-z0-9_-]")
+GLOB_CHARS = "*?[{"
+
+
+def _path_forms(path: str) -> set[str]:
+    """An absolute path as written (normalised) and as its real path (links and `..` resolved; an
+    unresolvable one stays literal), each also without a worktree segment, lowercased (macOS
+    ignores case)."""
+    forms = {os.path.normpath(path), _realpath(path)}
+    return {form.lower() for form in forms} | {WORKTREE_SEG.sub("", form).lower() for form in forms}
+
+
+def _segments_reach(segments: list[str], parts: list[str]) -> bool:
+    """Whether glob segments match all of parts, anchored at the first: `*` within a segment, `**`
+    any run of parts; a segment with braces or `..` counts as reaching (stricter, never looser).
+    One pass per segment, so many `**` stay linear."""
+    if any(segment == ".." for segment in segments):
+        return True
+    reach = [True] + [False] * len(parts)
+    for segment in segments:
+        if segment == "**":
+            for j in range(1, len(reach)):
+                reach[j] = reach[j] or reach[j - 1]
+        else:
+            pattern = "*" if "{" in segment else segment
+            reach = [False] + [reach[j] and fnmatchcase(parts[j], pattern) for j in range(len(parts))]
+    return reach[-1]
+
+
+class _EnvFiles:
+    """The declared env files of cfg: each one's environment, the forms of its path in the
+    workspace (none without a workspace) and its file name, and one pattern for the names."""
+
+    def __init__(self, cfg: Config) -> None:
+        self.entries: list[tuple[str, set[str]]] = []
+        self.by_name: dict[str, str] = {}
+        for entry in cfg.env_files:
+            path = entry.path.rstrip("/")
+            forms = _path_forms(os.path.join(str(cfg.workspace), path)) if cfg.workspace else set()
+            self.entries.append((entry.environment, forms))
+            self.by_name.setdefault(os.path.basename(path).lower(), entry.environment)
+        names = sorted((name for name in self.by_name if name), key=lambda n: (-len(n), n))
+        self.names = re.compile(ENV_FILE_WORD.format("|".join(re.escape(n) for n in names)), re.I) if names else None
+
+    def named(self, text: str) -> str | None:
+        """The environment of the first env file whose name is a whole word in text."""
+        found = self.names.search(text) if self.names else None
+        return self.by_name[found.group(0).lower()] if found else None
+
+    def globbed(self, token: str) -> str | None:
+        """The environment of the first env file whose name a glob token's last segment matches,
+        ignoring case, from any folder (for a token after a `cd`); a leading `*`, `?` or `[`
+        never matches a leading `.`, as in bash, and a segment with no name character besides
+        its wildcards (`*`, `.*`, `*.*`) matches nothing."""
+        pattern = token.rstrip("/").rsplit("/", 1)[-1].lower()
+        if not NAME_CHARACTER.search(GLOB_WILDCARDS.sub("", pattern)):
+            return None
+        for name, environment in self.by_name.items():
+            if name and (pattern.startswith(".") or not name.startswith(".")) and fnmatchcase(name, pattern):
+                return environment
+        return None
+
+    def at(self, path: str) -> str | None:
+        """The environment of the env file an absolute path is (any of its forms)."""
+        forms = _path_forms(path)
+        for environment, own in self.entries:
+            if forms & own:
+                return environment
+        return None
+
+    def holding(self, folder: str) -> str | None:
+        """The environment of the first env file directly in folder (any of its forms)."""
+        forms = _path_forms(folder)
+        for environment, own in self.entries:
+            if any(os.path.dirname(form) in forms for form in own):
+                return environment
+        return None
+
+    def under(self, root: str, reaches: Callable[[str], bool]) -> str | None:
+        """The environment of the first env file under the folder root (any of its forms) whose
+        path from root (lowercase, `/`-separated) reaches tells true for."""
+        bases = [form.rstrip("/") + "/" for form in _path_forms(root)]
+        for environment, own in self.entries:
+            for form in own:
+                for base in bases:
+                    if form.startswith(base) and reaches(form[len(base):]):
+                        return environment
+        return None
+
+
+def _env_file_grep(env_files: _EnvFiles, ti: dict, cwd: str) -> str | None:
+    """A Grep on an env file; with a glob filter, one the filter lets through under its folder; with
+    none, on the folder holding one (its path, else the cwd). E-5: a folder above it with no glob,
+    or a glob that cannot reach it, passes."""
+    root = os.path.join(cwd, os.path.expanduser(_str(ti.get("path"))))
+    if not os.path.isdir(root):
+        return env_files.at(root)
+    grep_glob = _str(ti.get("glob"))
+    if grep_glob:
+        # braces expanded first (bounded: over 64 words asks), since _grep_glob_passes lets a
+        # brace glob through whole (it only adds files to the blocked-word scan)
+        alternatives = _braces(grep_glob)
+        return env_files.under(root, lambda rel: any(_grep_glob_passes((rel,), alt) for alt in alternatives))
+    return env_files.holding(root)
+
+
+def _env_file_glob(env_files: _EnvFiles, ti: dict, cwd: str) -> str | None:
+    """A Glob whose pattern, from its root, can match an env file."""
+    root = os.path.join(cwd, os.path.expanduser(_str(ti.get("path"))))
+    full = os.path.join(root, os.path.expanduser(_str(ti.get("pattern"))))
+    parts = full.split("/")
+    first = next((i for i, part in enumerate(parts) if any(c in part for c in GLOB_CHARS)), None)
+    if first is None:
+        return env_files.at(full)
+    # the env files' forms are lowercase (_path_forms), so the pattern is compared lowercased too
+    rest = [part.lower() for part in parts[first:] if part]
+    base = "/".join(parts[:first]) or "/"
+    return env_files.under(base, lambda rel: _segments_reach(rest, rel.split("/")))
+
+
+def _env_file_bash(env_files: _EnvFiles, cmd: str, scan: _BlockedScan) -> str | None:
+    """A Bash command naming an env file: its name as a whole word in a view of the command, a glob
+    token after a cd, pushd or popd whose last segment matches its name, else a token (braces and
+    globs expanded, from the event's cwd) whose real path is one. A call is moved from the first
+    part after one holding any such word (not only its first: `if cd`, `$(cd`, `bash -c 'cd`,
+    `builtin cd`, `do cd`); parts are split on the raw text, so a `cd` inside a quoted string can
+    cause a rare, safe over-deny."""
+    for view in _command_views(cmd):
+        environment = env_files.named(view)
+        if environment:
+            return environment
+    joined = cmd.replace("\\\n", "")
+    moved = False
+    for part in ENV_FILE_PART.split(joined):
+        if moved:
+            for tok in (word for token in _tokens(part) for word in _braces(token)):
+                scan.tick()
+                environment = env_files.globbed(tok) if any(c in tok for c in "*?[") else None
+                if environment:
+                    return environment
+        moved = moved or any(word.strip(ENV_FILE_WORD_EDGES) in ENV_FILE_MOVES for word in part.split())
+    for seg in _segments(joined):
+        for tok in (word for token in _tokens(seg) for word in _braces(token)):
+            scan.tick()
+            path = scan.resolve(tok)
+            globbed = any(c in tok for c in "*?[")
+            matches = _expanded(scan, path) if globbed else [(path, None)]
+            for match, _real in matches:
+                scan.tick()
+                environment = env_files.at(match)
+                if environment:
+                    return environment
+    return None
+
+
+def _env_file_webfetch(env_files: _EnvFiles, url: str) -> str | None:
+    """A WebFetch URL naming an env file (raw or percent-decoded), or a file:// URL to one."""
+    from urllib.parse import unquote, urlsplit  # here, not at the top: only a WebFetch needs them
+
+    decoded = unquote(url)
+    environment = env_files.named(url) or env_files.named(decoded)
+    if environment or not url.lower().startswith("file:"):
+        return environment
+    return env_files.at(unquote(urlsplit(url).path) or "/")
+
+
+def check_env_file(tool: str, ti: dict, cfg: Config, *, cwd: str | None = None) -> Verdict:
+    """The env-file rule (P-25), right after the blocked-word rule: a deny when the call reaches a
+    declared env file, an ask when it cannot be checked; else None."""
+    if not cfg.env_files:
+        return None
+    env_files = _EnvFiles(cfg)
+    scan = _BlockedScan(cfg, cwd)
+    environment = None
+    try:
+        if tool in ENV_FILE_PATH_TOOLS:
+            path = _str(ti.get(ENV_FILE_PATH_TOOLS[tool]))
+            environment = env_files.at(scan.resolve(path)) if path else None
+        elif tool == "Grep":
+            environment = _env_file_grep(env_files, ti, scan.cwd)
+        elif tool == "Glob":
+            environment = _env_file_glob(env_files, ti, scan.cwd)
+        elif tool == "WebFetch":
+            environment = _env_file_webfetch(env_files, _str(ti.get("url")))
+        elif tool == "Bash":
+            cmd = _str(ti.get("command"))
+            if len(cmd) > BLOCKED_TEXT_CAP:
+                return "ask", ENV_FILE_UNCHECKED_REASON.format(tool, BLOCKED_TOO_LARGE)
+            environment = _env_file_bash(env_files, cmd, scan)
+    except BlockedScanBudgetSpent:
+        return "ask", ENV_FILE_UNCHECKED_REASON.format(tool, BLOCKED_OUT_OF_TIME)
+    except BlockedScanUnchecked as error:
+        return "ask", ENV_FILE_UNCHECKED_REASON.format(tool, str(error))
+    return ("deny", ENV_FILE_REASON.format(tool, environment)) if environment else None
+
+
+# Environment endpoints (P-13): an agent node of a workflow that declares an environment runs with
+# HUB_RUN_ENVIRONMENT; when that environment is read-only or production, naming one of its
+# endpoints asks. It only tightens, and is best effort (docs/design/scenarios.md § Known limits).
+RUN_ENVIRONMENT = "HUB_RUN_ENVIRONMENT"
+ENDPOINT_REASON = "environment endpoint: {} reaches {} ({})"
+ENDPOINT_UNCHECKED_REASON = "environment endpoint: {} not checked against {}: {}; confirm this call"
+# A host as a whole name (not inside a longer one, nor followed by another label); a resource as a
+# whole word.
+ENDPOINT_HOST = r"(?<![\w.-]){}(?![\w-]|\.[\w-])"
+ENDPOINT_RESOURCE = r"(?<![A-Za-z0-9_.-]){}(?![A-Za-z0-9_-])"
+
+
+def check_environment_endpoint(tool: str, ti: dict, cfg: Config, environ: dict | None) -> Verdict:
+    """The environment_endpoint rule: an ask when a Bash command names, or a WebFetch URL's host
+    is, an endpoint of the run's environment while it is read-only or production; else None."""
+    if tool not in ("Bash", "WebFetch"):
+        return None
+    name = _str((environ or {}).get(RUN_ENVIRONMENT))
+    environment = next((e for e in cfg.environments if name and e.name == name), None)
+    if environment is None or not (environment.access == "read" or environment.production):
+        return None
+    endpoints = [e for e in cfg.endpoints if e.environment == environment.name]
+    if not endpoints:
+        return None
+    shown = environment.access + (", production" if environment.production else "")
+    reached = ("ask", ENDPOINT_REASON.format(tool, environment.name, shown))
+    if tool == "WebFetch":
+        from urllib.parse import urlsplit  # here, not at the top: only a WebFetch needs it
+
+        try:
+            host = (urlsplit(_str(ti.get("url"))).hostname or "").lower()
+        except ValueError:  # a malformed URL (a bad port, an unclosed bracket)
+            host = ""
+        return reached if host and any(e.host == host for e in endpoints) else None
+    cmd = _str(ti.get("command"))
+    if len(cmd) > BLOCKED_TEXT_CAP:
+        return "ask", ENDPOINT_UNCHECKED_REASON.format(tool, environment.name, BLOCKED_TOO_LARGE)
+    patterns = [re.compile(ENDPOINT_HOST.format(re.escape(e.host)), re.I) for e in endpoints if e.host]
+    patterns += [re.compile(ENDPOINT_RESOURCE.format(re.escape(e.resource))) for e in endpoints if e.resource]
+    views = _command_views(cmd)
+    return reached if any(p.search(view) for p in patterns for view in views) else None
+
+
+FILE_TOOLS = ("Read", "Grep", "Glob", "Edit", "Write", "MultiEdit", "NotebookEdit", "WebFetch")
+INPUT_TOOLS = ("WebSearch", "Task", "Agent", "SendMessage")  # and every MCP tool: only blocked words
+MCP_PREFIX = "mcp__"
+EXTENSION_TOOLS = ("Bash",) + FILE_TOOLS  # the tools every rule and the project extension see
+
+
+def _input_tool(tool: str) -> bool:
+    """Whether tool is an input tool (D-tools): INPUT_TOOLS by exact name, or an MCP tool."""
+    return tool in INPUT_TOOLS or tool.startswith(MCP_PREFIX)
+
+
+EXTENSION_TIMEOUT = 3  # seconds, inside the guard's own 10 s hook timeout (spec Q-5)
+# Seconds the hook waits for a killed runner to end: one in an uninterruptible wait (a read on a
+# hung mount) outlives its SIGKILL, and the hook still answers.
+KILL_WAIT = 1.0
+RUNNER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "project_guard_runner.py")
+STRICTNESS = {None: 0, "ask": 1, "deny": 2}
+EXTENSION_REASON = "project guard: {}"
+EXTENSION_NAME = "project_guard.py"
+REASON_CAP = 300  # characters of an extension's reason or of a failure's stderr line
+STDERR_TAIL = 4096  # bytes of the runner's stderr that are read back
+
+
+def decide(data: dict, cfg: Config, environ: dict | None = None) -> Verdict:
+    """The base verdict for one PreToolUse event: no output. On a Bash call the launcher-folder
+    rule is asked first, and its deny is returned at once (ADR 0067). Else the blocked-word rule
+    runs first, then the env-file rule; a deny of either is final; environ holds the session
+    variables the blocked-word rule scans (None: none, as in tests)."""
+    tool, ti = _str(data.get("tool_name")), data.get("tool_input")
+    if not isinstance(ti, dict):
+        ti = {}
+    if tool not in EXTENSION_TOOLS and not _input_tool(tool):
+        return None
+    cwd = _str(data.get("cwd")) or None
+    if tool == "Bash":  # ADR 0067: a launcher run this rule refuses is denied before any other rule runs
+        launcher = check_launcher(_str(ti.get("command")), cfg, cwd)
+        if launcher:
+            return launcher
+    blocked = check_blocked(tool, ti, cfg, environ, cwd=cwd)
+    if blocked and blocked[0] == "deny":
+        return blocked
+    if _input_tool(tool):  # D-tools: the blocked-word rule is the only rule on an input tool
+        return blocked
+    env_file = check_env_file(tool, ti, cfg, cwd=cwd)
+    if env_file and env_file[0] == "deny":
+        return env_file
+    blocked = tighten(tighten(blocked, env_file), check_environment_endpoint(tool, ti, cfg, environ))
+    if tool == "Bash":
+        return tighten(blocked, check_bash(_str(ti.get("command")), cfg, cwd))
+    return tighten(blocked, check_file(tool, ti, cfg))
+
+
+def _one_line(text: str) -> str:
+    """text on one line (whitespace runs become one space), capped at REASON_CAP characters."""
+    return " ".join(text.split())[:REASON_CAP]
+
+
+def _named(cfg: Config) -> bool:
+    """Whether the hook root's hub.json names its project: the reader falls back to the folder's
+    name (then "hub") when the file is unreadable or has no project.name."""
+    root = str(cfg.root).rstrip("/")
+    return cfg.root_project not in (os.path.basename(root), "hub")
+
+
+def extension_file(cfg: Config) -> str | None:
+    """plugin/<project>/hooks/project_guard.py of the hub holding this file, when it exists: never
+    from $CLAUDE_PROJECT_DIR, $HUB_CONFIG, the cwd or the tool input; none in the plugin cache.
+    When that hub.json names no project, the only plugin/*/hooks/project_guard.py there, if one."""
+    if cfg.root is None:
+        return None
+    project = cfg.root_project
+    if project not in ("", ".", "..") and "/" not in project and "\\" not in project:
+        path = os.path.join(str(cfg.root), "plugin", project, "hooks", EXTENSION_NAME)
+        if os.path.lexists(path):
+            return path
+    if _named(cfg):
+        return None
+    import glob  # here, not at the top: only a hub.json that names no project needs it
+
+    pattern = os.path.join(glob.escape(str(cfg.root)), "plugin", "*", "hooks", EXTENSION_NAME)
+    found = [p for p in sorted(glob.glob(pattern)) if p.split(os.sep)[-3] != "hub-workflow"]
+    return found[0] if len(found) == 1 else None
+
+
+def _unusable(path: str, cfg: Config) -> str | None:
+    """Why the extension file cannot run: it resolves (links followed) outside the hook root, or
+    to no file; None when it is a file inside the root."""
+    root = os.path.realpath(str(cfg.root)).rstrip(os.sep) + os.sep
+    real = os.path.realpath(path)
+    if not real.startswith(root):
+        return "extension resolves outside the hub"
+    return None if os.path.isfile(real) else "extension is not a file"
+
+
+def _extension_cause(code: int, stdout: bytes, stderr: str) -> str | None:
+    """Why the runner's answer is unusable, or None when it is null or a valid verdict."""
+    if code != 0:
+        lines = stderr.strip().splitlines()
+        return f"exit {code}" + (f" ({_one_line(lines[-1])})" if lines else "")
+    try:
+        answer = json.loads(stdout.decode("utf-8").strip())
+    except ValueError:
+        return "its output is not one JSON value"
+    if answer is None:
+        return None
+    if (
+        isinstance(answer, dict)
+        and set(answer) == {"verdict", "reason"}
+        and answer["verdict"] in ("ask", "deny")
+        and isinstance(answer["reason"], str)
+    ):
+        return None
+    return f"unexpected answer {json.dumps(answer)[:REASON_CAP]}"
+
+
+def _failed(cause: str) -> tuple[Verdict, bool]:
+    return ("ask", EXTENSION_REASON.format(f"{cause}; confirm")), True
+
+
+def _tail(fh: IO[bytes]) -> str:
+    """The last STDERR_TAIL bytes of the runner's stderr file, as text."""
+    fh.seek(0, os.SEEK_END)
+    fh.seek(max(0, fh.tell() - STDERR_TAIL))
+    return fh.read().decode("utf-8", "replace")
+
+
+def _fd_end() -> int:
+    """One past the highest fd this process holds, from its /dev/fd listing (Linux, macOS); the
+    fd limit when there is none."""
+    try:
+        return max(int(name) for name in os.listdir("/dev/fd")) + 1
+    except (OSError, ValueError):
+        return os.sysconf("SC_OPEN_MAX")
+
+
+def _runner_child(fds: tuple[int, int, int], argv: list[str]) -> None:
+    """The forked runner; it never returns into the hook. fds: the event file (at its start), the
+    pipe's write end and the stderr file, which become its fds 0, 1 and 2; every other fd it got
+    from the hook (3 and up) is closed, as close_fds did for a new python3. It leads a session of
+    its own and calls project_guard_runner's unchanged main with argv as sys.argv and the standard
+    streams over fds 0 to 2. It always ends with os._exit (main's exit code; 1, with one cause line
+    on stderr, when it fails before or after main), so a batch of events run in one process gets
+    each verdict once."""
+    given, write_end, err = fds
+    code = 1
+    try:
+        os.dup2(err, 2)
+        os.setsid()
+        os.dup2(write_end, 1)
+        os.dup2(given, 0)
+        os.closerange(3, _fd_end())
+        sys.stdin = open(0, encoding="utf-8", closefd=False)
+        sys.stdout = stdout = open(1, "w", encoding="utf-8", closefd=False)
+        # line-buffered, as a new interpreter's stderr: a line is written before an os._exit
+        sys.stderr = stderr = open(
+            2, "w", encoding="utf-8", errors="backslashreplace", buffering=1, closefd=False
+        )
+        sys.argv = argv
+        import project_guard_runner
+
+        try:
+            project_guard_runner.main()
+            code = 0
+        except SystemExit as stop:  # the runner's own exit, read as Python reads it
+            code = 0 if stop.code is None else stop.code if isinstance(stop.code, int) else 1
+        stdout.flush()
+        stderr.flush()
+    except BaseException as error:  # whatever happens, the child ends in os._exit
+        code = 1
+        cause = " ".join(f"{type(error).__name__}: {error}".split())
+        os.write(2, (cause + "\n").encode("utf-8", "replace"))
+    finally:
+        os._exit(code)
+
+
+def _fork_runner(argv: list[str], given: int, err: int) -> tuple[int, int]:
+    """(the forked runner's pid, the read end of its stdout); an OSError when the pipe or the fork
+    fails. given: the event file; err: the stderr file. The child runs _runner_child and never
+    returns here. The hook starts no thread, so the child, which copies only the calling thread,
+    holds no lock another thread took. An ignored SIGCHLD (it survives exec) would have the kernel
+    reap the child before waitpid reads its status, so the default comes back first."""
+    if signal.getsignal(signal.SIGCHLD) == signal.SIG_IGN:
+        signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+    read_end, write_end = os.pipe()
+    try:
+        pid = os.fork()
+    except OSError:
+        os.close(read_end)
+        os.close(write_end)
+        raise
+    if pid == 0:
+        _runner_child((given, write_end, err), argv)
+    os.close(write_end)
+    return pid, read_end
+
+
+def _output_by(fd: int, deadline: float) -> bytes | None:
+    """All the runner writes to fd, up to EOF; None when the deadline comes first."""
+    chunks = []
+    while True:
+        left = deadline - time.monotonic()
+        if left <= 0 or not select.select([fd], [], [], left)[0]:
+            return None
+        chunk = os.read(fd, 65536)
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+
+
+def _status_by(pid: int, deadline: float) -> int | None:
+    """The runner's wait status once it has ended; None when the deadline comes first. Polled as
+    subprocess waits: 1 ms, doubled up to 50 ms."""
+    delay = 0.0005
+    while True:
+        done, status = os.waitpid(pid, os.WNOHANG)
+        if done:
+            return status
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return None
+        delay = min(delay * 2, left, 0.05)
+        time.sleep(delay)
+
+
+def _kill_runner(pid: int) -> None:
+    """SIGKILL the runner's whole process group, then reap the runner, waiting at most KILL_WAIT
+    seconds for it to end."""
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:  # no such group yet: the child has not left the hook's, so it alone
+        os.kill(pid, signal.SIGKILL)
+    _status_by(pid, time.monotonic() + KILL_WAIT)
+
+
+def run_extension(path: str, data: dict, cfg: Config) -> tuple[Verdict, bool]:
+    """(the extension's verdict on the event, whether it failed). A failure is an ask naming the
+    cause. The runner runs in a forked child of this hook that leads its own session, so a
+    timeout, or any exception once it runs, kills every process it started."""
+    unusable = _unusable(path, cfg)
+    if unusable:
+        return _failed(unusable)
+    argv = [RUNNER, path, os.path.join(str(cfg.root), "hub.json")]
+    event = json.dumps(data).encode("utf-8")
+    import tempfile  # here, not at the top: only a call that runs the extension needs it
+
+    with tempfile.TemporaryFile() as err, tempfile.TemporaryFile() as given:
+        for stream in (sys.stdout, sys.stderr):  # nothing unwritten is copied into the child
+            if stream is not None:  # None: the hook started with that fd closed
+                stream.flush()
+        try:
+            given.write(event)  # the runner's stdin, read from its start
+            given.seek(0)
+            pid, read_end = _fork_runner(argv, given.fileno(), err.fileno())
+        except OSError as error:
+            return _failed(f"could not start ({type(error).__name__})")
+        stdout = status = None
+        try:
+            deadline = time.monotonic() + EXTENSION_TIMEOUT
+            stdout = _output_by(read_end, deadline)
+            if stdout is not None:
+                status = _status_by(pid, deadline)
+        finally:
+            os.close(read_end)
+            if status is None:  # the deadline came first, or an exception: it may still run
+                _kill_runner(pid)
+        if status is None:
+            return _failed(f"timed out after {EXTENSION_TIMEOUT} s")
+        cause = _extension_cause(os.waitstatus_to_exitcode(status), stdout, _tail(err))
+    if cause:
+        return _failed(cause)
+    answer = json.loads(stdout.decode("utf-8").strip())
+    if answer is None:
+        return None, False
+    return (answer["verdict"], EXTENSION_REASON.format(_one_line(answer["reason"]))), False
+
+
+def tighten(base: Verdict, extra: Verdict, failed: bool = False) -> Verdict:
+    """The stricter verdict (none < ask < deny); on a tie the base one, with a failure's cause
+    added to its reason."""
+    if STRICTNESS[extra[0] if extra else None] > STRICTNESS[base[0] if base else None]:
+        return extra
+    if failed and base and extra:
+        return base[0], f"{base[1]}; {extra[1]}"
+    return base
+
+
+# The rule id the control plane records for a verdict, read from its reason: the first pattern that
+# matches (re.search). A combined reason (a base ask with an extension failure) is the base rule's.
+RULE_IDS = (
+    ("force_push", LazyPattern(r"^force-push is not allowed")),
+    ("push_protected_branch", LazyPattern(r"^pushing to \S+ is not allowed")),
+    ("curl_pipe_shell", LazyPattern(r"^curl\|sh is not allowed")),
+    ("docker_volumes", LazyPattern(r"^removing docker volumes")),
+    ("infra_commands", LazyPattern(r"^infrastructure commands")),
+    ("secret_read", LazyPattern(r"^reading secret file ")),
+    ("ai_attribution", LazyPattern(r"^(commits|PR text) carr(y|ies) no AI attribution")),
+    ("agent_branch", LazyPattern(r"^branches are \S*, never claude/")),
+    ("git_internals", LazyPattern(r"^\.git is git's own state")),
+    ("test_bash_edit", LazyPattern(r"^deleting or sed-editing tests")),
+    ("brain_curated", LazyPattern(r"^brain/ is curated")),
+    ("assertions_removed", LazyPattern(r"^this edit removes \d+ assertion")),
+    ("skip_marker", LazyPattern(r"^this edit adds a skip")),
+    ("secret_file", LazyPattern(r"^(\S.* may hold secrets|Grep over \.env files)")),
+    ("project_guard", LazyPattern(r"^project guard: ")),
+    ("launcher_folder", LazyPattern(r"^`\./hub [a-z-]+` runs only from the hub folder")),
+    # before the unanchored patterns below, which a path in a blocked-word reason could hold
+    ("blocked_word", LazyPattern(r"^blocked words? ")),
+    ("env_file", LazyPattern(r"^env file: ")),
+    ("environment_endpoint", LazyPattern(r"^environment endpoint: ")),
+    ("deny_hosts", LazyPattern(r" is in guard\.deny_hosts \(hub\.json\)")),
+    ("deny_paths", LazyPattern(r" is under guard\.deny_paths `")),
+    ("guard_files", LazyPattern(r" is the hub's own guard or config \(")),
+    ("guard_parent", LazyPattern(r" holds the hub's guard files \(")),
+    ("ask_before_edit", LazyPattern(r" matches guard\.ask_before_edit `")),
+    ("env_command", LazyPattern(r"^hub env (service )?\w+ changes the agents' environments")),
+    ("repo_command", LazyPattern(r"^hub repo \w+ changes hub\.json's repos")),
+)
+
+
+def rule_of(reason: str) -> str | None:
+    """The rule id of a verdict's reason (RULE_IDS), or None when no pattern matches."""
+    for rule, pattern in RULE_IDS:
+        if pattern.search(reason):
+            return rule
+    return None
+
+
+def record(hook: dict, decision: dict) -> None:
+    """Send a printed verdict's decision (answer's) to the control plane; never raises, never
+    prints. The sensor is loaded here, so a call the guard lets through never loads it; without it
+    (a partial install), decisions are simply not recorded."""
+    try:
+        sys.stdout.flush()
+        from event_sensor import send_decision
+
+        send_decision(hook, decision)
+    except Exception:
+        pass
+
+
+def in_auto_mode(verdict: tuple[str, str], data: dict) -> tuple[str, str]:
+    """An ``ask`` in a session running Claude Code's ``auto`` mode becomes a ``deny`` with the same
+    reason: a hook's ask forces a prompt in every mode, so the user would be stopped for a call
+    nobody chose to confirm. The agent reads the reason and takes another way instead."""
+    decision, reason = verdict
+    if decision == "ask" and data.get("permission_mode") == "auto":
+        return "deny", reason + AUTO_MODE_SUFFIX
+    return verdict
+
+
+def _print_verdict(data: dict, verdict: tuple[str, str]) -> tuple[dict, dict]:
+    """Print the verdict as the hook's output; return the hook input and the decision to record.
+    The decision is built first, so nothing after the print can fail and print a second value."""
+    decision, reason = in_auto_mode(verdict, data)
+    try:
+        rule = rule_of(reason)
+    except Exception:  # the rule id only labels the record: it never changes or follows the verdict
+        rule = None
+    emit({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
+                                 "permissionDecisionReason": f"[hub guard] {reason}"}})
+    return data, {"by": "guard", "kind": decision, "rule": rule}
+
+
+def answer(data: dict, unreadable: bool) -> tuple[dict, dict] | None:
+    """Print the verdict on one event, as read_event gives it, and return what record sends: the
+    hook input and the decision; None, with nothing printed, when the call goes through.
+    pre_tool_use.py calls it on the event it read and sends the decision itself."""
+    if unreadable:  # not a JSON object: the words cannot be checked, so ask while they are in effect
+        cfg = load_config(None)
+        if cfg.blocked_words or cfg.blocked_problem:
+            return _print_verdict({}, ("ask", BLOCKED_UNCHECKED_REASON.format(BLOCKED_UNREADABLE)))
+        if cfg.env_files:
+            return _print_verdict({}, ("ask", ENV_FILE_UNCHECKED_REASON.format("this call", BLOCKED_UNREADABLE)))
+        return None
+    tool = _str(data.get("tool_name"))
+    if tool not in EXTENSION_TOOLS and not _input_tool(tool):
+        return None
+    cfg = load_config(data.get("cwd"))
+    verdict = decide(data, cfg, dict(os.environ))
+    # a deny is final, and an input tool gets the blocked-word rule only: no extension for either
+    if tool in EXTENSION_TOOLS and (verdict is None or verdict[0] != "deny"):
+        path = extension_file(cfg)
+        if path:
+            extra, failed = run_extension(path, data, cfg)
+            verdict = tighten(verdict, extra, failed)
+    return _print_verdict(data, verdict) if verdict else None
+
+
+def main() -> None:
+    answered = answer(*read_event())
+    if answered:
+        record(*answered)
+
+
+def ask_on_error(kind: str) -> None:
+    """A guard that could not check a call asks: never an allow by accident (fail open, AC-4.11)."""
+    emit({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
+                                 "permissionDecisionReason": f"[hub guard] could not check this call ({kind}); confirm"}})
+
+
+if __name__ == "__main__":
+    run_hook(main, ask_on_error)

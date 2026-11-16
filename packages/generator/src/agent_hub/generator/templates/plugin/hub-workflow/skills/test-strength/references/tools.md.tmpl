@@ -1,0 +1,52 @@
+---
+name: test-strength-tools
+description: The mutation tools /test-strength runs on a diff - cosmic-ray, mutmut, Stryker - with their commands and what each status means. Read by /test-strength, not a command of its own.
+---
+
+# Mutation tools on a diff
+
+Use the tool the repo already has. Commands change between versions: check them against the installed tool's `--help`
+before the first run, and say which version ran. Every tool below restores the source after each mutant; still check
+`git status` at the end.
+
+## Python
+
+**cosmic-ray** can skip every line outside the diff, so it fits a diff best.
+
+```sh
+cosmic-ray new-config cr.toml              # once: module path, test command, timeout
+cosmic-ray init cr.toml cr.sqlite          # list every mutant in the module
+cr-filter-git cr.sqlite                    # skip the mutants outside the diff; the base is
+                                           # [cosmic-ray.filters.git-filter] branch = "origin/<default>"
+cosmic-ray exec cr.toml cr.sqlite          # run the rest
+cr-report cr.sqlite                        # survivors, killed, incompetent, timeouts
+```
+
+Keep `cr.toml` and `cr.sqlite` outside the checkout (`$TMPDIR`), so the run adds no file to it.
+
+**mutmut** (3.x) works per function, not per line: map the changed hunks to the functions holding them and pass those
+names (`mutmut run "<module>.x_<function>*"`), with `mutate_only_covered_lines = true` in its `[tool.mutmut]`
+config. Read survivors with `mutmut results` and one mutant's diff with `mutmut show <name>`.
+
+## JavaScript and TypeScript
+
+**Stryker** takes line ranges in `--mutate`:
+
+```sh
+npx stryker run --mutate "src/a.ts:12-40,src/b.ts:5-9" --coverageAnalysis perTest
+```
+
+`perTest` coverage runs only the tests that reach each mutant and records which tests killed it, which step 4 of the
+skill needs. `--incremental` reuses the results of a previous run; it does not limit the run to changed files.
+
+## Other languages
+
+Use the repo's tool if it has one (e.g. `cargo-mutants --in-diff <file>` for Rust, PIT with its git plugin for Java).
+Otherwise stop and ask: the skill does not apply mutations by hand.
+
+## What a tool's statuses mean here
+
+- killed: a test failed. Counted.
+- survived: no test failed. Classified in step 3.
+- timeout: inconclusive; listed, never counted as killed.
+- incompetent or compile error: the mutant does not run; not counted either way.

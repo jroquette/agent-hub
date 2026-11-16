@@ -1,0 +1,17 @@
+--- rc (2 bytes) ---
+1
+
+--- stdout (0 bytes) ---
+
+--- stderr (87 bytes) ---
+Traceback (most recent call last):
+  ...
+ValueError: Invalid isoformat string: 'notes'
+
+--- fs (0 bytes) ---
+
+--- calls (689 bytes) ---
+{"tool": "gh", "cwd": "<ROOT>/ws/demo-hub", "argv": ["<ROOT>/bin/gh", "pr", "list", "-R", "acme/api", "--state", "merged", "--limit", "40", "--search", "merged:>=2026-01-01", "--json", "number,createdAt,mergedAt,body,commits"]}
+{"tool": "gh", "cwd": "<ROOT>/ws/demo-hub", "argv": ["<ROOT>/bin/gh", "pr", "list", "-R", "acme/web", "--state", "merged", "--limit", "40", "--search", "merged:>=2026-01-01", "--json", "number,createdAt,mergedAt,body,commits"]}
+{"tool": "gh", "cwd": "<ROOT>/ws/demo-hub", "argv": ["<ROOT>/bin/gh", "pr", "list", "-R", "acme/demo-hub", "--state", "merged", "--limit", "40", "--search", "merged:>=2026-01-01", "--json", "number,createdAt,mergedAt,body,commits"]}
+

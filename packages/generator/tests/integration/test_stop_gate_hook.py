@@ -1,0 +1,2029 @@
+"""The hub's stop-gate tests, run on the rendered ``stop_gate.py`` (AC-4.16, E2).
+
+Each test is the counterpart of one test of the hub's
+``plugin/hub-workflow/tests/test_stop_gate.py`` and asserts the same values. The workspace is the
+hub test's: a rendered demo hub at ``ws/demo-hub`` whose ``hub.json`` each run writes, and the git
+repos ``app/`` and ``web/`` beside it. The hook runs as Claude Code runs it, a file on
+``hook_python`` with the event on stdin, in an environment from scratch (no ``HUB_CONFIG``, no
+``CLAUDE_PROJECT_DIR``; ``TMPDIR`` under ``tmp_path``, so its block counter stays there). The
+config comes from the hub that holds the hook (Q-4), not from a walk up from the event's cwd.
+"""
+
+import json
+import os
+import shlex
+import shutil
+import signal
+import subprocess
+import sys
+import time
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any, Protocol
+
+import pytest
+
+from agent_hub.core.hub_config.model import MAX_CHECK_FAST_TIMEOUT, HubConfig
+from agent_hub.core.ingestion.hook_envelope import HookEnvelope
+from agent_hub.core.testing.loopback import closed_url
+
+HOOK = "plugin/hub-workflow/hooks/stop_gate.py"
+TIMEOUT = 60
+# The late marker's child touches it LATE_DELAY s after the check starts, and the check starts
+# before the hook returns: waiting LATE_MARGIN s more after the return sees any marker a surviving
+# child writes.
+LATE_DELAY = 2
+LATE_MARGIN = 0.5
+LATE_AFTER = LATE_DELAY + LATE_MARGIN
+# A cut run's marker comes after the latest cut a timeout case makes (the 3 s budget), so only a
+# child that outlives the kill can write it.
+CUT_DELAY = 4
+
+
+class RunHook(Protocol):
+    """The ``run_hook`` fixture: write ``hub.json``, run the hook, return its JSON output."""
+
+    def __call__(
+        self,
+        repos: Sequence[Mapping[str, object]],
+        cwd: Path,
+        *,
+        transcript: Path | int | None = None,
+        constant: tuple[str, object] | None = None,
+        session: str | None = None,
+        pass_fds: Sequence[int] = (),
+    ) -> dict[str, Any]: ...
+
+
+@pytest.fixture
+def workspace(
+    rendered_hub: Callable[[HubConfig], Path], demo_config: HubConfig, tmp_path: Path
+) -> Path:
+    """``ws``: the rendered hub ``demo-hub`` and the git repos ``app`` and ``web``."""
+    hub = rendered_hub(demo_config).resolve()
+    assert hub.name == "demo-hub"
+    git = shutil.which("git")
+    assert git is not None
+    for repo in ("app", "web"):
+        (hub.parent / repo).mkdir()
+        subprocess.run(  # noqa: S603 - git found on PATH, fixed arguments
+            [git, "init", "-q"],
+            cwd=hub.parent / repo,
+            check=True,
+            capture_output=True,
+            env=scratch_env(tmp_path),
+        )
+    return hub.parent
+
+
+def scratch_env(tmp_path: Path) -> dict[str, str]:
+    """``PATH`` from this process; ``HOME`` and ``TMPDIR`` under ``tmp_path``; the event server's
+    URL a loopback port nothing listens on (a block is never sent to a running ``hub web``)."""
+    home, temp = tmp_path / "home", tmp_path / "tmp"
+    home.mkdir(exist_ok=True)
+    temp.mkdir(exist_ok=True)
+    return {
+        "PATH": os.environ.get("PATH", os.defpath),
+        "HOME": str(home),
+        "TMPDIR": str(temp),
+        "AGENT_HUB_WEB_URL": closed_url(),
+    }
+
+
+@pytest.fixture
+def run_hook(
+    workspace: Path,
+    hook_python: str,
+    *,
+    tmp_path: Path,
+    run_hook_with_constant: Callable[..., subprocess.CompletedProcess[bytes]],
+) -> RunHook:
+    """Write ``hub.json`` with ``repos``, run the hook for an event at ``cwd``, return its JSON.
+
+    ``transcript`` becomes the event's ``transcript_path`` (an ``int`` as written: a JSON number),
+    ``session`` its ``session_id``, ``constant`` replaces one module constant of the hook, and
+    ``pass_fds`` stay open in the hook (with no ``constant``). The hook must exit 0 with an empty
+    stderr: its fail-open backstop would otherwise hide an inner error.
+    """
+    hub = workspace / "demo-hub"
+    # The hook's own cwd is outside every hub: only the event's cwd may lead it to one.
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+
+    def run(
+        repos: Sequence[Mapping[str, object]],
+        cwd: Path,
+        *,
+        transcript: Path | int | None = None,
+        constant: tuple[str, object] | None = None,
+        session: str | None = None,
+        pass_fds: Sequence[int] = (),
+    ) -> dict[str, Any]:
+        assert constant is None or not pass_fds
+        document = {"project": {"name": "demo"}, "repos": list(repos)}
+        (hub / "hub.json").write_text(json.dumps(document), encoding="utf-8")
+        event: dict[str, object] = {
+            "cwd": str(cwd),
+            "session_id": session or f"test-{os.getpid()}-{tmp_path.name}",
+        }
+        if transcript is not None:
+            event["transcript_path"] = (
+                transcript if isinstance(transcript, int) else str(transcript)
+            )
+        if constant is None:
+            completed = subprocess.run(  # noqa: S603 - an interpreter from hook_python, the rendered hook
+                [hook_python, str(hub / HOOK)],
+                input=json.dumps(event).encode("utf-8"),
+                capture_output=True,
+                check=False,
+                cwd=elsewhere,
+                env=scratch_env(tmp_path),
+                timeout=TIMEOUT,
+                pass_fds=tuple(pass_fds),
+            )
+        else:
+            completed = run_hook_with_constant(
+                hook_python,
+                hub / HOOK,
+                constant=constant,
+                stdin=json.dumps(event).encode("utf-8"),
+                cwd=elsewhere,
+                env=scratch_env(tmp_path),
+            )
+        stderr = completed.stderr.decode("utf-8", "replace")
+        assert completed.returncode == 0, stderr
+        assert stderr == ""
+        stdout = completed.stdout.decode("utf-8")
+        output: dict[str, Any] = json.loads(stdout) if stdout.strip() else {}
+        return output
+
+    return run
+
+
+def write_transcript(
+    path: Path,
+    *,
+    start: datetime | None = None,
+    touches: Iterable[tuple[str, str, object]] = (),
+    extra_lines: Iterable[str] = (),
+) -> Path:
+    """A synthetic Claude Code transcript: its first event at ``start``, then one tool call each.
+
+    ``start`` defaults to an hour ago. Each ``(tool, key, value)`` in ``touches`` is an assistant
+    line calling ``tool`` with ``{key: value}``; ``extra_lines`` are appended as written.
+    """
+    first = start or datetime.now(UTC) - timedelta(hours=1)
+    stamp = first.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    lines = [json.dumps({"type": "queue-operation", "timestamp": stamp})]
+    for tool, key, value in touches:
+        call = {"type": "tool_use", "name": tool, "input": {key: value}}
+        lines.append(
+            json.dumps({"type": "assistant", "timestamp": stamp, "message": {"content": [call]}})
+        )
+    lines.extend(extra_lines)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def late_marker_check(tmp: Path, *, then: str, delay: int = LATE_DELAY) -> str:
+    """A check writing ``ready``, then ``then``; a child touches ``late`` in ``delay`` s.
+
+    Both are in ``tmp``. ``late`` appears only if that child outlives the gate (S5: a marker, not
+    ``os.kill(pid, 0)``, which a zombie answers when nothing reaps orphans).
+    """
+    ready, late = shlex.quote(str(tmp / "ready")), shlex.quote(str(tmp / "late"))
+    return f"echo started > {ready}; (sleep {delay}; touch {late}) & {then}"
+
+
+def sleep_until(deadline: float) -> None:
+    """Sleep until ``time.monotonic()`` reaches ``deadline``."""
+    time.sleep(max(0.0, deadline - time.monotonic()))
+
+
+def test_blocks_stop_when_check_fast_fails(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    repos = [{"dir": "app", "check_fast": "echo boom; exit 3"}, {"dir": "web", "check_fast": ""}]
+    # From the hub, the gate checks the checkouts the session's file edits touched (D2).
+    touches = [("Edit", "file_path", str(workspace / "app" / "a.py"))]
+    transcript = write_transcript(tmp_path / "session.jsonl", touches=touches)
+
+    output = run_hook(repos, workspace / "demo-hub", transcript=transcript)
+
+    assert output.get("decision") == "block"
+    assert "boom" in output["reason"]
+
+
+def test_reminds_when_check_fast_passes(run_hook: RunHook, workspace: Path) -> None:
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+
+    output = run_hook([{"dir": "app", "check_fast": "true"}], workspace / "app")
+
+    assert "decision" not in output
+    assert "green" in output.get("systemMessage", "")
+
+
+def test_skips_repo_when_check_fast_empty(run_hook: RunHook, workspace: Path) -> None:
+    (workspace / "web" / "b.ts").write_text("export {}\n", encoding="utf-8")
+
+    output = run_hook([{"dir": "web", "check_fast": ""}], workspace / "web")
+
+    assert "decision" not in output
+    assert "no check_fast configured" in output.get("systemMessage", "")
+
+
+def test_stays_silent_when_no_code_changed(run_hook: RunHook, workspace: Path) -> None:
+    assert run_hook([{"dir": "app", "check_fast": "exit 1"}], workspace / "demo-hub") == {}
+
+
+def test_blocks_when_only_change_is_unstaged_edit(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # Porcelain reads an unstaged edit as " M app.py": the leading blank is part of the line.
+    app = workspace / "app"
+    (app / "app.py").write_text("x = 1\n", encoding="utf-8")
+    git = shutil.which("git")
+    assert git is not None
+    identity = ["-c", "user.name=t", "-c", "user.email=t@example.com"]
+    for args in (["add", "app.py"], [*identity, "commit", "-qm", "c"]):
+        subprocess.run(  # noqa: S603 - git found on PATH, fixed arguments
+            [git, *args], cwd=app, check=True, capture_output=True, env=scratch_env(tmp_path)
+        )
+    (app / "app.py").write_text("x = 2\n", encoding="utf-8")
+
+    output = run_hook([{"dir": "app", "check_fast": "echo boom; exit 3"}], app)
+
+    assert output.get("decision") == "block"
+    assert "boom" in output["reason"]
+
+
+def test_gates_repos_when_hooks_run_from_hub_worktree(
+    workspace: Path, *, hook_python: str, tmp_path: Path
+) -> None:
+    # A hub worktree holds its own copy of the hooks and of hub.json. Its hooks keep it as their
+    # root (Q-4), but the hub and workspace are the main checkout's, so the repos stay gated.
+    hub = workspace / "demo-hub"
+    worktree = hub / ".claude" / "worktrees" / "x"
+    shutil.copytree(hub, worktree, ignore=shutil.ignore_patterns(".claude"))
+    # The worktree's hub.json is the one read: its check fails, the main checkout's passes.
+    for folder, check in ((hub, "exit 0"), (worktree, "echo boom; exit 3")):
+        document = {"project": {"name": "demo"}, "repos": [{"dir": "app", "check_fast": check}]}
+        (folder / "hub.json").write_text(json.dumps(document), encoding="utf-8")
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    touches = [("Edit", "file_path", str(workspace / "app" / "a.py"))]
+    transcript = write_transcript(tmp_path / "session.jsonl", touches=touches)
+    event = {
+        "cwd": str(worktree),
+        "session_id": f"worktree-{os.getpid()}-{tmp_path.name}",
+        "transcript_path": str(transcript),
+    }
+
+    completed = subprocess.run(  # noqa: S603 - an interpreter from hook_python, the rendered hook
+        [hook_python, str(worktree / HOOK)],
+        input=json.dumps(event),
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=worktree,
+        env=scratch_env(tmp_path),
+        timeout=TIMEOUT,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    output = json.loads(completed.stdout)
+    assert output["decision"] == "block"
+    assert "## app (app): `echo boom; exit 3` FAILED" in output["reason"]
+
+
+def test_kills_process_group_when_check_exits(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # AC-5: a background child neither holds the gate up nor outlives it. The ``sleep 30`` keeps
+    # the check's stdout open: a gate waiting for the output's end would take 30 s.
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    marks = tmp_path / "marks"
+    marks.mkdir()
+    check = late_marker_check(marks, then="sleep 30 & exit 0")
+
+    start = time.monotonic()
+    output = run_hook([{"dir": "app", "check_fast": check}], workspace / "app")
+    end = time.monotonic()
+
+    assert "decision" not in output
+    assert "green" in output.get("systemMessage", "")
+    assert end - start < 20
+    sleep_until(end + LATE_AFTER)
+    assert (marks / "ready").exists()
+    assert not (marks / "late").exists()
+
+
+@pytest.mark.parametrize(
+    ("repo_keys", "constant"),
+    [
+        pytest.param({}, ("TIMEOUT", 1), id="timeout_constant"),
+        pytest.param({"check_fast_timeout": 1}, None, id="own_timeout"),
+        pytest.param({}, ("BUDGET", 3), id="budget"),
+    ],
+)
+def test_kills_process_group_when_check_times_out(
+    run_hook: RunHook,
+    workspace: Path,
+    tmp_path: Path,
+    *,
+    repo_keys: Mapping[str, object],
+    constant: tuple[str, object] | None,
+) -> None:
+    # AC-4: a check cut off at its limit (the module's, the repo's own or the budget) leaves no
+    # grandchild behind, and a cut run never blocks (D4).
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    marks = tmp_path / "marks"
+    marks.mkdir()
+    check = late_marker_check(marks, then="sleep 30", delay=CUT_DELAY)
+    repo = {"dir": "app", "check_fast": check, **repo_keys}
+
+    start = time.monotonic()
+    output = run_hook([repo], workspace / "app", constant=constant)
+    end = time.monotonic()
+
+    assert "decision" not in output
+    assert end - start < 20
+    sleep_until(end + CUT_DELAY + LATE_MARGIN)
+    assert (marks / "ready").exists()
+    assert not (marks / "late").exists()
+
+
+def test_reports_output_tail_when_check_prints_past_pipe_buffer(
+    run_hook: RunHook, workspace: Path
+) -> None:
+    # The output goes to a file the gate reads after the run: 256 KiB (past a 64 KiB pipe buffer)
+    # neither blocks the check nor reaches the reason, and stderr's last line is kept.
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    check = "head -c 262144 /dev/zero | tr '\\0' x; echo; echo tail-mark >&2; exit 3"
+
+    output = run_hook([{"dir": "app", "check_fast": check}], workspace / "app")
+
+    assert output.get("decision") == "block"
+    reason = output["reason"]
+    assert reason.rstrip().endswith("tail-mark")
+    assert "x" * 2900 in reason
+    assert len(reason) < 4000
+
+
+def test_kills_process_group_when_hook_cancelled(
+    workspace: Path, *, hook_python: str, tmp_path: Path
+) -> None:
+    # Claude Code cancels a hook with SIGTERM (also at its 180 s timeout); the check runs in its
+    # own session, so only the gate itself can end its group.
+    hub = workspace / "demo-hub"
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    marks = tmp_path / "marks"
+    marks.mkdir()
+    check = late_marker_check(marks, then="sleep 30")
+    document = {"project": {"name": "demo"}, "repos": [{"dir": "app", "check_fast": check}]}
+    (hub / "hub.json").write_text(json.dumps(document), encoding="utf-8")
+    event = {"cwd": str(workspace / "app"), "session_id": f"cancel-{os.getpid()}-{tmp_path.name}"}
+    with subprocess.Popen(  # noqa: S603 - an interpreter from hook_python, the rendered hook
+        [hook_python, str(hub / HOOK)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=tmp_path,
+        env=scratch_env(tmp_path),
+    ) as hook:
+        try:
+            assert hook.stdin is not None
+            hook.stdin.write(json.dumps(event).encode("utf-8"))
+            hook.stdin.close()
+            deadline = time.monotonic() + TIMEOUT
+            while not (marks / "ready").exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            assert (marks / "ready").exists()
+
+            hook.send_signal(signal.SIGTERM)
+            stdout, stderr = hook.communicate(timeout=TIMEOUT)
+            end = time.monotonic()
+        finally:  # a failed assert or a communicate timeout must not leave the hook running
+            hook.kill()
+            hook.wait(timeout=TIMEOUT)
+
+    sleep_until(end + LATE_AFTER)
+    assert not (marks / "late").exists()
+    assert hook.returncode == 0
+    assert stderr == b""
+    assert stdout == b""
+
+
+# The not-run outcomes (D4): a cut or skipped run never blocks, and its line names the repo.
+BUDGET_SPENT_NOTE = (
+    "[hub stop-gate] check_fast did not finish in every changed repo; finishing anyway."
+)
+NO_GATE_NOTE = "[hub] code changed; no changed repo has a check_fast to run."
+
+
+def touch_both(workspace: Path, tmp_path: Path) -> Path:
+    """Change ``app/a.py`` and ``web/b.py``; a transcript that edits both."""
+    files = (workspace / "app" / "a.py", workspace / "web" / "b.py")
+    for path in files:
+        path.write_text("x = 1\n", encoding="utf-8")
+    touches = [("Edit", "file_path", str(path)) for path in files]
+    return write_transcript(tmp_path / "session.jsonl", touches=touches)
+
+
+def test_names_repos_not_run_when_budget_spent(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # AC-1: the first run is cut by the 3 s budget, the second never starts.
+    transcript = touch_both(workspace, tmp_path)
+    started = tmp_path / "web-started"
+    web_check = f"touch {shlex.quote(str(started))}; sleep 30"
+    repos = [{"dir": "app", "check_fast": "sleep 30"}, {"dir": "web", "check_fast": web_check}]
+
+    start = time.monotonic()
+    output = run_hook(repos, workspace / "demo-hub", transcript=transcript, constant=("BUDGET", 3))
+    took = time.monotonic() - start
+
+    assert took < 20
+    assert not started.exists()
+    assert "decision" not in output
+    message = output.get("systemMessage", "")
+    assert message.startswith(BUDGET_SPENT_NOTE)
+    assert "app (app): not run: budget" in message
+    assert "web (web): not run: budget" in message
+
+
+def test_runs_next_repo_in_remaining_budget_when_first_passes(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # AC-2: the time ``app`` leaves is enough for ``web``, whose failure still blocks.
+    transcript = touch_both(workspace, tmp_path)
+    repos = [{"dir": "app", "check_fast": "sleep 2"}, {"dir": "web", "check_fast": "exit 3"}]
+
+    output = run_hook(repos, workspace / "demo-hub", transcript=transcript, constant=("BUDGET", 6))
+
+    assert output.get("decision") == "block"
+    assert "## web (web): `exit 3` FAILED" in output["reason"]
+    assert "app (app): not run" not in output["reason"]
+
+
+def test_reports_timeout_without_block_when_own_timeout_hit(
+    run_hook: RunHook, workspace: Path
+) -> None:
+    # AC-3: the repo's own 1 s cuts the run; a timeout is not a failure.
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    repo = {"dir": "app", "check_fast": "sleep 30", "check_fast_timeout": 1}
+
+    start = time.monotonic()
+    output = run_hook([repo], workspace / "app")
+    took = time.monotonic() - start
+
+    assert took < 20
+    assert "decision" not in output
+    message = output.get("systemMessage", "")
+    assert message.startswith(BUDGET_SPENT_NOTE)
+    assert "app (app): not run: timeout (1 s)" in message
+
+
+def test_releases_after_max_blocks_when_not_run_between(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # AC-6: a run with only not-run outcomes leaves the block counter as it was.
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    repos = [{"dir": "app", "check_fast": "echo boom; exit 3"}]
+    session = f"max-blocks-{os.getpid()}-{tmp_path.name}"
+    counter = tmp_path / "tmp" / f"hub-stop-{session}.json"
+
+    def gate(constant: tuple[str, object] | None = None) -> dict[str, Any]:
+        return run_hook(repos, workspace / "app", constant=constant, session=session)
+
+    for _ in range(2):
+        output = gate()
+        assert output.get("decision") == "block"
+        assert "boom" in output["reason"]
+    output = gate(("BUDGET", 0))
+    assert "decision" not in output
+    assert "app (app): not run: budget" in output.get("systemMessage", "")
+    assert json.loads(counter.read_text(encoding="utf-8")) == {"blocks": 2}
+    output = gate()
+    assert output.get("decision") == "block"
+    assert "boom" in output["reason"]
+    output = gate()
+    assert "decision" not in output
+    assert "still failing after 3 attempts" in output.get("systemMessage", "")
+
+
+def test_names_repos_when_check_fast_empty_or_absent(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # AC-9: no command runs; both repos are named, neither blocks.
+    transcript = touch_both(workspace, tmp_path)
+    repos = [{"dir": "app", "check_fast": ""}, {"dir": "web"}]
+
+    output = run_hook(repos, workspace / "demo-hub", transcript=transcript)
+
+    assert "decision" not in output
+    message = output.get("systemMessage", "")
+    assert message.startswith(NO_GATE_NOTE)
+    assert "app (app): no check_fast configured" in message
+    assert "web (web): no check_fast configured" in message
+
+
+def test_keeps_budget_inside_hook_timeout_when_constants_rendered(
+    demo_config: HubConfig, pinned_timeout: Callable[..., Any]
+) -> None:
+    # AC-18: the shipped values, by literal; the run tests lower them.
+    def constant(name: str) -> object:
+        value, _ = pinned_timeout(demo_config, hook=HOOK, constant=name, event="Stop")
+        return value
+
+    budget, hook_timeouts = pinned_timeout(demo_config, hook=HOOK, constant="BUDGET", event="Stop")
+
+    assert budget == 160
+    assert hook_timeouts == {
+        "plugin/hub-workflow/hooks/hooks.json": [180],
+        ".claude/settings.json": [180],
+    }
+    assert budget < 180
+    timeout = constant("TIMEOUT")
+    assert (timeout, constant("MAX_BLOCKS"), constant("MIN_RUN")) == (150, 3, 1)
+    assert constant("MAX_SUBAGENT_FILES") == 1024  # E34
+    assert timeout <= budget
+    assert budget == MAX_CHECK_FAST_TIMEOUT
+
+
+def test_names_repo_not_run_when_budget_left_below_min_run(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # D3: a check never starts with less than MIN_RUN s of budget left (here 160 < 200).
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    started = tmp_path / "started"
+    repo = {"dir": "app", "check_fast": f"touch {shlex.quote(str(started))}"}
+
+    output = run_hook([repo], workspace / "app", constant=("MIN_RUN", 200))
+
+    assert not started.exists()
+    assert "decision" not in output
+    message = output.get("systemMessage", "")
+    assert message.startswith(BUDGET_SPENT_NOTE)
+    assert "app (app): not run: budget" in message
+
+
+def test_names_repo_not_run_when_git_status_cut_by_budget(
+    run_hook: RunHook, workspace: Path, *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # D4: a git status the budget cuts short reads as empty; that is no clean tree, so the repo
+    # is named, never passed over in silence.
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    git = shutil.which("git")
+    assert git is not None
+    fake = tmp_path / "fake-bin"
+    fake.mkdir()
+    (fake / "git").write_text(
+        f'#!/bin/sh\ncase "$1" in status) exec sleep 30;; esac\nexec {shlex.quote(git)} "$@"\n',
+        encoding="utf-8",
+    )
+    (fake / "git").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake}{os.pathsep}{os.environ.get('PATH', os.defpath)}")
+
+    start = time.monotonic()
+    output = run_hook(
+        [{"dir": "app", "check_fast": "true"}], workspace / "app", constant=("BUDGET", 2)
+    )
+    took = time.monotonic() - start
+
+    assert took < 20
+    assert "decision" not in output
+    message = output.get("systemMessage", "")
+    assert message.startswith(BUDGET_SPENT_NOTE)
+    assert "app (app): not run: budget" in message
+
+
+# The session window (D1): it opens at the main transcript's first timestamp, else today's rule.
+GREEN_NOTE = "[hub] code changed and check_fast is green."
+
+
+def utc_stamp(when: datetime, timespec: str = "milliseconds") -> str:
+    """``when`` as Claude Code writes a transcript timestamp: UTC, ``Z`` suffix."""
+    return when.astimezone(UTC).isoformat(timespec=timespec).replace("+00:00", "Z")
+
+
+def set_mtime(path: Path, when: datetime) -> None:
+    """Write ``path`` (a code file) and date it ``when``."""
+    path.write_text("x = 1\n", encoding="utf-8")
+    os.utime(path, (when.timestamp(), when.timestamp()))
+
+
+@pytest.mark.parametrize("timespec", ["milliseconds", "microseconds"])
+def test_dates_changes_from_transcript_when_session_start_read(
+    run_hook: RunHook, workspace: Path, tmp_path: Path, *, timespec: str
+) -> None:
+    # AC-12: the window opens at the first line with a timestamp, here a queue-operation. The
+    # lines before it are skipped: one has no timestamp, one has no offset (a naive time read as
+    # local would open the window 2 h from now and hide new.py). A later line comes after it: the
+    # first stamp opens the window, not the last (start + 30 min would hide new.py).
+    start = datetime.now(UTC) - timedelta(hours=1)
+    naive = (datetime.now(UTC) + timedelta(hours=2)).replace(tzinfo=None).isoformat()
+    lines = [
+        json.dumps({"type": "summary"}),
+        json.dumps({"type": "summary", "timestamp": naive}),
+        json.dumps({"type": "queue-operation", "timestamp": utc_stamp(start, timespec)}),
+        json.dumps(
+            {"type": "user", "timestamp": utc_stamp(start + timedelta(minutes=30), timespec)}
+        ),
+    ]
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    repos = [{"dir": "app", "check_fast": "echo ran; exit 3"}]
+    set_mtime(workspace / "app" / "old.py", start - timedelta(minutes=10))
+
+    assert run_hook(repos, workspace / "app", transcript=transcript) == {}
+
+    set_mtime(workspace / "app" / "new.py", start + timedelta(minutes=1))
+    output = run_hook(repos, workspace / "app", transcript=transcript)
+
+    assert output.get("decision") == "block"
+    assert "ran" in output["reason"]
+    assert "new.py" in output["reason"]
+    assert "old.py" not in output["reason"]
+
+
+def write_unreadable(variant: str, path: Path, stamp: str) -> Path | int:
+    """The ``transcript_path`` of one unusable transcript; its timestamps are ``stamp`` or later."""
+    line = json.dumps({"type": "queue-operation", "timestamp": stamp})
+    writers: dict[str, Callable[[], object]] = {
+        "missing": lambda: None,
+        "directory": path.mkdir,
+        "fifo": lambda: os.mkfifo(path),
+        # The timestamp line itself holds the bad byte: a decoder that replaced it would parse it.
+        "not_utf8": lambda: path.write_bytes(line[:-1].encode() + b', "x": "\xff"}\n'),
+        "not_json": lambda: path.write_text(f"timestamp: {stamp}\n{line[:-1]}\n", encoding="utf-8"),
+        "no_timestamp": lambda: path.write_text(
+            "\n".join(
+                [json.dumps({"type": "user"}), json.dumps({"type": "user", "time": stamp}), ""]
+            ),
+            encoding="utf-8",
+        ),
+        # Python 3.11+ parses any fraction, 3.9 only 3 or 6 digits: the hook takes neither.
+        "two_digit_fraction": lambda: path.write_text(
+            line.replace(stamp, stamp[:-2] + "Z") + "\n", encoding="utf-8"
+        ),
+        # A start in the future (a bad clock, a copied transcript) would hide every change.
+        "future": lambda: path.write_text(
+            line.replace(stamp, utc_stamp(datetime.now(UTC) + timedelta(hours=1))) + "\n",
+            encoding="utf-8",
+        ),
+    }
+    if variant in {"int_fd", "stdout_fd"}:
+        return {"int_fd": 7, "stdout_fd": 1}[variant]
+    writers[variant]()
+    return path
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "missing",
+        "int_fd",
+        "stdout_fd",
+        "open_fd",
+        "directory",
+        "fifo",
+        "not_utf8",
+        "not_json",
+        "no_timestamp",
+        "two_digit_fraction",
+        "future",
+    ],
+)
+def test_uses_fallback_window_when_session_start_unreadable(
+    run_hook: RunHook, workspace: Path, tmp_path: Path, *, variant: str
+) -> None:
+    # AC-13: no session start read, so today's rule: the transcript's birth time where the
+    # platform keeps one, else 12 h ago. Every timestamp the variants hold is 10 min ago
+    # (``future``: 1 h ahead): one read by mistake would hide new.py (1 h old) and silence the gate.
+    stamp = utc_stamp(datetime.now(UTC) - timedelta(minutes=10))
+    set_mtime(workspace / "app" / "new.py", datetime.now(UTC) - timedelta(hours=1))
+    path = tmp_path / "session.jsonl"
+    repos = [{"dir": "app", "check_fast": "true"}]
+    if variant == "open_fd":
+        # An int is a file descriptor to os.stat and open: this one, open in the hook, is readable.
+        path.write_text(
+            json.dumps({"type": "queue-operation", "timestamp": stamp}) + "\n", encoding="utf-8"
+        )
+        fd = os.open(path, os.O_RDONLY)
+        try:
+            output = run_hook(repos, workspace / "app", transcript=fd, pass_fds=(fd,))
+        finally:
+            os.close(fd)
+        transcript: Path | int = fd
+    else:
+        transcript = write_unreadable(variant, path, stamp)
+        output = run_hook(repos, workspace / "app", transcript=transcript)
+
+    named = isinstance(transcript, Path) and transcript.exists()
+    if named and hasattr(os.stat(transcript), "st_birthtime"):
+        assert output == {}
+    else:
+        assert "decision" not in output
+        assert output.get("systemMessage", "").startswith(GREEN_NOTE)
+
+
+# The fan-out (D2, D8-D10): from the hub, the gate checks only the checkouts holding files the
+# session's (and its subagents') Edit, Write, MultiEdit and NotebookEdit calls touched.
+FAILING_CHECK = "echo ran-$PWD; exit 3"
+UNREADABLE_NOTE = (
+    "[hub stop-gate] the session transcript could not be read and the session's cwd is in no"
+    " repo checkout, so no repo was checked."
+)
+UNREADABLE_VARIANTS = [
+    "missing",
+    "int_fd",
+    "stdout_fd",
+    "open_fd",
+    "directory",
+    "fifo",
+    "not_utf8",
+    "not_json",
+    "no_timestamp",
+    "two_digit_fraction",
+    "future",
+]
+
+
+def partial_note(reason: str) -> str:
+    """The note of a transcript scan cut short (S3)."""
+    return (
+        f"[hub stop-gate] transcripts read in part ({reason}): a repo changed only through the"
+        " unread part was not checked."
+    )
+
+
+def init_checkout(path: Path, tmp_path: Path) -> Path:
+    """A git repository at ``path``: a worktree to ``checkouts()``, which needs only ``.git``."""
+    git = shutil.which("git")
+    assert git is not None
+    path.mkdir(parents=True)
+    subprocess.run(  # noqa: S603 - git found on PATH, fixed arguments
+        [git, "init", "-q"], cwd=path, check=True, capture_output=True, env=scratch_env(tmp_path)
+    )
+    return path
+
+
+def changed(path: Path) -> str:
+    """Write the code file ``path`` (a change this session) and return it as a string."""
+    path.write_text("x = 1\n", encoding="utf-8")
+    return str(path)
+
+
+def subagent_transcript(main: Path, name: str) -> Path:
+    """The path of subagent transcript ``name`` of the session whose transcript is ``main``."""
+    folder = main.with_suffix("") / "subagents"
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder / name
+
+
+def test_checks_touched_worktree_only_when_fan_out_from_hub(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # AC-14: a stale worktree and the main checkout, both changed, are not this session's.
+    worktrees = workspace / "app" / ".claude" / "worktrees"
+    mine = init_checkout(worktrees / "dem-1-x", tmp_path)
+    stale = init_checkout(worktrees / "dem-2-y", tmp_path)
+    changed(stale / "y.py")
+    changed(workspace / "app" / "main.py")
+    touches = [
+        ("Edit", "file_path", changed(mine / "x.py")),
+        ("MultiEdit", "file_path", str(mine / "z.py")),
+        ("Write", "file_path", changed(workspace / "web" / "w.py")),
+        ("NotebookEdit", "notebook_path", str(workspace / "web" / "n.ipynb")),
+    ]
+    transcript = write_transcript(tmp_path / "session.jsonl", touches=touches)
+    repos = [
+        {"dir": "app", "check_fast": FAILING_CHECK},
+        {"dir": "web", "check_fast": FAILING_CHECK},
+    ]
+
+    output = run_hook(repos, workspace / "demo-hub", transcript=transcript)
+
+    assert output.get("decision") == "block"
+    reason = output["reason"]
+    first = reason.index(f"## app (app/.claude/worktrees/dem-1-x): `{FAILING_CHECK}` FAILED")
+    assert reason.index(f"## web (web): `{FAILING_CHECK}` FAILED") > first
+    assert "dem-2-y" not in reason
+    assert "## app (app):" not in reason
+
+
+@pytest.mark.parametrize(
+    ("tool", "key"),
+    [
+        pytest.param("Edit", "file_path", id="edit"),
+        pytest.param("Write", "file_path", id="write"),
+        pytest.param("MultiEdit", "file_path", id="multi_edit"),
+        pytest.param("NotebookEdit", "notebook_path", id="notebook_edit"),
+    ],
+)
+def test_adds_candidate_when_fan_out_tool_writes_file(
+    run_hook: RunHook, workspace: Path, tmp_path: Path, *, tool: str, key: str
+) -> None:
+    # D9: each file-writing tool alone makes its checkout a candidate.
+    changed(workspace / "app" / "a.py")
+    transcript = write_transcript(
+        tmp_path / "session.jsonl", touches=[(tool, key, str(workspace / "app" / "nb.ipynb"))]
+    )
+
+    output = run_hook(
+        [{"dir": "app", "check_fast": FAILING_CHECK}], workspace / "demo-hub", transcript=transcript
+    )
+
+    assert output.get("decision") == "block"
+    assert f"## app (app): `{FAILING_CHECK}` FAILED" in output["reason"]
+
+
+def test_adds_subagent_touches_when_fan_out_reads_subagents(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # AC-15 (D8): a file only a subagent edited still makes its checkout a candidate.
+    main = write_transcript(tmp_path / "session.jsonl")
+    write_transcript(
+        subagent_transcript(main, "agent-1.jsonl"),
+        touches=[("Edit", "file_path", changed(workspace / "web" / "b.py"))],
+    )
+
+    output = run_hook(
+        [{"dir": "web", "check_fast": FAILING_CHECK}], workspace / "demo-hub", transcript=main
+    )
+
+    assert output.get("decision") == "block"
+    assert f"## web (web): `{FAILING_CHECK}` FAILED" in output["reason"]
+
+
+def test_keeps_main_session_start_when_fan_out_reads_subagent(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # AC-15: the session starts at the main transcript's first event (an hour ago), never at a
+    # subagent's (two days ago), so a file dated a day back is no change of this session.
+    main = write_transcript(tmp_path / "session.jsonl")
+    old, new = workspace / "web" / "old.py", workspace / "web" / "new.py"
+    write_transcript(
+        subagent_transcript(main, "agent-1.jsonl"),
+        start=datetime.now(UTC) - timedelta(days=2),
+        touches=[("Edit", "file_path", str(old)), ("Write", "file_path", str(new))],
+    )
+    set_mtime(old, datetime.now(UTC) - timedelta(days=1))
+    repos = [{"dir": "web", "check_fast": FAILING_CHECK}]
+
+    assert run_hook(repos, workspace / "demo-hub", transcript=main) == {}
+
+    changed(new)
+    output = run_hook(repos, workspace / "demo-hub", transcript=main)
+
+    assert output.get("decision") == "block"
+    assert "new.py" in output["reason"]
+    assert "old.py" not in output["reason"]
+
+
+@pytest.mark.parametrize("variant", ["missing_dir", "directory_file", "not_utf8"])
+def test_ignores_subagent_when_fan_out_cannot_read_it(
+    run_hook: RunHook, workspace: Path, tmp_path: Path, *, variant: str
+) -> None:
+    # AC-15 (D8, fail open): an unreadable subagent transcript adds nothing; the gate goes on.
+    main = write_transcript(tmp_path / "session.jsonl")
+    target = changed(workspace / "web" / "b.py")
+    line = json.dumps(
+        {
+            "type": "assistant",
+            "message": {
+                "content": [{"type": "tool_use", "name": "Edit", "input": {"file_path": target}}]
+            },
+        }
+    )
+    if variant == "directory_file":  # uid 0 reads through mode bits: a folder, not a chmod
+        subagent_transcript(main, "agent-1.jsonl").mkdir()
+    elif variant == "not_utf8":  # the touching line itself holds the bad byte
+        subagent_transcript(main, "agent-1.jsonl").write_bytes(
+            line[:-1].encode() + b', "x": "\xff"}\n'
+        )
+
+    output = run_hook(
+        [{"dir": "web", "check_fast": FAILING_CHECK}], workspace / "demo-hub", transcript=main
+    )
+
+    assert output == {}
+
+
+def test_checks_cwd_first_when_fan_out_adds_touched(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # AC-16: cwd's checkout comes first, then the touched ones (web sorts after app).
+    changed(workspace / "web" / "b.py")
+    touches = [("Edit", "file_path", changed(workspace / "app" / "a.py"))]
+    transcript = write_transcript(tmp_path / "session.jsonl", touches=touches)
+    repos = [
+        {"dir": "app", "check_fast": FAILING_CHECK},
+        {"dir": "web", "check_fast": FAILING_CHECK},
+    ]
+
+    output = run_hook(repos, workspace / "web", transcript=transcript)
+
+    assert output.get("decision") == "block"
+    reason = output["reason"]
+    assert reason.index("## web (web):") < reason.index("## app (app):")
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "outside",
+        "hub",
+        "number",
+        "empty",
+        "relative",
+        "read_tool",
+        "bash_tool",
+        "sibling_prefix",
+        "edit",
+        "dotdot",
+        "symlink",
+    ],
+)
+def test_adds_no_candidate_when_fan_out_path_ignored(
+    run_hook: RunHook, workspace: Path, tmp_path: Path, *, variant: str
+) -> None:
+    # AC-16 (D2, D9): only an absolute path in a repo checkout, from a file-writing tool, counts.
+    # ``relative`` would land in app from the hook's own cwd, ``sibling_prefix`` in app by a bare
+    # string prefix (``app2``). ``edit`` proves the setup can block; ``dotdot`` and ``symlink``
+    # reach app only once resolved.
+    target = changed(workspace / "app" / "a.py")
+    (workspace / "app2").mkdir()
+    (tmp_path / "link").symlink_to(workspace / "app")
+    touches: dict[str, tuple[str, str, object]] = {
+        "outside": ("Edit", "file_path", str(tmp_path / "outside" / "x.py")),
+        "hub": ("Edit", "file_path", str(workspace / "demo-hub" / "x.py")),
+        "number": ("Edit", "file_path", 5),
+        "empty": ("Write", "file_path", ""),
+        "relative": ("Edit", "file_path", os.path.relpath(target, tmp_path / "elsewhere")),
+        "read_tool": ("Read", "file_path", target),
+        "bash_tool": ("Bash", "command", f"echo y > {shlex.quote(target)}"),
+        "sibling_prefix": ("Edit", "file_path", str(workspace / "app2" / "x.py")),
+        "edit": ("Edit", "file_path", target),
+        "dotdot": ("Edit", "file_path", str(workspace / "demo-hub" / ".." / "app" / "a.py")),
+        "symlink": ("Edit", "file_path", str(tmp_path / "link" / "a.py")),
+    }
+    transcript = write_transcript(tmp_path / "session.jsonl", touches=[touches[variant]])
+
+    output = run_hook(
+        [{"dir": "app", "check_fast": FAILING_CHECK}], workspace / "demo-hub", transcript=transcript
+    )
+
+    if variant in {"edit", "dotdot", "symlink"}:
+        assert output.get("decision") == "block"
+        assert f"## app (app): `{FAILING_CHECK}` FAILED" in output["reason"]
+    else:
+        assert output == {}
+
+
+@pytest.mark.parametrize("name", [pytest.param([], id="list"), pytest.param({}, id="dict")])
+def test_reads_next_call_when_fan_out_tool_name_odd(
+    run_hook: RunHook, workspace: Path, tmp_path: Path, *, name: object
+) -> None:
+    # Fail open: a tool name that is no string (unhashable, too) is skipped, never the gate.
+    target = changed(workspace / "app" / "a.py")
+    calls = [
+        {"type": "tool_use", "name": name, "input": {"file_path": target}},
+        {"type": "tool_use", "name": "Edit", "input": {"file_path": target}},
+    ]
+    lines = [json.dumps({"type": "assistant", "message": {"content": [call]}}) for call in calls]
+    transcript = write_transcript(tmp_path / "session.jsonl", extra_lines=lines)
+
+    output = run_hook(
+        [{"dir": "app", "check_fast": FAILING_CHECK}], workspace / "demo-hub", transcript=transcript
+    )
+
+    assert output.get("decision") == "block"
+    assert f"## app (app): `{FAILING_CHECK}` FAILED" in output["reason"]
+
+
+def run_with_unreadable(
+    run_hook: RunHook, variant: str, *, workspace: Path, cwd: Path, check: str, tmp_path: Path
+) -> dict[str, Any]:
+    """Run the gate with the AC-13 transcript ``variant`` after ``app/new.py`` changed."""
+    path = tmp_path / "session.jsonl"
+    stamp = utc_stamp(datetime.now(UTC) - timedelta(minutes=10))
+    repos = [{"dir": "app", "check_fast": check}]
+    if variant != "open_fd":
+        transcript = write_unreadable(variant, path, stamp)
+        changed(workspace / "app" / "new.py")  # after the transcript: newer than its birth time
+        return run_hook(repos, cwd, transcript=transcript)
+    path.write_text(
+        json.dumps({"type": "queue-operation", "timestamp": stamp}) + "\n", encoding="utf-8"
+    )
+    changed(workspace / "app" / "new.py")
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        return run_hook(repos, cwd, transcript=fd, pass_fds=(fd,))
+    finally:
+        os.close(fd)
+
+
+@pytest.mark.parametrize("variant", UNREADABLE_VARIANTS)
+def test_checks_nothing_when_fan_out_fallback_unreadable(
+    run_hook: RunHook, workspace: Path, tmp_path: Path, *, variant: str
+) -> None:
+    # AC-17 (D10): no touched path can be read and cwd is the hub: nothing runs, and a note says so.
+    ran = tmp_path / "ran"
+    check = f"touch {shlex.quote(str(ran))}; exit 3"
+
+    output = run_with_unreadable(
+        run_hook,
+        variant,
+        workspace=workspace,
+        cwd=workspace / "demo-hub",
+        check=check,
+        tmp_path=tmp_path,
+    )
+
+    assert output == {"systemMessage": UNREADABLE_NOTE}
+    assert not ran.exists()
+
+
+@pytest.mark.parametrize("variant", UNREADABLE_VARIANTS)
+def test_checks_cwd_checkout_when_fan_out_fallback_in_repo(
+    run_hook: RunHook, workspace: Path, tmp_path: Path, *, variant: str
+) -> None:
+    # AC-17 (D10): with cwd in a checkout, that checkout is still checked.
+    output = run_with_unreadable(
+        run_hook,
+        variant,
+        workspace=workspace,
+        cwd=workspace / "app",
+        check=FAILING_CHECK,
+        tmp_path=tmp_path,
+    )
+
+    assert output.get("decision") == "block"
+    assert f"## app (app): `{FAILING_CHECK}` FAILED" in output["reason"]
+
+
+def test_notes_partial_read_when_fan_out_scan_cut_by_budget(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # S3, S4: no budget left for the scan or the status; both are named, nothing passes silently.
+    changed(workspace / "app" / "a.py")
+    transcript = write_transcript(tmp_path / "session.jsonl")
+
+    output = run_hook(
+        [{"dir": "app", "check_fast": "true"}],
+        workspace / "app",
+        transcript=transcript,
+        constant=("BUDGET", 0),
+    )
+
+    assert "decision" not in output
+    message = output.get("systemMessage", "")
+    assert message.startswith(BUDGET_SPENT_NOTE)
+    assert "\napp (app): not run: budget\n" in message
+    assert message.endswith("\n" + partial_note("budget spent"))
+
+
+def test_notes_partial_read_when_fan_out_scan_cut_by_files(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # S3: subagent files past MAX_SUBAGENT_FILES (lowered to 1) are not read; a note says so.
+    # The newest are read first (E34): the one touching web is the older.
+    main = write_transcript(tmp_path / "session.jsonl")
+    write_transcript(subagent_transcript(main, "agent-1.jsonl"))
+    older = write_transcript(
+        subagent_transcript(main, "agent-2.jsonl"),
+        touches=[("Edit", "file_path", changed(workspace / "web" / "b.py"))],
+    )
+    back = time.time() - 60
+    os.utime(older, (back, back))
+
+    output = run_hook(
+        [{"dir": "web", "check_fast": FAILING_CHECK}],
+        workspace / "demo-hub",
+        transcript=main,
+        constant=("MAX_SUBAGENT_FILES", 1),
+    )
+
+    assert output == {"systemMessage": partial_note("more than 1 subagent file")}
+
+
+def test_reads_newest_subagent_first_when_fan_out_cap_reached(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # E34: past the cap, the newest subagent transcripts are the ones read. The newer file sorts
+    # last by name, so a read in name order would take the older one and miss web.
+    main = write_transcript(tmp_path / "session.jsonl")
+    newer = write_transcript(
+        subagent_transcript(main, "agent-b.jsonl"),
+        touches=[("Edit", "file_path", changed(workspace / "web" / "b.py"))],
+    )
+    older = write_transcript(subagent_transcript(main, "agent-a.jsonl"))
+    now = time.time()
+    os.utime(older, (now - 60, now - 60))
+    os.utime(newer, (now - 30, now - 30))
+
+    output = run_hook(
+        [{"dir": "web", "check_fast": FAILING_CHECK}],
+        workspace / "demo-hub",
+        transcript=main,
+        constant=("MAX_SUBAGENT_FILES", 1),
+    )
+
+    assert output.get("decision") == "block"
+    reason = output["reason"]
+    assert f"## web (web): `{FAILING_CHECK}` FAILED" in reason
+    assert reason.endswith("\n" + partial_note("more than 1 subagent file"))
+
+
+LISTING_CUT = """\
+import json, stop_gate
+stop_gate.BUDGET = 0
+stop_gate.scan = lambda path, found: True  # the main transcript is read: only the listing is cut
+found, why = stop_gate.touched_paths(sys.argv[1])
+print(json.dumps([sorted(found), why]))
+"""
+
+
+def test_notes_partial_read_when_fan_out_listing_cut_by_budget(
+    workspace: Path, *, hook_python: str, tmp_path: Path, run_python: Callable[..., Any]
+) -> None:
+    # S3, E34: the budget is checked while the subagents folder is listed, not only once it is
+    # listed and sorted, so a huge folder cannot hold the gate past its budget.
+    main = write_transcript(tmp_path / "session.jsonl")
+    for name in ("agent-1.jsonl", "agent-2.jsonl"):
+        write_transcript(
+            subagent_transcript(main, name),
+            touches=[("Edit", "file_path", str(workspace / "web" / "b.py"))],
+        )
+
+    result = run_python(
+        hook_python,
+        LISTING_CUT,
+        path=workspace / "demo-hub" / HOOK.rsplit("/", 1)[0],
+        args=[str(main)],
+        cwd=tmp_path,
+    )
+
+    assert result == [[], "budget spent"]
+
+
+# AGH-200 D7 (AC-200.10): a block is sent to the control plane after it is printed, with
+# ``decision: {by: stop_gate, kind: block, command, exit_code}`` (the first failing repo's).
+
+
+def run_gate(
+    workspace: Path,
+    hook_python: str,
+    *,
+    repos: Sequence[Mapping[str, object]],
+    env: Mapping[str, str],
+) -> tuple[subprocess.CompletedProcess[bytes], dict[str, object]]:
+    """Run the gate for a session whose cwd is ``app``; (its run, the event it got)."""
+    document = {"project": {"name": "demo"}, "repos": list(repos)}
+    (workspace / "demo-hub" / "hub.json").write_text(json.dumps(document), encoding="utf-8")
+    event: dict[str, object] = {
+        "session_id": f"emit-{os.getpid()}",
+        "hook_event_name": "Stop",
+        "stop_hook_active": False,
+        "cwd": str(workspace / "app"),
+    }
+    completed = subprocess.run(  # noqa: S603 - an interpreter from hook_python, the rendered hook
+        [hook_python, str(workspace / "demo-hub" / HOOK)],
+        input=json.dumps(event).encode("utf-8"),
+        capture_output=True,
+        check=False,
+        cwd=workspace,
+        env=dict(env),
+        timeout=TIMEOUT,
+    )
+    return completed, event
+
+
+def test_emits_block_when_stop_gate_blocks(
+    workspace: Path, hook_python: str, *, tmp_path: Path, event_server: Any
+) -> None:
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    command = "echo boom; exit 3"
+    env = scratch_env(tmp_path) | {"AGENT_HUB_WEB_URL": event_server.url}
+
+    completed, event = run_gate(
+        workspace, hook_python, repos=[{"dir": "app", "check_fast": command}], env=env
+    )
+
+    assert (completed.returncode, completed.stderr) == (0, b"")
+    assert json.loads(completed.stdout)["decision"] == "block"
+    [body] = event_server.bodies()
+    envelope = HookEnvelope.model_validate(body)
+    assert envelope.hook == event
+    assert envelope.repo == "app"
+    assert envelope.decision is not None
+    assert envelope.decision.model_dump() == {
+        "by": "stop_gate",
+        "kind": "block",
+        "rule": None,
+        "command": command,
+        "exit_code": 3,
+    }
+
+
+@pytest.mark.parametrize("check_fast", ["true", "echo boom; exit 3"])
+def test_emits_nothing_when_stop_gate_passes_or_releases(
+    check_fast: str, workspace: Path, hook_python: str, *, tmp_path: Path, event_server: Any
+) -> None:
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    env = scratch_env(tmp_path) | {"AGENT_HUB_WEB_URL": event_server.url}
+    # A gate that already blocked MAX_BLOCKS times releases: no block, nothing sent.
+    (tmp_path / "tmp" / f"hub-stop-emit-{os.getpid()}.json").write_text('{"blocks": 3}')
+
+    completed, _ = run_gate(
+        workspace, hook_python, repos=[{"dir": "app", "check_fast": check_fast}], env=env
+    )
+
+    assert (completed.returncode, completed.stderr) == (0, b"")
+    assert "decision" not in json.loads(completed.stdout)
+    assert event_server.received == []
+
+
+def test_keeps_block_when_event_server_slow(
+    workspace: Path, hook_python: str, *, tmp_path: Path, event_server: Any
+) -> None:
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    event_server.delay = 3.0
+    env = scratch_env(tmp_path) | {"AGENT_HUB_WEB_URL": event_server.url}
+    started = time.monotonic()
+
+    completed, _ = run_gate(
+        workspace, hook_python, repos=[{"dir": "app", "check_fast": "exit 4"}], env=env
+    )
+
+    assert (completed.returncode, completed.stderr) == (0, b"")
+    assert json.loads(completed.stdout)["decision"] == "block"
+    assert time.monotonic() - started < 2.5
+
+
+# repos[].check_stop: a repo's narrower command, which the gate runs in place of its check_fast.
+# The fake checks append the name they are given, one line each, to a run log under tmp_path.
+CHECK_FAST_GREEN = (
+    "[hub] code changed and check_fast is green. If the work spans sessions, run /handoff."
+)
+# Added to a fake check's name: "=<value>" when HUB_CHANGED_FILES is set, even to "".
+WITH_CHANGED_FILES = "${HUB_CHANGED_FILES+=$HUB_CHANGED_FILES}"
+# The hook's MAX_BLOCKS (test_keeps_budget_inside_hook_timeout_when_constants_rendered).
+MAX_BLOCKS = 3
+
+
+def appending(log: Path, name: str) -> str:
+    """A check that appends ``name`` to ``log`` as one line; bash expands it (double quotes)."""
+    return f'echo "{name}" >> {shlex.quote(str(log))}'
+
+
+def recorded(log: Path) -> list[str]:
+    """The lines the fake checks appended to ``log``, in run order; none when no check ran."""
+    return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+
+
+def test_runs_check_stop_instead_of_check_fast_when_repo_sets_it(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    log = tmp_path / "runs.log"
+    repo = {
+        "dir": "app",
+        "check_fast": appending(log, "check_fast"),
+        "check_stop": appending(log, "check_stop"),
+    }
+
+    run_hook([repo], workspace / "app")
+
+    assert recorded(log) == ["check_stop"]
+
+
+def test_blocks_with_check_stop_command_when_it_fails(
+    workspace: Path, hook_python: str, *, tmp_path: Path, event_server: Any
+) -> None:
+    # As a failing check_fast does: one block per stop, each sent with the command that ran,
+    # until MAX_BLOCKS; the next stop lets the session finish and names the command kind.
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    command = "echo boom; exit 3"
+    repos = [{"dir": "app", "check_fast": "true", "check_stop": command}]
+    env = scratch_env(tmp_path) | {"AGENT_HUB_WEB_URL": event_server.url}
+
+    runs = [
+        run_gate(workspace, hook_python, repos=repos, env=env)[0] for _ in range(MAX_BLOCKS + 1)
+    ]
+
+    assert [(run.returncode, run.stderr) for run in runs] == [(0, b"")] * (MAX_BLOCKS + 1)
+    *blocks, release = [json.loads(run.stdout) for run in runs]
+    assert [output.get("decision") for output in blocks] == ["block"] * MAX_BLOCKS
+    for output in blocks:
+        assert output["reason"].startswith("[hub stop-gate] ")
+        assert f"## app (app): `{command}` FAILED\n" in output["reason"]
+    assert "decision" not in release
+    assert release.get("systemMessage", "").startswith(
+        "[hub stop-gate] check_stop still failing after 3 attempts"
+    )
+    decisions = [HookEnvelope.model_validate(body).decision for body in event_server.bodies()]
+    sent = {"by": "stop_gate", "kind": "block", "rule": None, "command": command, "exit_code": 3}
+    assert [None if decision is None else decision.model_dump() for decision in decisions] == [
+        sent
+    ] * MAX_BLOCKS
+
+
+def test_runs_each_repo_choice_when_two_repos_changed(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # The session's cwd is in web, so web runs first; then app, which an edit touched. Each
+    # repo runs the command it chose, one after the other in the one gate run.
+    transcript = touch_both(workspace, tmp_path)
+    log = tmp_path / "runs.log"
+    repos = [
+        {
+            "dir": "app",
+            "check_fast": appending(log, "app check_fast"),
+            "check_stop": appending(log, "app check_stop"),
+        },
+        {"dir": "web", "check_fast": appending(log, "web check_fast")},
+    ]
+
+    run_hook(repos, workspace / "web", transcript=transcript)
+
+    assert recorded(log) == ["web check_fast", "app check_stop"]
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        pytest.param("check_stop", "check_fast", id="check_stop_first"),
+        pytest.param("check_fast", "check_stop", id="check_fast_first"),
+    ],
+)
+def test_names_second_repo_not_run_when_check_stop_and_check_fast_share_budget(
+    run_hook: RunHook, workspace: Path, tmp_path: Path, *, first: str, second: str
+) -> None:
+    # Both kinds of command run on the one budget, here 3 s: app's run, first from the hub, is
+    # cut by it, and web's never starts, whichever of the two repos chose check_stop.
+    transcript = touch_both(workspace, tmp_path)
+    started = tmp_path / "web-started"
+    web_check = f"touch {shlex.quote(str(started))}; sleep 30"
+    repos = [{"dir": "app", first: "sleep 30"}, {"dir": "web", second: web_check}]
+
+    start = time.monotonic()
+    output = run_hook(repos, workspace / "demo-hub", transcript=transcript, constant=("BUDGET", 3))
+    took = time.monotonic() - start
+
+    assert took < 20
+    assert not started.exists()
+    assert "decision" not in output
+    message = output.get("systemMessage", "")
+    assert message.startswith(
+        "[hub stop-gate] check_stop/check_fast did not finish in every changed repo;"
+    )
+    assert "app (app): not run: budget" in message
+    assert "web (web): not run: budget" in message
+
+
+@pytest.mark.parametrize(
+    "check_stop",
+    [
+        pytest.param(None, id="absent"),
+        pytest.param("  ", id="blank"),
+        pytest.param(5, id="number"),
+        pytest.param([], id="list"),
+    ],
+)
+def test_runs_check_fast_without_changed_files_when_check_stop_unusable(
+    run_hook: RunHook, workspace: Path, tmp_path: Path, *, check_stop: object
+) -> None:
+    # A check_stop the hooks read as none leaves the gate as it is without one: check_fast runs,
+    # with no HUB_CHANGED_FILES, and the reminder is the same bytes.
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    log = tmp_path / "runs.log"
+    repo: dict[str, object] = {
+        "dir": "app",
+        "check_fast": appending(log, "check_fast" + WITH_CHANGED_FILES),
+    }
+    if check_stop is not None:
+        repo["check_stop"] = check_stop
+    transcript = write_transcript(tmp_path / "session.jsonl")
+
+    output = run_hook([repo], workspace / "app", transcript=transcript)
+
+    assert recorded(log) == ["check_fast"]
+    assert output == {"systemMessage": CHECK_FAST_GREEN}
+
+
+@pytest.mark.serial
+def test_kills_check_stop_at_check_fast_timeout_when_it_sleeps(
+    run_hook: RunHook, workspace: Path
+) -> None:
+    # check_fast_timeout limits whichever command the gate runs: cut at 2 s, well before its
+    # 10 s sleep would end, and named as not run, which never blocks. The summary names the
+    # command that did not finish, check_stop.
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    repo = {"dir": "app", "check_stop": "sleep 10", "check_fast_timeout": 2}
+
+    start = time.monotonic()
+    output = run_hook([repo], workspace / "app")
+    took = time.monotonic() - start
+
+    assert "decision" not in output
+    assert output.get("systemMessage", "").startswith(
+        "[hub stop-gate] check_stop did not finish in every changed repo; finishing anyway."
+    )
+    assert "app (app): not run: timeout (2 s)" in output.get("systemMessage", "")
+    assert took < 8
+
+
+@pytest.mark.parametrize(
+    ("repos", "constant", "summary"),
+    [
+        pytest.param(
+            [{"dir": "app", "check_stop": "true"}],
+            None,
+            "[hub] code changed and check_stop is green.",
+            id="green",
+        ),
+        pytest.param(
+            [{"dir": "app", "check_stop": "echo boom; exit 3"}],
+            None,
+            "[hub stop-gate] Fix these before finishing (check_stop must pass):\n",
+            id="failed",
+        ),
+        pytest.param(
+            [{"dir": "app", "check_stop": "true"}],
+            ("MIN_RUN", 200),
+            "[hub stop-gate] check_stop did not finish in every changed repo; finishing anyway.",
+            id="budget_cut",
+        ),
+        pytest.param(
+            [{"dir": "app", "check_stop": "true"}],
+            ("GIT_TIMEOUT", 0),
+            "[hub stop-gate] check_stop did not finish in every changed repo; finishing anyway.",
+            id="status_cut",
+        ),
+        pytest.param(
+            [{"dir": "app", "check_fast": "true"}, {"dir": "web", "check_stop": "true"}],
+            None,
+            "[hub] code changed and check_stop/check_fast is green.",
+            id="both_kinds",
+        ),
+    ],
+)
+def test_names_check_stop_in_summary_when_repo_selects_it(
+    run_hook: RunHook,
+    workspace: Path,
+    tmp_path: Path,
+    *,
+    repos: list[dict[str, object]],
+    constant: tuple[str, object] | None,
+    summary: str,
+) -> None:
+    # The summary names the kind of command each changed repo was given, even one the budget
+    # never let start (MIN_RUN above the budget), or whose git status it left no time for
+    # (GIT_TIMEOUT 0 caps that status as a spent budget does). With both kinds, app's check_fast
+    # runs first from the hub, yet the name keeps its one order. A repo with a check_stop never
+    # reads as having no command.
+    touches = [
+        ("Edit", "file_path", changed(workspace / str(repo["dir"]) / "x.py")) for repo in repos
+    ]
+    transcript = write_transcript(tmp_path / "session.jsonl", touches=touches)
+
+    output = run_hook(repos, workspace / "demo-hub", transcript=transcript, constant=constant)
+
+    text = output.get("reason") or output.get("systemMessage", "")
+    assert text.startswith(summary)
+    assert "no check_fast configured" not in text
+
+
+def test_blocks_naming_check_stop_when_it_cannot_start(
+    run_hook: RunHook, workspace: Path, *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The gate's PATH holds git alone, so bash, which runs every check, cannot start: a failure,
+    # so a block, named after the kind of command the gate chose.
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    git = shutil.which("git")
+    assert git is not None
+    only_git = tmp_path / "only-git"
+    only_git.mkdir()
+    (only_git / "git").symlink_to(git)
+    assert shutil.which("bash", path=str(only_git)) is None
+    monkeypatch.setenv("PATH", str(only_git))
+
+    output = run_hook([{"dir": "app", "check_stop": "true"}], workspace / "app")
+
+    assert output.get("decision") == "block"
+    assert "\ncheck_stop could not start: " in output["reason"]
+
+
+def test_warns_naming_check_stop_when_block_counter_unwritable(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # As for check_fast (test_hooks_fail_open.py): without its block counter the gate could never
+    # release, so a failing check_stop gives a warning, no block, that names check_stop.
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    session = f"unwritable-{os.getpid()}-{tmp_path.name}"
+    (tmp_path / "tmp" / f"hub-stop-{session}.json").mkdir()  # the counter's path is a folder
+
+    output = run_hook(
+        [{"dir": "app", "check_stop": "echo boom; exit 3"}], workspace / "app", session=session
+    )
+
+    assert "decision" not in output
+    assert output.get("systemMessage", "").startswith(
+        "[hub stop-gate] check_stop still failing and the block counter could not be saved; "
+        "finishing anyway. Do not claim the work is done."
+    )
+    assert "boom" in output["systemMessage"]
+
+
+# HUB_CHANGED_FILES: the paths the session changed in the checkout, given to check_stop alone; left
+# unset when git prints one of them quoted, or raw with a character Python's splitlines() breaks a
+# line at, or when the list passes CHANGED_FILES_CAP bytes.
+CHANGED_FILES_CAP = 65_536
+# The pause on each side of a session start taken between writes: well over the tick of the clock
+# the kernel dates files by (at most 10 ms), which can trail the time Python reads.
+DATE_PAUSE = 0.05
+
+
+def saving(saved: Path) -> str:
+    """A check that saves the ``HUB_CHANGED_FILES`` it got, as is, or ``unset``, to ``saved``."""
+    return f'printf %s "${{HUB_CHANGED_FILES-unset}}" > {shlex.quote(str(saved))}'
+
+
+def saved_bytes(saved: Path) -> bytes | None:
+    """What a fake check saved at ``saved``; ``None`` when no check ran to save it."""
+    return saved.read_bytes() if saved.exists() else None
+
+
+def git_in(top: Path, tmp_path: Path, *args: str) -> str:
+    """Run git in ``top`` with the scratch environment and a fixed identity; its stdout."""
+    git = shutil.which("git")
+    assert git is not None
+    identity = ["-c", "user.name=t", "-c", "user.email=t@example.com"]
+    completed = subprocess.run(  # noqa: S603 - git found on PATH, fixed arguments
+        [git, *identity, *args],
+        cwd=top,
+        check=True,
+        capture_output=True,
+        text=True,
+        env=scratch_env(tmp_path),
+    )
+    return completed.stdout
+
+
+def bash_in(top: Path, tmp_path: Path, command: str) -> None:
+    """Run ``command`` with bash in ``top``, in the scratch environment."""
+    bash = shutil.which("bash")
+    assert bash is not None
+    subprocess.run(  # noqa: S603 - bash found on PATH, a command of this test
+        [bash, "-c", command], cwd=top, check=True, capture_output=True, env=scratch_env(tmp_path)
+    )
+
+
+def write_new_files(top: Path, size: int) -> bytes:
+    """New code files in ``top`` whose sorted names, joined by newlines, take ``size`` bytes.
+
+    Returns that list: names of 100 bytes, the last one shorter, numbered so they sort as made.
+    """
+    count = -(-(size + 1) // 101)
+    last = size - (count - 1) * 101
+    assert 8 <= last <= 100, size
+    names = [f"{index:04d}{'x' * 93}.py" for index in range(count - 1)]
+    names.append(f"{count - 1:04d}{'x' * (last - 7)}.py")
+    for name in names:
+        (top / name).write_text("x = 1\n", encoding="utf-8")
+    listed = "\n".join(names).encode("utf-8")
+    assert len(listed) == size
+    return listed
+
+
+def start_between_writes() -> datetime:
+    """A session start after the dates of the files written so far, before those written next.
+
+    The gate counts a file by its ctime too, and os.utime moves the ctime to now: a file older than
+    the session by both dates is one written before this start.
+    """
+    time.sleep(DATE_PAUSE)
+    start = datetime.now(UTC)
+    time.sleep(DATE_PAUSE)
+    return start
+
+
+def test_lists_changed_paths_when_check_stop_runs(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # One session in app: a.py edited, b.py moved to c.py with git mv (b.py is older than the
+    # session, and the move keeps that date), old.py deleted, docs/x.md new, stale.md older than
+    # the session. Both sides of the move and the deletion count; stale.md is no change of this
+    # session. The changed line of the block keeps to code files changed in the session.
+    app = workspace / "app"
+    for name in ("a.py", "old.py"):
+        (app / name).write_text("x = 1\n", encoding="utf-8")
+    set_mtime(app / "b.py", datetime.now(UTC) - timedelta(hours=2))
+    git_in(app, tmp_path, "add", "-A")
+    git_in(app, tmp_path, "commit", "-qm", "before the session")
+    (app / "stale.md").write_text("x = 1\n", encoding="utf-8")
+    start = start_between_writes()
+    (app / "a.py").write_text("x = 2\n", encoding="utf-8")
+    git_in(app, tmp_path, "mv", "b.py", "c.py")
+    (app / "old.py").unlink()
+    (app / "docs").mkdir()
+    (app / "docs" / "x.md").write_text("# x\n", encoding="utf-8")
+    status = git_in(app, tmp_path, "status", "--porcelain", "--untracked-files=all")
+    assert sorted(status.splitlines()) == sorted(
+        [" M a.py", "R  b.py -> c.py", " D old.py", "?? docs/x.md", "?? stale.md"]
+    )
+    assert (app / "c.py").stat().st_mtime < start.timestamp()
+    saved = tmp_path / "changed-files"
+    transcript = write_transcript(tmp_path / "session.jsonl", start=start)
+
+    output = run_hook(
+        [{"dir": "app", "check_stop": saving(saved) + "; exit 3"}], app, transcript=transcript
+    )
+
+    assert saved_bytes(saved) == b"a.py\nb.py\nc.py\ndocs/x.md\nold.py"
+    assert output.get("decision") == "block"
+    assert "\nchanged: a.py\n" in output["reason"]
+
+
+def test_runs_nothing_when_check_stop_repo_changed_only_non_code(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # The trigger keeps the code-only rule: docs/x.md would be on check_stop's list, but with no
+    # code file changed the gate runs neither command and stays silent.
+    app = workspace / "app"
+    (app / "docs").mkdir()
+    (app / "docs" / "x.md").write_text("# x\n", encoding="utf-8")
+    log = tmp_path / "runs.log"
+    repo = {
+        "dir": "app",
+        "check_fast": appending(log, "check_fast"),
+        "check_stop": appending(log, "check_stop"),
+    }
+
+    output = run_hook([repo], app)
+
+    assert recorded(log) == []
+    assert output == {}
+
+
+@pytest.mark.parametrize(
+    ("before", "command", "status", "listed"),
+    [
+        pytest.param(
+            "",
+            "mkdir pkg2 && mv pkg1/b.py pkg2/b.py",
+            [" M a.py", " D pkg1/b.py", "?? pkg2/b.py"],
+            b"a.py\npkg1/b.py\npkg2/b.py",
+            id="mv_across_folders",
+        ),
+        pytest.param(
+            "",
+            "mv pkg1 pkg2",
+            [" M a.py", " D pkg1/b.py", " D pkg1/sub/c.py", "?? pkg2/b.py", "?? pkg2/sub/c.py"],
+            b"a.py\npkg1/b.py\npkg1/sub/c.py\npkg2/b.py\npkg2/sub/c.py",
+            id="mv_folder",
+        ),
+        pytest.param(
+            "mkdir -p pkg1/sub/deep/inner && echo 'x = 3' > pkg1/sub/deep/inner/d.py"
+            " && git add -A && git -c user.name=t -c user.email=t@example.com commit -qm deep",
+            "mv pkg1/sub/deep pkg1/sub/moved",
+            [" M a.py", " D pkg1/sub/deep/inner/d.py", "?? pkg1/sub/moved/inner/d.py"],
+            b"a.py\npkg1/sub/deep/inner/d.py\npkg1/sub/moved/inner/d.py",
+            id="mv_folder_below_older_folder",
+        ),
+        pytest.param(
+            "echo 'x = 3' > pkg1/b.py",
+            "echo 'x = 1' > pkg1/new.py",
+            [" M a.py", " M pkg1/b.py", "?? pkg1/new.py"],
+            b"a.py\npkg1/new.py",
+            id="tracked_edit_before_session_in_changed_folder",
+        ),
+        pytest.param(
+            "",
+            "ln -s b.py link.py",
+            [" M a.py", "?? link.py"],
+            b"a.py\nlink.py",
+            id="link_to_old_file",
+        ),
+        pytest.param(
+            "",
+            "git mv b.py c.py && echo 'x = 2' > b.py",
+            [" M a.py", "R  b.py -> c.py", "?? b.py"],
+            b"a.py\nb.py\nc.py",
+            id="git_mv_then_same_name",
+        ),
+        pytest.param(
+            "git mv b.py c.py",
+            "",
+            [" M a.py", "R  b.py -> c.py"],
+            b"a.py\nb.py\nc.py",
+            id="git_mv_before_session",
+        ),
+        pytest.param(
+            "git config diff.renames copies",
+            "cp pkg1/b.py c.py && echo 'x = 3' >> pkg1/b.py && git add pkg1/b.py c.py",
+            [" M a.py", "M  pkg1/b.py", "C  pkg1/b.py -> c.py"],
+            b"a.py\nc.py\npkg1/b.py",
+            id="copy_record",
+        ),
+    ],
+)
+def test_lists_moved_and_linked_paths_when_check_stop_runs(
+    run_hook: RunHook,
+    workspace: Path,
+    tmp_path: Path,
+    *,
+    before: str,
+    command: str,
+    status: list[str],
+    listed: bytes,
+) -> None:
+    # b.py, pkg1/b.py and pkg1/sub/c.py were committed before the session, older than it by both
+    # dates. Each row runs one shell command before the session starts, and one after the session
+    # edits a.py, so the gate runs. A plain mv, not staged, is a deletion and an untracked file to
+    # git, and keeps the file's mtime: the new name counts by the ctime the move set. A folder
+    # moved with mv keeps both dates of the files in it: they count by the ctime of a folder
+    # between the checkout's top and them, here pkg2 above the older pkg2/sub. The gate reads
+    # every such folder: pkg1/sub/moved/inner/d.py counts though its first folder, pkg1, and its
+    # nearest, pkg1/sub/moved/inner, are both older than the session. Only an untracked path
+    # counts by its folder: pkg1/b.py, edited before the session, stays out though pkg1 gains a
+    # file. A new link counts by its own dates, not its older target's. Both names of a rename
+    # count whenever git lists them, even when the rename was staged before the session and c.py
+    # is older than it by both dates. A copy record, which git prints under diff.renames=copies,
+    # is split the same way. A name git lists twice, a staged rename's old name and a file made
+    # again under it, is listed once.
+    app = workspace / "app"
+    (app / "pkg1" / "sub").mkdir(parents=True)
+    for name in ("a.py", "b.py", "pkg1/b.py", "pkg1/sub/c.py"):
+        (app / name).write_text("x = 1\n", encoding="utf-8")
+    git_in(app, tmp_path, "add", "-A")
+    git_in(app, tmp_path, "commit", "-qm", "before the session")
+    bash_in(app, tmp_path, before)
+    start = start_between_writes()
+    (app / "a.py").write_text("x = 2\n", encoding="utf-8")
+    bash_in(app, tmp_path, command)
+    found = git_in(app, tmp_path, "status", "--porcelain", "--untracked-files=all")
+    assert sorted(found.splitlines()) == sorted(status)
+    saved = tmp_path / "changed-files"
+    transcript = write_transcript(tmp_path / "session.jsonl", start=start)
+
+    run_hook([{"dir": "app", "check_stop": saving(saved)}], app, transcript=transcript)
+
+    assert saved_bytes(saved) == listed
+
+
+# argv: a checkout's top. Builds its check_stop list for a session that starts in a minute, so
+# that no file or folder counts, then prints the list and each path os.lstat read, sorted.
+FOLDER_READS = """\
+import json, os, time, stop_gate
+from pathlib import Path
+top, reads, lstat = sys.argv[1], [], os.lstat
+def reading(path, *args, **kwargs):
+    reads.append(path)
+    return lstat(path, *args, **kwargs)
+os.lstat = reading
+every = stop_gate.changed_code(Path(top), time.time() + 60, all_paths=True)[1]
+os.lstat = lstat
+print(json.dumps([every, sorted(os.path.relpath(path, top) for path in reads)]))
+"""
+
+
+def test_reads_each_folder_once_when_untracked_files_share_it(
+    workspace: Path, *, hook_python: str, tmp_path: Path, run_python: Callable[..., Any]
+) -> None:
+    # The gate keeps each folder's answer. Without it, each untracked file reads every folder
+    # above it again, and a deep tree with many files can pass the hook's timeout.
+    app = workspace / "app"
+    (app / "d1" / "d2").mkdir(parents=True)
+    for name in ("x.md", "y.md", "z.md"):
+        (app / "d1" / "d2" / name).write_text("x\n", encoding="utf-8")
+
+    result = run_python(
+        hook_python,
+        FOLDER_READS,
+        path=workspace / "demo-hub" / HOOK.rsplit("/", 1)[0],
+        args=[str(app)],
+        cwd=tmp_path,
+    )
+
+    assert result == [[], ["d1", "d1/d2", "d1/d2/x.md", "d1/d2/y.md", "d1/d2/z.md"]]
+
+
+def test_lists_whole_name_when_old_git_prints_arrow_unquoted(
+    run_hook: RunHook, workspace: Path, *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # git before 2.29 printed a space in an untracked name unquoted, so a new name holding " -> "
+    # reads like a rename record. A git first on the gate's PATH prints this tree's status as
+    # such a git did, and hands any other call to git. Each name is listed whole: no piece of it,
+    # absolute or holding "..", reaches check_stop.
+    app = workspace / "app"
+    names = ["a.py", "x -> /etc/passwd", "y -> ../z.py"]
+    for name in names:
+        (app / name).parent.mkdir(parents=True, exist_ok=True)
+        (app / name).write_text("x = 1\n", encoding="utf-8")
+    old_status = tmp_path / "old-status"
+    old_status.write_text("".join(f"?? {name}\n" for name in names), encoding="utf-8")
+    git = shutil.which("git")
+    assert git is not None
+    old_git = tmp_path / "old-git"
+    old_git.mkdir()
+    (old_git / "git").write_text(
+        f'#!/bin/sh\ncase "$1" in status) exec cat {shlex.quote(str(old_status))};; esac\n'
+        f'exec {shlex.quote(git)} "$@"\n',
+        encoding="utf-8",
+    )
+    (old_git / "git").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{old_git}{os.pathsep}{os.environ.get('PATH', os.defpath)}")
+    saved = tmp_path / "changed-files"
+
+    run_hook([{"dir": "app", "check_stop": saving(saved)}], app)
+
+    assert saved_bytes(saved) == b"a.py\nx -> /etc/passwd\ny -> ../z.py"
+
+
+def test_blocks_when_only_change_is_new_file_named_with_arrow(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # Only a rename or copy record is split at " -> ", so in a hub without check_stop this new
+    # code file starts check_fast under its whole name. The part after the arrow, y.py, names no
+    # file, so a gate that reads only that part runs nothing.
+    app = workspace / "app"
+    name = "x -> y.py"
+    (app / name).write_text("x = 1\n", encoding="utf-8")
+    status = git_in(app, tmp_path, "status", "--porcelain", "--untracked-files=all")
+    assert status == f'?? "{name}"\n'
+
+    output = run_hook([{"dir": "app", "check_fast": "echo boom; exit 3"}], app)
+
+    assert output.get("decision") == "block"
+    assert f"\nchanged: {name}\n" in output["reason"]
+
+
+@pytest.mark.parametrize(
+    ("quote_path", "name", "shown", "exit_code", "decision", "before_session"),
+    [
+        pytest.param("true", "café.py", '"caf\\303\\251.py"', 0, None, False, id="non_ascii"),
+        pytest.param("true", "my notes.md", '"my notes.md"', 3, "block", False, id="space"),
+        pytest.param(
+            "true", "my notes.md", '"my notes.md"', 0, None, True, id="space_before_session"
+        ),
+        pytest.param("false", "x\u0085y.py", "x\u0085y.py", 0, None, False, id="raw_next_line"),
+        pytest.param(
+            "false", "x\u2028y.py", "x\u2028y.py", 0, None, False, id="raw_line_separator"
+        ),
+        pytest.param(
+            "false", "x\u2029y.py", "x\u2029y.py", 0, None, False, id="raw_paragraph_separator"
+        ),
+    ],
+)
+def test_leaves_changed_files_unset_when_git_quotes_a_path(
+    run_hook: RunHook,
+    workspace: Path,
+    tmp_path: Path,
+    *,
+    quote_path: str,
+    name: str,
+    shown: str,
+    exit_code: int,
+    decision: str | None,
+    before_session: bool,
+) -> None:
+    # git prints this new name quoted, so a list could only leave it out and come up one path
+    # short: check_stop gets no list and finds the changes itself. It still runs, and its exit
+    # code decides as usual (a pass or a failure, by row). Under core.quotePath=false git prints
+    # a non-ASCII name raw, and Python's splitlines() breaks a line at U+0085, U+2028 and U+2029:
+    # the record would come apart into pieces of names, so no list either. A quoted name counts
+    # even when its file is older than the session by both dates (before_session): the gate
+    # cannot read the dates of a name it cannot unquote.
+    app = workspace / "app"
+    git_in(app, tmp_path, "config", "core.quotePath", quote_path)
+    if before_session:
+        (app / name).write_text("x = 1\n", encoding="utf-8")
+    start = start_between_writes()
+    (app / "a.py").write_text("x = 1\n", encoding="utf-8")
+    if not before_session:
+        (app / name).write_text("x = 1\n", encoding="utf-8")
+    dates = (app / name).lstat()
+    assert (max(dates.st_mtime, dates.st_ctime) < start.timestamp()) == before_session
+    status = git_in(app, tmp_path, "status", "--porcelain", "--untracked-files=all")
+    assert sorted(status.rstrip("\n").split("\n")) == sorted(["?? " + shown, "?? a.py"])
+    saved = tmp_path / "changed-files"
+    transcript = write_transcript(tmp_path / "session.jsonl", start=start)
+
+    output = run_hook(
+        [{"dir": "app", "check_stop": f"{saving(saved)}; exit {exit_code}"}],
+        app,
+        transcript=transcript,
+    )
+
+    assert saved_bytes(saved) == b"unset"
+    assert output.get("decision") == decision
+
+
+@pytest.mark.parametrize(
+    "size",
+    [
+        pytest.param(CHANGED_FILES_CAP, id="at_cap"),
+        pytest.param(CHANGED_FILES_CAP + 1, id="over_cap"),
+    ],
+)
+def test_leaves_changed_files_unset_when_list_over_cap(
+    run_hook: RunHook, workspace: Path, tmp_path: Path, *, size: int
+) -> None:
+    # A list of exactly the cap still reaches check_stop; one byte more and check_stop runs
+    # without the variable, judged as usual: it passes, so no block.
+    listed = write_new_files(workspace / "app", size)
+    saved = tmp_path / "changed-files"
+
+    output = run_hook([{"dir": "app", "check_stop": saving(saved)}], workspace / "app")
+
+    assert saved_bytes(saved) == (listed if size <= CHANGED_FILES_CAP else b"unset")
+    assert "decision" not in output
+
+
+# argv: the hook. Lowers the soft stack limit to 512 KiB, which on Linux leaves a child 128 KiB
+# for its argv and environment, then runs the hook in this process.
+SMALL_STACK = """\
+import os, resource, sys
+hard = resource.getrlimit(resource.RLIMIT_STACK)[1]
+resource.setrlimit(resource.RLIMIT_STACK, (512 * 1024, hard))
+os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
+"""
+FILLER_BYTES = 100_000
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="only Linux sizes a child's environment by the stack limit"
+)
+def test_retries_without_changed_files_when_environment_too_big(
+    workspace: Path, hook_python: str, *, tmp_path: Path
+) -> None:
+    # The gate's environment holds a 100,000-byte variable, which fits in 128 KiB; with a list
+    # under the cap added it does not, so bash cannot start with the list: the gate starts it
+    # again without the list, and the run is judged as usual.
+    listed = write_new_files(workspace / "app", 59_993)
+    assert len(listed) <= CHANGED_FILES_CAP
+    assert FILLER_BYTES < 128 * 1024 < FILLER_BYTES + len(listed)
+    log = tmp_path / "runs.log"
+    hub = workspace / "demo-hub"
+    check = appending(log, "check_stop" + WITH_CHANGED_FILES)
+    document = {"project": {"name": "demo"}, "repos": [{"dir": "app", "check_stop": check}]}
+    (hub / "hub.json").write_text(json.dumps(document), encoding="utf-8")
+    event = {"cwd": str(workspace / "app"), "session_id": f"e2big-{os.getpid()}-{tmp_path.name}"}
+    env = scratch_env(tmp_path) | {"HUB_TEST_FILLER": "x" * FILLER_BYTES}
+
+    completed = subprocess.run(  # noqa: S603 - an interpreter from hook_python, the rendered hook
+        [hook_python, "-c", SMALL_STACK, str(hub / HOOK)],
+        input=json.dumps(event).encode("utf-8"),
+        capture_output=True,
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        timeout=TIMEOUT,
+    )
+
+    assert (completed.returncode, completed.stderr) == (0, b"")
+    assert recorded(log) == ["check_stop"]
+    assert b"could not start" not in completed.stdout
+
+
+@pytest.mark.parametrize("kind", ["check_fast", "check_stop"])
+def test_drops_inherited_changed_files_when_gate_starts_a_check(
+    workspace: Path, hook_python: str, *, tmp_path: Path, kind: str
+) -> None:
+    # The gate's parent already holds HUB_CHANGED_FILES: no check gets that value. check_fast
+    # never gets the variable; check_stop gets the gate's own list only, here over the cap.
+    listed = write_new_files(workspace / "app", 70_699)
+    assert len(listed) > CHANGED_FILES_CAP
+    saved = tmp_path / "changed-files"
+    env = scratch_env(tmp_path) | {"HUB_CHANGED_FILES": "inherited"}
+
+    completed, _ = run_gate(
+        workspace, hook_python, repos=[{"dir": "app", kind: saving(saved)}], env=env
+    )
+
+    assert (completed.returncode, completed.stderr) == (0, b"")
+    assert saved_bytes(saved) == b"unset"
+
+
+def test_creates_no_file_when_changed_path_holds_shell_text(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # The path reaches check_stop as data alone: no shell reads it as command text, so the
+    # command substitution in its name runs nothing. git prints a name holding a space quoted,
+    # which leaves the list unset, so this name splits its words with ${IFS}.
+    app = workspace / "app"
+    name = "$(touch${IFS}pwned).py"
+    (app / name).write_text("x = 1\n", encoding="utf-8")
+    status = git_in(app, tmp_path, "status", "--porcelain", "--untracked-files=all")
+    assert status == f"?? {name}\n"
+    saved = tmp_path / "changed-files"
+
+    run_hook([{"dir": "app", "check_stop": saving(saved)}], app)
+
+    assert saved_bytes(saved) == name.encode("utf-8")
+    assert sorted(tmp_path.rglob("pwned")) == []

@@ -1,0 +1,8 @@
+# The first review asks for rework, the second approves: two rounds, then ship.
+workflow: rework
+stubs:
+  rounds__draft: [{text: v1}, {text: v2}]
+  rounds__review: [{output: {decision: rework}}, {output: {decision: approve}}]
+  ship: {text: shipped}
+expect: {status: done}
+reached: [rounds, rounds__draft, rounds__review, ship]

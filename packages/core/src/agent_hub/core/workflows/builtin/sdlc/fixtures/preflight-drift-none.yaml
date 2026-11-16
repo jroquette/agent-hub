@@ -1,0 +1,29 @@
+# A blocker merged and the dependent has not read its outcome: its next context brief, then a
+# fresh, read-only preflight that reads the outcome and finds the plan still holds; its run is
+# appended and the check ends passed. No worktree, branch, commit or PR node exists (AC-3.2).
+workflow: preflight
+inputs:
+  feature: demo-flow
+  ticket: DEM-8
+  blocker: DEM-7
+stubs:
+  due:
+    output: {due: true, reason: '', input: none}
+  context:
+    output: {path: /ws/hub/brain/features/demo-flow/tickets/DEM-8/brief.md, hub: /ws/hub, repo: demo-api,
+      commit: 0a1b2c3d4e}
+  check__preflight:
+    output:
+      drift: none
+      local_notes: []
+      blockers_read: [DEM-7]
+      evidence: ''
+      proposal: ''
+      affected: ''
+      summary: ''
+  check__record:
+    output: {runs: 2}
+  check__result:
+    output: {status: passed, superseded: ''}
+expect: {status: done, outcome: passed}
+reached: [due, context, check__preflight, check__record, check__result]

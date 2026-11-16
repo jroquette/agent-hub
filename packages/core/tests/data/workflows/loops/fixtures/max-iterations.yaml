@@ -1,0 +1,7 @@
+# One stub answers every turn; never done, implement fails at its cap and polish skips.
+workflow: loops
+stubs:
+  implement: {output: {done: false}}
+expect: {status: failed}
+failed: [implement]
+reached: [implement]

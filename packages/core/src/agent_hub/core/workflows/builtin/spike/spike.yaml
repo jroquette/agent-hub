@@ -1,0 +1,408 @@
+# A timeboxed spike: one question to research.md and an ADR draft, with no code change.
+# Read-only agents recall what the brain already says, research the code, then offer 2 or 3
+# options; the owner picks one (or asks for more, up to three rounds of options); a premortem
+# finds the pick's top three failure causes; draft.py writes brain/features/<slug>/research.md
+# and, when there were options, adr-draft-<slug>.md beside it.
+#
+# Invariants. No code change: every agent is read-only (mutates_checkout: false, so a change to
+# the hub or a repo fails its step) and only draft writes, only under brain/features/<slug>/,
+# never over an existing file. The ADR stays a draft until /adr: no number, status draft, never
+# under docs/adr. ADR 0030: no tracker read or write (no issue input, no hub step node).
+#
+# Timebox. A timed-out node fails the run, so the timebox (default 2h of agent time) is kept by
+# budget.py between the agent steps: tick adds the step's time (capped at its timeout), settle
+# restarts the clock after the gate (the owner's thinking time is not agent time), and each later
+# agent step runs only while the budget is not spent. A run that reaches it skips the rest, pick
+# included, and ends done with what it has, marked incomplete. Each agent step has a hard ceiling
+# (its timeout, no retry), so a run overshoots the timebox by one step at most.
+#
+# Start (from the hub): ./hub workflow run spike --input question="$(cat <file>)"
+#   --input slug=<slug> --input timebox=2h --live
+# Answer the pick: ./hub workflow respond <run> --choice a|b|c|more --text "<note>".
+version: 1
+name: spike
+description: A timeboxed spike - recall, research, options, the owner's pick, a premortem, then research.md and an ADR draft.
+revision: 1
+inputs:
+  question:
+    required: true
+    description: The spike's question (1-2000 characters).
+  timebox:
+    default: 2h
+    description: The agent time the spike may spend, <n>m or <n>h, from 10m to 8h.
+  slug:
+    default: ""
+    description: The feature folder under brain/features/; derived from the question when empty.
+returns: draft
+outcome_field: result
+nodes:
+  - id: setup
+    type: script
+    description: Check the inputs and start the agent-time budget, before any agent time is spent.
+    runtime: python
+    script: budget.py
+    args: [start, --question, $INPUTS.question, --timebox, $INPUTS.timebox, --slug, $INPUTS.slug]
+    retry: {max_attempts: 0}
+    timeout: 5m
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [slug, timebox_s, spent_s, at, over, left_m, round]
+      properties:
+        slug: {type: string, pattern: "^[a-z0-9][a-z0-9-]{0,63}$"}
+        timebox_s: {type: integer, minimum: 600}
+        spent_s: {type: integer, minimum: 0}
+        at: {type: number}
+        over: {type: boolean}
+        left_m: {type: integer, minimum: 0}
+        round: {type: integer, minimum: 0, maximum: 3}
+
+  - id: recall
+    type: agent
+    description: What the brain, the decisions and the journal already say about the question (read-only).
+    depends_on: [setup]
+    prompt_file: recall.md
+    mutates_checkout: false
+    retry: {max_attempts: 0}
+    timeout: 20m
+    limits: {max_turns: 30, max_cost_usd: 1.5}
+    with:
+      question: $INPUTS.question
+      minutes_left: $setup.output.left_m
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [summary, sources]
+      properties:
+        summary: {type: string, maxLength: 2000, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+        sources:
+          type: array
+          maxItems: 10
+          items:
+            type: object
+            additionalProperties: false
+            required: [ref, says]
+            properties:
+              ref: {type: string, maxLength: 200, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+              says: {type: string, maxLength: 300, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+
+  - id: t_recall
+    type: script
+    description: Add recall's time to the budget.
+    depends_on: [setup, recall]
+    trigger_rule: none_failed_min_one_success
+    runtime: python
+    script: budget.py
+    args: [tick, --state, $setup.output, --cap, 20m]
+    retry: {max_attempts: 0}
+    timeout: 5m
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [slug, timebox_s, spent_s, at, over, left_m, round]
+      properties:
+        slug: {type: string, pattern: "^[a-z0-9][a-z0-9-]{0,63}$"}
+        timebox_s: {type: integer, minimum: 600}
+        spent_s: {type: integer, minimum: 0}
+        at: {type: number}
+        over: {type: boolean}
+        left_m: {type: integer, minimum: 0}
+        round: {type: integer, minimum: 0, maximum: 3}
+
+  - id: research
+    type: agent
+    description: How the code works today for the question, with path:line references (read-only).
+    depends_on: [t_recall]
+    when: "$t_recall.output.over == false"
+    prompt_file: research.md
+    mutates_checkout: false
+    retry: {max_attempts: 0}
+    timeout: 60m
+    limits: {max_turns: 60, max_cost_usd: 4.0}
+    with:
+      question: $INPUTS.question
+      recall: $recall.output.summary
+      minutes_left: $t_recall.output.left_m
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [summary, repos, findings, invariants, open_questions]
+      properties:
+        summary: {type: string, maxLength: 2000, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+        repos:
+          type: array
+          maxItems: 10
+          items: {type: string, minLength: 1, maxLength: 64, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}
+        findings:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            type: object
+            additionalProperties: false
+            required: [area, fact, where]
+            properties:
+              area: {type: string, maxLength: 80, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+              fact: {type: string, maxLength: 300, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+              where: {type: string, maxLength: 160, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+        invariants:
+          type: array
+          maxItems: 6
+          items: {type: string, maxLength: 300, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+        open_questions:
+          type: array
+          maxItems: 6
+          items: {type: string, maxLength: 300, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+
+  - id: t_research
+    type: script
+    description: Add research's time to the budget.
+    depends_on: [t_recall, research]
+    trigger_rule: none_failed_min_one_success
+    runtime: python
+    script: budget.py
+    args: [tick, --state, $t_recall.output, --cap, 60m]
+    retry: {max_attempts: 0}
+    timeout: 5m
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [slug, timebox_s, spent_s, at, over, left_m, round]
+      properties:
+        slug: {type: string, pattern: "^[a-z0-9][a-z0-9-]{0,63}$"}
+        timebox_s: {type: integer, minimum: 600}
+        spent_s: {type: integer, minimum: 0}
+        at: {type: number}
+        over: {type: boolean}
+        left_m: {type: integer, minimum: 0}
+        round: {type: integer, minimum: 0, maximum: 3}
+
+  - id: choose
+    type: loop_group
+    description: Options, then the owner's pick - again with the owner's note when they ask for more, three rounds at most.
+    depends_on: [t_research]
+    # Equal to settle's --max-rounds: settle ends the rounds itself, so the group never fails.
+    max_iterations: 3
+    until_when: "$settle.output.done == true"
+    nodes:
+      - id: options
+        type: agent
+        description: Two or three options with trade-offs and a recommendation (read-only; resumed on a request for more).
+        when: "$t_research.output.over == false"
+        prompt_file: options.md
+        mutates_checkout: false
+        retry: {max_attempts: 0}
+        timeout: 20m
+        limits: {max_turns: 20, max_cost_usd: 1.5}
+        with:
+          question: $INPUTS.question
+          recall: $recall.output.summary
+          research: $research.output
+          feedback: $LOOP_PREV.settle.output.note
+          minutes_left: $t_research.output.left_m
+          # The minutes left after the previous round (empty in round 1): the current figure.
+          round_minutes_left: $LOOP_PREV.settle.output.left_m
+        output_format:
+          type: object
+          additionalProperties: false
+          required: [options, recommendation, reason, brief]
+          properties:
+            options:
+              type: array
+              minItems: 2
+              maxItems: 3
+              items:
+                type: object
+                additionalProperties: false
+                required: [id, title, summary, pros, cons]
+                properties:
+                  id: {type: string, enum: [a, b, c]}
+                  title: {type: string, minLength: 1, maxLength: 120, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+                  summary: {type: string, maxLength: 800, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+                  pros:
+                    type: array
+                    maxItems: 5
+                    items: {type: string, maxLength: 200, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+                  cons:
+                    type: array
+                    maxItems: 5
+                    items: {type: string, maxLength: 200, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+            recommendation: {type: string, enum: [a, b, c]}
+            reason: {type: string, maxLength: 600, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+            # Shown in the gate only, so it may hold line breaks.
+            brief: {type: string, maxLength: 3000, pattern: "^[^\\x00-\\x09\\x0b-\\x1f\\x7f-\\x9f]*$"}
+
+      - id: t_options
+        type: script
+        description: Add the options' time to the budget and count the round.
+        depends_on: [options]
+        trigger_rule: all_done
+        runtime: python
+        script: budget.py
+        args: [tick, --state, $t_research.output, --loop-prev, $LOOP_PREV.settle.output, --cap, 20m, --round]
+        retry: {max_attempts: 0}
+        timeout: 5m
+        output_format:
+          type: object
+          additionalProperties: false
+          required: [slug, timebox_s, spent_s, at, over, left_m, round]
+          properties:
+            slug: {type: string, pattern: "^[a-z0-9][a-z0-9-]{0,63}$"}
+            timebox_s: {type: integer, minimum: 600}
+            spent_s: {type: integer, minimum: 0}
+            at: {type: number}
+            over: {type: boolean}
+            left_m: {type: integer, minimum: 0}
+            round: {type: integer, minimum: 0, maximum: 3}
+
+      - id: pick
+        type: approval
+        description: The owner picks an option, or asks for more with a note.
+        depends_on: [t_options]
+        when: "$t_options.output.over == false"
+        message: >-
+          Spike, round $t_options.output.round of 3: $INPUTS.question
+
+          $options.output.brief
+
+          Recommended: $options.output.recommendation. Pick with --choice a, b or c (a note in
+          --text goes to the premortem and the ADR draft), or ask for more with --choice more
+          and say in --text what to add or change.
+        decisions:
+          - {id: a, label: Option a}
+          - {id: b, label: Option b}
+          - {id: c, label: Option c}
+          - {id: more, label: More options}
+        capture_response: true
+
+      - id: settle
+        type: script
+        description: Read the pick, restart the clock after the gate, and say whether the rounds are done.
+        depends_on: [pick]
+        trigger_rule: all_done
+        runtime: python
+        script: budget.py
+        args:
+          - settle
+          - --state
+          - $t_options.output
+          - --options
+          - $options.output
+          - --decision
+          - $pick.output.decision
+          - --note
+          - $pick.output.text
+          - --approver
+          - $pick.output.approver
+          - --max-rounds
+          - "3"
+        retry: {max_attempts: 0}
+        timeout: 5m
+        output_format:
+          type: object
+          additionalProperties: false
+          required: [slug, timebox_s, spent_s, at, over, left_m, round, picked, go, done, note, approver, option]
+          properties:
+            slug: {type: string, pattern: "^[a-z0-9][a-z0-9-]{0,63}$"}
+            timebox_s: {type: integer, minimum: 600}
+            spent_s: {type: integer, minimum: 0}
+            at: {type: number}
+            over: {type: boolean}
+            left_m: {type: integer, minimum: 0}
+            round: {type: integer, minimum: 0, maximum: 3}
+            picked: {type: string, enum: ["", a, b, c]}
+            go: {type: boolean}
+            done: {type: boolean}
+            note: {type: string, maxLength: 2000}
+            approver: {type: string, maxLength: 200}
+            option: {type: object}
+
+  - id: premortem
+    type: agent
+    description: The pick's top three failure causes, each with its early sign and cheapest experiment (read-only).
+    depends_on: [choose]
+    when: "$choose.output.settle.go == true"
+    prompt_file: premortem.md
+    mutates_checkout: false
+    retry: {max_attempts: 0}
+    timeout: 20m
+    limits: {max_turns: 20, max_cost_usd: 1.5}
+    with:
+      question: $INPUTS.question
+      option: $choose.output.settle.option
+      options: $choose.output.options
+      note: $choose.output.settle.note
+      research: $research.output.summary
+      minutes_left: $choose.output.settle.left_m
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [causes, others, assumptions, first]
+      properties:
+        causes:
+          type: array
+          minItems: 3
+          maxItems: 3
+          items:
+            type: object
+            additionalProperties: false
+            required: [cause, likelihood, impact, sign, experiment]
+            properties:
+              cause: {type: string, minLength: 1, maxLength: 600, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+              likelihood: {type: string, enum: [high, moderate, low, unknown]}
+              impact: {type: string, enum: [high, moderate, low, unknown]}
+              sign: {type: string, maxLength: 400, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+              experiment: {type: string, maxLength: 600, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+        others:
+          type: array
+          maxItems: 5
+          items: {type: string, maxLength: 300, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+        assumptions:
+          type: array
+          maxItems: 8
+          items:
+            type: object
+            additionalProperties: false
+            required: [text, checked]
+            properties:
+              text: {type: string, maxLength: 300, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+              checked: {type: boolean}
+        first: {type: string, maxLength: 400, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+
+  - id: draft
+    type: script
+    description: Write research.md and the ADR draft under brain/features/<slug>/, marked incomplete when a step was missed.
+    depends_on: [choose, premortem]
+    trigger_rule: none_failed_min_one_success
+    runtime: python
+    script: draft.py
+    args:
+      - --slug
+      - $setup.output.slug
+      - --question
+      - $INPUTS.question
+      - --state
+      - $choose.output.settle
+      - --recall
+      - $recall.output
+      - --options
+      - $choose.output.options
+      - --premortem
+      - $premortem.output
+    # On stdin: the research is the largest output.
+    stdin: $research.output
+    retry: {max_attempts: 0}
+    timeout: 5m
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [result, research, adr, reasons, spent_m]
+      properties:
+        result: {type: string, enum: [complete, incomplete]}
+        research: {type: string}
+        adr: {type: string}
+        reasons:
+          type: array
+          maxItems: 10
+          items: {type: string}
+        spent_m: {type: integer, minimum: 0}

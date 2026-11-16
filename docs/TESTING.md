@@ -1,0 +1,561 @@
+# Testing
+
+How agent-hub is tested: the levels, where tests live, how they are named and which gate runs them. The decision is
+[ADR 0005](adr/0005-testing-strategy.md). Commands below use `R="uv run --locked --all-packages"`, the same runner the
+Makefile uses.
+
+## Principles
+
+- **TDD.** Write the failing test first, run it and see it fail for the expected reason, then implement. A new module's
+  first red run usually fails at collection (import error, pytest exit 2); that counts as red.
+- **Never weaken an assertion** to make a test pass. Fix the code, or change the test in the open with the reason.
+- **Headless skills run once for real.** A skill that runs headless (`claude -p`) gets one capped real run before
+  merge; its AC checks the file the run writes, not the skill's wording.
+- **Synthetic fixtures only.** Test data comes from builders in `agent_hub.core.testing.builders`. No real transcripts,
+  no `*.jsonl` copied from `~/.claude/projects`, no real tokens, keys or personal data, anywhere in the repo.
+- **Hermetic.** Unit and contract tests have no network (sockets are blocked). No test reads or writes the real database
+  or `~/.claude`; files go under pytest's `tmp_path`. The real database is the file `hub collect` picks: `--db PATH`,
+  else `AGENT_HUB_DB`, else `$XDG_DATA_HOME/agent-hub/agent-hub.db` (when `XDG_DATA_HOME` is absolute), else
+  `~/.local/share/agent-hub/agent-hub.db`, where `~` is `HOME` when it is non-empty and absolute, else the account's
+  home from the password database. `packages/cli/tests/conftest.py` has an autouse fixture that points `HOME`,
+  `XDG_DATA_HOME` and `XDG_STATE_HOME` (the hook spool's folder, which `hub web` imports at start) under `tmp_path`
+  and unsets `AGENT_HUB_DB` for every cli test; a test that needs other values
+  passes them to `CliRunner.invoke(env=...)`. JSON Lines inputs are written to `tmp_path` at test time from the
+  builders (`an_event`, `events_to_jsonl`); no `*.jsonl` file is committed. A test that runs a child process and
+  must show it stays off the network uses the outbound probe, `agent_hub.core.testing.outbound_probe`: the child gets
+  an environment built from scratch, a `sitecustomize` that records and refuses each Python socket connect, `sendto`
+  and name lookup that is not loopback, stand-ins for `gh`, `uv`, `uvx`, `claude`, `curl`, `wget` and `ssh`, and proxy
+  variables that point at a local recorder. The test reads the probe's logs only once `processes_left` finds nothing
+  the child started still running, since a detached child can call out after its parent has exited. The module's
+  docstring lists what the probe cannot see, such as a Python child started with `-I`, `-E` or `-S`.
+
+## Levels
+
+| Level | What it tests | Where | Runs in |
+|---|---|---|---|
+| unit | Core logic against in-memory fakes; one module at a time; no I/O, no network | `packages/<pkg>/tests/unit/`, root `tests/unit/` (repo scripts) | `make check-fast` |
+| contract | A port's behavior: one suite in `agent_hub.core.testing.contracts`, run against the fake (`agent_hub.core.testing.fakes`) and against the real adapter; no network | `packages/<pkg>/tests/contract/` | `make check-fast` |
+| integration | Adapters against real infrastructure: a SQLite file under `tmp_path`, Alembic upgrade and downgrade; the generator's rendered hooks, scripts and `./hub` shim run in a temporary hub, with the characterization goldens; the CLI commands against local bare repos | `packages/<pkg>/tests/integration/` | `make check` |
+| e2e | The installed product and the gates as subprocesses: `hub` installed with `uv tool install`; `docs/USING.md`'s runbook run line by line; ruff and mypy run with the repo's configs; the import-linter contracts; the rendered hooks and scripts linted for Python 3.9; the package data the built wheels ship; `make demo`'s seed against `hub web` | root `tests/e2e/` | `make check` |
+| docker | The image and its Compose service, built and run, checked from the host (`tests/e2e/test_docker.py`, marker `docker`) | root `tests/e2e/` | `make test-docker` and its CI job, never `make check` |
+| live agent | A real `claude -p` session in a temp hub, seen through `hub web`, and a session `hub web` drives whose `git push origin main` the guard denies (`tests/e2e/test_live_agent.py`, marker `live("claude")`) | root `tests/e2e/` | `make test-live`, by hand |
+| web | The React app: Vitest + Testing Library in jsdom for components and screens (states, a11y with `axe-core`), against `src/testing/builders.ts` fixtures and a mocked API (`renderWithApi`) | `apps/web/src/**/*.test.{ts,tsx}` beside the code | `make check-fast` (`web-fast`) |
+| web smoke | The built app on an installed `hub web`: Playwright (Chromium) opens the printed token URL, visits the nine P2 pages of a synthetic scenario, drives an agent session against the stub `claude` through two reloads, and loads the route chunks on demand | `apps/web/e2e/smoke.spec.ts` and `routes.spec.ts`, driven by root `tests/e2e/test_web_smoke.py` | `make check` (`test-e2e`) |
+| web visual | Each screen the owner validated in the playground (AGH-314), on the demo data (`seed_demo`) at 1440 × 900, dark theme, clock frozen at 2026-01-01T12:00:00Z, `<time>` masked, against its export PNG (`e2e/visual/baselines/<area>/<route>.png`, `maxDiffPixelRatio` 0.05: text renders differently per machine and Chromium build, so it catches a broken layout, not a copy change) | `apps/web/e2e/visual/<area>.spec.ts`, driven by root `tests/e2e/test_web_visual.py` | `make check` (`test-e2e`) |
+
+A port's suite is written once, as reusable tests in `agent_hub.core.testing.contracts`, and each implementation's
+`tests/contract/` runs it against that implementation, so the fake used by unit tests is proven to behave like the real
+adapter. The first suite is `EventStoreContract`: a class of tests that take an `event_store` fixture. Each
+implementation's `tests/contract/conftest.py` provides that fixture (`packages/core/tests/contract/` returns an
+`InMemoryEventStore`; `packages/storage/tests/contract/` returns `open_event_store(tmp_path / "events.db")`, a migrated
+SQLite file), and a test module subclasses the suite (`class TestSqliteEventStore(EventStoreContract)`).
+The second is `TrackerClientContract`, whose tests take a `tracker_client` fixture and the `tracker_backend` it reads and
+writes (`a_seeded_tracker_backend()`, synthetic issues only); the suite asserts on the backend's state. It runs against
+`InMemoryTrackerClient` (`packages/core/tests/contract/`) and against `LinearGraphqlTrackerClient`
+(`packages/tracker_linear/tests/contract/`), whose transport is `FakeLinearApi`, an in-process fake of Linear's GraphQL
+API over the same backend (`packages/tracker_linear/tests/conftest.py`), so no socket opens, and against
+`McpTrackerClient`, whose runner is `FakeClaude`, an honest model over the same backend in the same conftest, so no
+`claude` process starts.
+The third is `BrainChangeRequestsContract` (`agent_hub.core.testing.brain_change_requests_contract`), whose tests take a
+`brain_change_requests` fixture and a `brain_origin` that reads what reached the hub's `origin` (its commits and the
+pull requests opened). It runs against `InMemoryBrainChangeRequests` with `FakeBrainOrigin`
+(`packages/core/tests/contract/`) and against `GitBrainChangeRequests` (`packages/hub_git/tests/contract/`), with real
+`git` over a git-backed origin.
+The fourth is `TrackerReaderContract` (`agent_hub.core.testing.tracker_reader_contract`, ADR 0025), whose tests take a
+`tracker_reader` fixture and the `issue_board` it reads (`a_seeded_issue_board()`, synthetic issues with "blocks"
+relations; `FakeIssueBoard` in `agent_hub.core.testing.tracker_reader_fakes`). It runs against `InMemoryTrackerReader`
+(`packages/core/tests/contract/`) and against `LinearGraphqlTrackerReader` (`packages/tracker_linear/tests/contract/`)
+over `FakeLinearApi`, which serves the board with Linear's field names (`relations` and `inverseRelations` of type
+`blocks`, a float `priority`, `assignee { displayName }`). Because the fake is written from the same reading of the
+schema as the adapter, the reader's strict shape check is also run against `SYNTHETIC_SUMMARIES_ANSWER`, a
+hand-written answer in the shape of Linear's public schema (in the same conftest; no recorded Linear data). The real
+schema is checked only by the by-hand `live` test (`test_linear_live.py -k summaries`, with a real key; never in a gate).
+The same fakes module holds what the app's tests use instead of Linear: `CountingTrackerReader` (counts reads, for the
+cache), `FailingTrackerReader(kind, http_status=)` (each failure kind) and `InMemoryTicketSnapshots`. The API's tests
+reach the GraphQL reader end to end through `build_app(linear_post=…)`, an injected transport, with a synthetic key in
+the injected environment: no socket opens and no real key is read.
+
+The fifth and sixth are the agent sessions' (ADR 0031). `SessionDriverContract`
+(`agent_hub.core.testing.session_driver_contract`) takes `session_driver` and `scenario` fixtures and checks event order, `init`
+before text, a `result` with cost and usage ending each turn, `exited` after close, and a permission request parked
+until answered. It runs against `InMemorySessionDriver` (`agent_hub.core.testing.session_driver_fakes`, scripted turns
+per message, `Hold` to park a turn; `packages/core/tests/contract/`) and against `ClaudeSdkSessionDriver`
+(`packages/claude_sessions/tests/contract/`) driving the **stub CLI**: `agent_hub.claude_sessions.testing.stub_claude`,
+run by a `claude` shim on `PATH` (`scenarios.write_shim`), plays a synthetic `Scenario` (`STUB_CLAUDE_SCENARIO`) over
+Claude Code's stream-json and control protocol, answers `--version`, `--help` and the `--cloud` forms, can spawn a
+tool grandchild, and appends what it saw to `STUB_CLAUDE_RECORD`. No recorded real output is committed, and no test
+calls a model. A subclass sets `pytestmark = pytest.mark.anyio`. `AgentSessionStoreContract`
+(`agent_hub.core.testing.agent_session_store_contract`) takes an `agent_session_store` fixture and runs against
+`InMemoryAgentSessionStore` and `SqliteAgentSessionStore`. `agent_hub.core.testing.agent_session_rig` (`build_rig`)
+puts `AgentSessionControl` over the in-memory driver and store with a clock the test moves; the API's
+`agent_session_app` fixture serves the routes over it with the cookie and `Origin` preset. The e2e tests run the
+installed `hub web` (with the `sessions` extra) against the stub on `PATH` (the `stub_claude` fixture), never a fake
+driver selected in production.
+
+**Async tests.** The use case and the adapter are async: such tests are `@pytest.mark.anyio` and run on asyncio only
+(the root `conftest.py`'s `anyio_backend`, as `hub web`'s loop); time is a fake clock and `sweep(now)`, never a sleep.
+
+`hub_git` is tested at three levels, all without the network and without a real GitHub account:
+
+- **unit** (`packages/hub_git/tests/unit/`): the push guard (`test_refspec_guard.py -k refuses`: the default branch, a
+  `+` or `:` refspec, `--force` and `-f`, an invalid name and a branch outside `<prefix>learning-` raise before git
+  runs), the runner over an injected `Launch` and clock (deadline, argv, environment), the remote parsing, and the
+  adapter's refusals before any git runs;
+- **contract**: the suite above;
+- **integration** (`packages/hub_git/tests/integration/`): the adapter against a real bare repository in `tmp_path` as
+  the hub's `origin`, the user's checkout cloned from it, and a fake `gh` on `PATH` (`packages/hub_git/tests/conftest.py`).
+  The origin's URL stays `https://github.com/acme/demo-hub.git`, as a real hub's is; a global git config under the
+  test's own `HOME` rewrites it to the bare repository (`url.<bare>.insteadOf`), so git never reaches the network. The
+  fake `gh` is a stdlib script that records its calls, answers `gh auth token` unless a `logged-out` switch is set,
+  and answers GitHub's REST API only, as a cloud session's proxy does (it refuses `gh pr`, which is GraphQL): for
+  `gh api --method POST repos/<repo>/pulls` it checks that the `head` field's branch is on the origin and prints the
+  pull request as JSON (its `html_url`), or fails (`fail`) or prints something else (`garbage`); `gh api --method GET
+  repos/<repo>/pulls -f head=<owner>:<branch> -f state=open` lists the open ones (`list-fail` fails it); any other
+  call exits 2. The tests check the REST argv (the body read from a file, never on the command line), the branch's
+  one commit (the hub author, no trailer), that
+  `origin/main` is unchanged, that the user's checkout is unchanged (`HEAD`, `git status`, `git for-each-ref`), that a
+  failed `gh` deletes the pushed branch, and that no temporary folder is left.
+
+The API's integration tests for the learning decisions and the web smoke drive the same kind of synthetic hub (a bare
+`origin` and a fake `gh`) through `hub web`.
+
+A test that runs a rendered hook or script takes the `hook_python` fixture, a real Python 3.9 (the system `python3` on
+macOS, the hooks' floor); without a 3.9 on `PATH` it runs on the current Python, and under `CI` it fails. The
+`each_python` fixture runs a smoke on both interpreters: every rendered module imports, and every hook entry point
+runs once (`test_imports_every_rendered_module_when_run_on_each_python`, `test_exits_zero_when_git_fails`).
+`test_hooks_make_no_network_call.py` runs every rendered hook under the outbound probe and expects no call; the only
+call allowed is SessionStart's detached refresh running `uvx … hub brief --write-cache` (ADR 0055).
+`packages/cli/tests/integration/test_simple_commands_make_no_network_call.py` does the same for the simple `hub`
+commands. The hooks file gives each case its own `TMPDIR`, since some hooks keep state there. A characterization
+case compares a hook's or script's exit code, stdout, stderr, files and calls to fake tools with
+`packages/generator/tests/integration/golden/<file>/<case>.golden`, stored byte-exact (`-text` in `.gitattributes`).
+The files are those under the case's root, less the harness's own `bin/`, `log/` and `state/` (the case's
+`XDG_STATE_HOME`, where the sensor spools what the event server did not take, so a case reads the same with the
+server up or down). `GOLDEN_UPDATE=1` rewrites the goldens (refused under `CI`; review and commit the diff) and `GOLDEN_KEEP=1` keeps each
+case's temporary root and prints its path. The `hub init` golden,
+`packages/cli/tests/integration/golden/init/demo.hub.lock`, is the synthetic `demo` init's `hub.lock` with
+`platform_version` as `<VERSION>` and every hash kept, so a template change shows as a reviewed hash diff; it is `-text`
+too, and `GOLDEN_UPDATE=1` rewrites it the same way (the cli conftest's own harness, refused under `CI`).
+`packages/cli/tests/integration/golden/parity/<scenario>.json` is what v0.14 `hub run` (its own stage machine, before
+AGH-224) left in each `test_workflow_parity.py` scenario: exit code, tracker calls, records and events, the run id,
+timestamps and workspace path taken out. It was recorded once and is never regenerated: no code left produces it.
+The text a two-team hub renders where it names the tracker teams, the text a hub with conventions renders where
+it shows them, and the seeded starter `AGENTS.md` for app repos are checked in byte-exact under
+`packages/generator/tests/integration/rendered/two_teams/<path>.golden`, `rendered/conventions/<path>.golden` and
+`rendered/app_repo_agents/<path>.golden` (`-text`) by `test_rendered_text.py`; `GOLDEN_UPDATE=1` rewrites them (refused
+under `CI`). Before a plan for a template change states pins or line budgets, apply the drafted text to a scratch
+export (`git archive origin/main | tar -x -C <scratch>`), run the generator and cli tests there, and measure
+`AGENTS.md` on the stacked configs (`a_stacked_conventions_config` in `test_render_hub.py`), not the goldens: the worst
+case is at the 100-line `instructions.size` cap. `apps/web/src/testing/treeDocuments.ts` is the strict loader's parse of each tree fixture under
+`packages/core/tests/data/scenarios/blocks/tree/`, as the API gives it, which the web builder's round trip is checked
+against; `packages/generator/tests/integration/test_web_tree_documents.py` checks it, and `GOLDEN_UPDATE=1` rewrites it
+(refused under `CI`).
+
+## Layout
+
+```
+packages/<pkg>/tests/unit/          # mirrors packages/<pkg>/src/agent_hub/<pkg>/
+packages/<pkg>/tests/contract/
+packages/<pkg>/tests/integration/
+tests/unit/scripts/                 # mirrors scripts/
+tests/e2e/
+```
+
+- A test file lives under exactly one `tests` folder, at the repo root or right under `packages/<name>/`, followed by a
+  level folder allowed there: `unit`, `contract` or `integration` in a package; `unit` or `e2e` at the root.
+- Test modules are named `test_*.py`. The only other Python files allowed in a tests tree are `conftest.py` and
+  `__init__.py`, so shared fixtures and helpers go in a `conftest.py` (for example `tests/e2e/conftest.py` provides the
+  `repo_root` and `run` fixtures).
+- **Mirroring (unit tests).** A unit test file mirrors an existing src module:
+  `packages/core/src/agent_hub/core/ingestion/ingest_events.py` →
+  `packages/core/tests/unit/ingestion/test_ingest_events.py`. A package `foo/__init__.py` is mirrored by
+  `test_foo.py`. Root unit tests mirror the repo root: `tests/unit/scripts/test_check_coverage.py` ↔
+  `scripts/check_coverage.py`. Contract, integration and e2e tests are named after the behavior, not a module.
+
+## Markers
+
+The folder decides the level; nobody writes level markers by hand.
+
+- `conftest.py` at the root loads `scripts/pytest_levels.py`. Its `level_of(path)` takes the path segment right after
+  the last `tests` segment, and its `pytest_collection_modifyitems` hook adds that marker (`unit`, `contract`,
+  `integration` or `e2e`) to every collected test. Unit and contract tests also get pytest-socket's `disable_socket`
+  marker, so opening a socket raises `SocketBlockedError`.
+- Every test but e2e also runs with `GIT_ALLOW_PROTOCOL=file` (an autouse fixture in the root `conftest.py`), so a git
+  call can reach only local repos: a test of the release lookup serves the tag from a local bare repo through
+  `url.<bare>.insteadOf`, and any lookup that escapes fails fast instead of reaching GitHub. Fixtures that build a git
+  environment from scratch keep the variable.
+- The markers are registered in `pytest.ini`, which sets `strict = true` (pytest 9: strict config, strict markers,
+  strict parametrization ids, strict xfail). An unregistered marker fails collection.
+- `pytest.ini` also sets `--import-mode=importlib` (test basenames repeat across packages and there are no
+  `__init__.py` files in tests trees), `testpaths = packages tests` and `pythonpath = .`.
+- The layout checker uses the same `level_of`, so a test the checker accepts always gets the marker it expects.
+- `live` is the one marker written by hand: a test that calls a real external API (the Linear smoke test,
+  `packages/tracker_linear/tests/integration/test_linear_live.py`). Under `integration/` it also gets `integration`,
+  but `make test-integration` selects `integration and not live`, so `make check` never reaches Linear, even with the
+  variables exported. Any other pytest run that collects it (for example
+  `$R pytest -m live packages/tracker_linear/tests/integration`) reaches Linear only when `LINEAR_API_KEY`,
+  `AGENT_HUB_LIVE_ISSUE` and `AGENT_HUB_LIVE_LABEL` are set and `AGENT_HUB_LIVE=1`; otherwise the same plugin skips each
+  case, naming the first missing variable. A test marked `live("mcp")` reaches Linear through its MCP server instead
+  of the key, so it needs the same variables except `LINEAR_API_KEY`, plus `AGENT_HUB_LIVE_HUB`, the hub root `claude`
+  runs from (the cwd production uses). Both smoke tests flip `AGENT_HUB_LIVE_LABEL` on the issue, so it is never the
+  ready label; the MCP one fails at setup when it is `agent-ready` or the hub's `tracker.ready_label`.
+
+`live("claude")` marks `tests/e2e/test_live_agent.py`: it needs only `AGENT_HUB_LIVE=1` (`make test-live` sets it)
+and skips itself when `claude` is missing or not logged in for a fresh `CLAUDE_CONFIG_DIR`. Its hub, database, Claude
+Code config and transcript live in one temp folder that is deleted afterwards; it costs a few cents (Claude Haiku 4.5,
+at most three turns; `AGENT_HUB_LIVE_MODEL` picks another model).
+
+`docker` is the other hand-written marker: `tests/e2e/test_docker.py` builds the image (`agent-hub:local`), starts the
+Compose service under its own project name, port, hubs root and data volume, and removes them afterwards. Without a
+Docker daemon it skips, and under `CI` it fails. `make test-e2e` selects `e2e and not docker and not live`.
+
+`serial` marks a test that asserts a wall-clock budget (a p95 in milliseconds, a hook that must answer within 1 s, the
+web smoke's 2 s page): under parallel workers the machine is loaded and such a bound flakes. The test targets run
+everything else first with pytest-xdist (`-n $(PYTEST_N)`, one worker per CPU by default; `PYTEST_N=0` runs in one
+process), then the `serial` tests alone (`make check` runs them after all its lanes; CI on a runner of their own). Mark a test `serial` only for a wall-clock bound, never to hide shared state:
+every test must pass beside any other.
+
+Select a level with `-m`: `$R pytest -m unit`, `$R pytest -m "unit or contract"`, `$R pytest -m integration`,
+`$R pytest -m e2e`. A single file: `$R pytest packages/core/tests/unit/test_errors.py`.
+
+## Names
+
+- Test functions (module level, or methods of `Test*` classes) match `test_<behavior>_when_<condition>`, all lowercase:
+  regex `^test_[a-z0-9]+(_[a-z0-9]+)*_when_[a-z0-9]+(_[a-z0-9]+)*$`. Example:
+  `test_prints_version_when_version_option_given`.
+- Forbidden in test file names and test function names:
+  - ticket or PR names: `test_pr_987.py`, `test_agh_12.py` (any of `pr`, `agh`, `gh`, `issue`, `bug`, `ticket` followed
+    by a number);
+  - generic names: `test_misc`, `test_utils`, `test_new`, `test_temp` (also `util`, `helper(s)`, `common`, `tmp`,
+    `stuff`);
+  - numbered names: `test_ingest_2`, `test_ingest_2_when_x` (a `_<digits>` ending on the behavior or the condition).
+- Because test file names mirror src modules, a src module name cannot end in `_<digits>`: write `rfc9457.py`, not
+  `rfc_9457.py` (whose test `test_rfc_9457.py` would be a numbered name).
+- **Regression tests** go in the test file of the affected module, named after the behavior that broke; the issue id
+  goes only in the docstring:
+
+  ```python
+  def test_keeps_order_when_events_share_timestamp() -> None:
+      """Regression: AGH-42."""
+  ```
+
+## Layout checker
+
+`scripts/check_test_layout.py` enforces the layout and names. It runs in `make layout` (part of `make check-fast`),
+lists files with `git ls-files` (tracked and untracked, not ignored), prints `<path>: <rule> <message>` for each
+violation and exits 1 if there is any. Run it alone with `$R python -m scripts.check_test_layout`.
+
+| Rule id | Fails when |
+|---|---|
+| `level-folder` | a test file is not under exactly one `tests` folder followed by an allowed level folder |
+| `test-file-name` | a Python file in a tests tree is not `test_*.py`, `conftest.py` or `__init__.py` |
+| `mirror` | a unit test file has no matching src module (or, at the root, repo file) |
+| `test-name` | a test function does not match `test_<behavior>_when_<condition>` |
+| `ticket-name` | a test file or function is named after a ticket or PR |
+| `generic-name` | the behavior part of a test file or function name is only a generic word (`test_misc.py`, `test_utils_when_empty`) |
+| `numbered-name` | a test file or function name ends a part in `_<digits>` |
+| `forbidden-module` | a module or folder in `scripts/`, `tests/` or a package's `src/`/`tests/` is named `utils`, `util`, `helpers`, `helper`, `common` or `misc` |
+| `package-registered` | a `packages/*/src/agent_hub/<name>/` package is missing from `mypy.ini` (`files`, `mypy_path`), from the `.importlinter` contracts or from the Makefile `COV` list |
+| `dependency-declared` | a module under `packages/<dir>/src/`, outside `agent_hub/<name>/testing/`, imports (anywhere in the module, lazy imports included) a distribution that `packages/<dir>/pyproject.toml` does not declare in `dependencies` or an extra; workspace packages by their `agent_hub.<name>`, others by the installed distributions (`importlib.metadata.packages_distributions()`), stdlib skipped |
+
+At most one of `ticket-name`, `generic-name` and `numbered-name` is reported per name, in that order. The checker's own
+tests (`tests/unit/scripts/test_check_test_layout.py`) have a failing and a passing case for every rule.
+
+## Property tests
+
+Hypothesis property tests are required for secret redaction and for the transcript parser, and are named
+`test_<behavior>_when_<condition>_property` (`-k property` selects them): secrets inserted at random offsets never
+survive and redacting twice equals redacting once (`core:tests/unit/redaction/test_redact.py`); arbitrary transcript
+lines never raise and keep only the "Payload kept" keys (`collector:tests/unit/test_transcript.py`). Hypothesis is a
+dev dependency of the workspace.
+
+## Web tests
+
+- Every screen has a `-t states` test (loading skeleton after 300 ms, empty copy, a region-scoped problem with "Try
+  again", stale and offline) and a `-t a11y` test (no `axe-core` violation of impact serious or critical,
+  `src/testing/axe.ts`). Fixtures come only from `src/testing/builders.ts`; ESLint refuses a `*.json` import in a test.
+- A test that holds a module's code with an async `vi.mock` factory (it awaits a promise the test resolves) imports
+  that module once per test file. While the factory waits, Vitest's mocker can give a second import of the same
+  module the real one at once, past the hold, so such a test passes or fails by timing. `routes.studioNew.test.ts`
+  and `routes.studioEdit.test.ts` each open one Studio route for this reason; a file of its own also means no other
+  test has loaded the module first.
+- Coverage: Vitest with V8, 80% of lines and of branches over `src/` (the generated `schema.d.ts`, `main.tsx` and
+  `src/testing/` excluded), in `web-fast`.
+- The build plugins' tests (`src/build/*.test.ts`) run in Vitest's node environment (`// @vitest-environment node`),
+  not jsdom, on a temp folder from `mkdtemp`: `compressAssets.test.ts` checks which files get a Brotli variant
+  (`<name>.br`), that each variant decodes to its file's exact bytes, that two runs write the same bytes, and that no
+  variant outlives its file. `bundlePlugins.test.ts` checks that the plugin writes the variants into the output folder
+  Vite names, and stops the build when Vite names none. `bundleBudget.test.ts` checks the size budget: it passes and
+  prints the entry chunk's and the vendor chunk's sizes in bytes when both are under their limits, fails naming the
+  file, its size and the limit when one is 1 B over, fails when the bundle has no entry chunk, and its plugin stops
+  the build with `this.error` when the check fails. The plugin checks once the build is written, because Vite empties
+  the output folder before it renders: a real Vite build over the budget fails and leaves its new files in the folder,
+  so a failed `make web-build` leaves `web_dist/` with that build, never empty. `vite build` runs that plugin on every
+  build (`bundlePlugins.test.ts` checks that `vite.config.ts` lists it, before the Brotli plugin), so
+  `make web-build`, `make web-dist-check` (in `make check`), CI's `web` job and the image all fail over the budget.
+- The variants' bytes also depend on the Brotli encoder that Node bundles (`node -p process.versions.brotli`), and two
+  Node builds check them against the committed `web_dist/`: CI's `web` job runs `make web-dist-check` on the 22.x that
+  `actions/setup-node` picks for `apps/web/.node-version` (`22`), and the `docker` job's
+  `test_serves_committed_web_app_when_image_built` compares `web_dist/` with the image's own build, made on the Node
+  of the `Dockerfile`'s `NODE_IMAGE` digest. If a Node update changes the encoder, the two builds write different
+  `.br` bytes, and a rebuild on one fails the other. Then, in one PR, make both bundle the same Brotli: move
+  `NODE_IMAGE` to a `node:22-slim` digest whose `docker run --rm <image> node -p process.versions.brotli` matches
+  CI's Node (or pin `apps/web/.node-version` to the image's exact Node), run `make web-build` on a Node with that
+  Brotli, and commit `web_dist/`.
+- The smoke: `tests/e2e/test_web_smoke.py` installs `hub`, starts `hub web` on a temp database and registry, registers
+  two synthetic hubs (`hub init`), ingests a synthetic scenario (two projects, one live session with a guard denial,
+  one session waiting on a guard ask, one failed run, one 5,000-event session) through `POST /events/hooks` and
+  `hub collect`, and runs `npm --prefix apps/web exec playwright test` with `AGENT_HUB_WEB_URL`. Each page must load
+  with no console error, no page error, no request to another host and no serious or critical axe violation; Session
+  detail of the 5,000-event session must be complete in under 2 s. Playwright never downloads a browser here: the test
+  passes the Chromium headless shell found under `PLAYWRIGHT_BROWSERS_PATH` (else Playwright's cache) as
+  `AGENT_HUB_CHROMIUM`. Without npm or a Chromium it skips locally and fails under `CI`.
+  Playwright tests run only through the `tests/e2e/test_web_smoke.py` wrappers: select them with `-k loads_pages` or
+  `-k agent_session` (new chat tests start their title with `Agent session`, which that wrapper's `--grep` picks; the
+  other wrappers, such as `-k route_chunks`, have their own). A smoke step that checks a background state waits for it, with the
+  child's budget, before the action that stops it.
+- The route chunks (AGH-614) have a run of their own on the same server (`-k route_chunks`): it plays
+  `apps/web/e2e/routes.spec.ts`, whose test titles all start with `Route chunks:` (the page run leaves them out). A
+  first `/sessions` visit fetches only the entry, vendor, shared and Sessions chunks, and prints its request log (each
+  script and style with its bytes on the wire), which the pytest test prints again, so
+  `pytest -rP -k route_chunks` shows it on a pass; every nav destination opens by in-app navigation with its heading;
+  a Brain note, a session and a settings section open from a full page load; and with the Sessions chunk's request
+  aborted, "This page could not load" shows inside the shell while the other routes still open. The in-app and
+  full-load pages pass the page run's checks (`watch` and `expectAccessible`, shared through
+  `apps/web/e2e/pageChecks.ts`), and the failed-chunk page the axe one. The test reads
+  the committed Vite manifest (`web_dist/.vite/manifest.json`) for the chunk files, as do two tests that need no
+  browser: each screen module `routes.tsx` loads with `import()` has a chunk of its own that a first load does not
+  fetch (`-k own_chunk`), and the manifest's vendor chunk is under 350,000 B (`-k vendor_chunk`). Three more need no
+  browser: the entry chunk `index.html` loads is under 400,000 B (`-k entry_chunk`), which with the vendor limit
+  repeats the build check's limits, so they hold even if that check stops running; `index.html` links every
+  stylesheet of the build (`-k every_stylesheet`), so a deep-linked screen has the classes it borrows from another
+  screen's styles; and the one sheet keeps the base styles after the screens' (`-k orders_base_styles`), as the
+  one-bundle build did. In Vitest,
+  `src/styles/cascade.test.ts` checks the list that sets that order: every stylesheet once, the base styles last,
+  and imported first by `main.tsx`.
+  `tests/e2e/test_package_data.py -k web_dist` builds the api wheel and checks that it ships every `web_dist` file,
+  the manifest and the `.br` variants included.
+- The same module checks the committed bundle for absolute URLs (AC-200.56): only an exact list of inert strings is
+  allowed (React's and React Router's error-text doc links, XML namespace ids, React Router's `http://localhost`
+  parsing base); any other URL, such as an external font, script or API, fails. It reads every script, style and
+  HTML file of the build, each route chunk included.
+
+## Performance (`make perf`)
+
+`make perf` (`$R python -m scripts.perf.run_suite`, code in `scripts/perf/`) measures how long the interactive paths
+take on a synthetic 400,000-event database spread over 90 days. It builds or reuses the fixture, copies it into a fresh
+temp root, renders a synthetic hub there (`hub init`; thirty feature folders, `search-index` and 29 `perf-feature-NN`,
+each naming an issue; a brain of six folders of a hundred synthetic notes under `brain/tree-<n>/`; `git init` and one
+commit), then measures, one at a time:
+
+- `cli`: `hub --version`, `./hub --version (local uvx stand-in)`, `hub brief --no-network`, and the list commands
+  `hub repo list`, `hub env list`, `hub action list`, `hub scenario list`, `hub workflow list`, run in the temp hub;
+- `hook`: the eight rendered hooks, each fed a synthetic hook input (`guard (PreToolUse Bash)`,
+  `session_start (local uvx stand-in)`, ...), and `pre_tool_use` three times, on a Bash, a Read and an Edit call the
+  guard lets through (`pre_tool_use (PreToolUse Bash)`, `... Read)`, `... Edit)`). The `session_start` row keeps its
+  pinned name but measures the cached path (ADR 0055): building the probe runs `hub brief --write-cache` once in the
+  temp hub, so every run reads a cache under the 5 min refresh floor, starts no refresh and runs no `uvx` in the
+  foreground;
+- `route`: ten `hub web` route rows (`/api/v1/sessions`, `/api/v1/features`, `/api/v1/search?q=make`, ...). Two
+  read the Brain list: `/api/v1/projects/perf/brain` one request at a time, and
+  `/api/v1/projects/perf/brain (6 parallel)` six at once (ADR 0053: no slower than six in sequence), from six threads
+  made once and released together, each sample from the release to the last answer. The last,
+  `/api/v1/screens/shell`, is the app shell's one read (ADR 0056) over the thirty features: its warm-up keeps the
+  feature list, so it measures the shell's polls within that list's 30 s;
+- `page`: seven pages in Playwright's Chromium (`apps/web/e2e/perf.spec.ts`): `/`, `/features`,
+  `/features/perf/search-index`, `/sessions/perf-00000`, `/sessions`, the Brain note
+  `/projects/perf/brain/tree-3/note-050.md` (a note in a 100-note folder, so an open folder is measured), and the
+  Project overview `/projects/perf`. A page is ready when no `/api/v1/` request is in flight for 500 ms after `load`;
+  each row has the number of API calls, `dom_nodes`, the most elements on the page in one run once it is ready, and
+  `api_kb`, the most kilobytes (1,000 bytes) of `/api/v1/` response bodies one run read before it was ready (streams
+  left out);
+- `restart`: `hub web start → GET /` and `hub web start → /api/v1/sessions`, with peak RSS (Linux only, else `null`).
+
+These names are the canonical paths: the table, `perf.json` and the budgets all use the same strings. The child
+processes get an environment built from scratch, with `HOME` under the temp root, so nothing reads the real database,
+`~/.claude` or the network.
+
+Knobs, all optional: `PERF_EVENTS` (400000), `PERF_RUNS` (10), `PERF_RESTART_RUNS` (3), `PERF_STRICT` (off),
+`PERF_REBUILD` (off: rebuild the cached fixture), `PERF_OUT` (`perf.json`), `PERF_BUDGETS`
+(`scripts/perf/budgets.json`), `PERF_CACHE` (`.perf/`), and `AGENT_HUB_CHROMIUM` (else the headless shell under
+`PLAYWRIGHT_BROWSERS_PATH`). The fixture is cached in `.perf/` by event count, seed and Alembic head, so a rerun skips
+the build. On a 4 vCPU Linux machine a first run takes about 7 minutes (the fixture build about 20 s), a cached
+one about 6.5.
+
+It prints one table and writes `perf.json`: a list of rows, each with `kind`, `path`, `runs`, `median_ms`, `p95_ms`,
+`budget`, `status` (`pass`, `over`, `no budget` or `skipped`, with a `reason`), `api_calls` (pages), `dom_nodes`
+and `api_kb` (pages; reported fields only, with no budget and no table column, `null` elsewhere), `rss_mb` (restarts)
+and the run's `events`, `seed`, `commit` and `machine`. The budgets are data in `scripts/perf/budgets.json`, one
+entry per `(kind, path)` with `p95_ms`, `api_calls` or `rss_mb`; an entry's `source` is "AGH-601 proposed" (the proposed
+numbers) or "ADR 0053" (a row at that ADR's ceilings). A path with no entry shows `no budget`. Without npm, Chromium or
+`apps/web/node_modules`, the page rows are `skipped`; `make perf` itself runs `npm ci` first, so on a machine without
+npm run `uv run --locked --all-packages python -m scripts.perf.run_suite` instead. The runner's exit code: 0, also
+when a row is over; 1 when `PERF_STRICT=1` and a row is `over`; 2 when the suite itself fails (a bad budgets file or
+knob, `hub web` not starting, a route not answering 200 or timing out), after writing the rows measured before the
+failure. `make perf` exits 0 or, in both failure cases, 2 (make's own code for a failed recipe), so a caller that must
+tell "over budget" from "suite broken", such as CI, runs the runner directly.
+
+Known gaps:
+
+- The live set is empty: `/api/v1/live-sessions` and the `/` page measure no live session, because the fixture is 90
+  days old and live tiles are judged against the server clock.
+- `./hub --version` runs through a local `uvx` stand-in that runs the worktree's `hub`: no release is fetched, so
+  uvx's own resolve time is not counted (the path name says so). `session_start` reads a fresh cache and calls no
+  `uvx` at all, so neither the background refresh nor a cold first session (no cache: the mini brief) is measured.
+
+`make perf` is in no local gate: `make check-fast` and `make check` never run it, and it never runs in their parallel
+lanes. Run it by hand on a quiet machine, with output to a file: `make perf > perf.log 2>&1; echo $?`.
+
+CI's `perf` job runs the runner on the 400k-event fixture, then the gate
+(`$R python -m scripts.perf.ci_gate [--perf perf.json] [--budgets scripts/perf/budgets.json]`), and uploads
+`perf.json` as the `perf` artifact. The gate judges each row again against the budgets file, writes a Markdown table
+(with each budget's limit plus the margin and whether it is enforced) to stdout and to the job summary, and prints a
+`::warning::` line for each row over its budget. It exits 1, with an `::error::` line naming the path, only when an
+entry marked `"enforced": true` is over its p95, API calls or RSS times `1 + margin`; the top-level `"margin"` (a
+fraction, default 0.2) absorbs runner noise and never changes the stored budget, which stays under the ADR 0053
+ceiling. Skipped and no-budget rows never fail, and no entry is enforced until a milestone meets its budgets. A broken
+suite (runner exit 2) fails the job on its own; a bad `perf.json` or budgets file makes the gate exit 2. An enforced
+row over its budget but within the margin, or skipped, passes with a `::warning::` line that says so.
+
+The job runs on `ubuntu-latest`, which may have fewer cores than ADR 0053's reference machine (Linux, 4 vCPU). Before
+an entry is marked enforced, check the core count in the `machine` field of a CI `perf.json`; if it is below 4, move
+the job to a 4-core runner first, so that "over" stays a property of the code and not of the runner.
+
+## Coverage
+
+Floors, counting lines and branches together (`(covered_lines + covered_branches) / (num_statements + num_branches)`)
+per package directory:
+
+| Package | Floor |
+|---|---|
+| `core` | 90% |
+| every other package (`api` included) | 80% |
+| `apps/web` (Vitest, lines and branches separately) | 80% |
+
+- `make test-fast` erases the coverage data, then measures unit and contract tests with branch coverage for every
+  `agent_hub` package (the Makefile `COV` list).
+- `make test-integration` appends integration tests to the same data. `make test-suite` measures unit, contract and
+  integration tests in one run, and `make test-suite-serial` appends the serial ones. e2e tests run in subprocesses and
+  are not counted.
+- Alembic loads the migration scripts by path, under module names no package source matches, so the migrations
+  directory is a source of its own in `COV` (`--cov=packages/storage/src/agent_hub/storage/migrations`) and counts
+  towards the storage floor.
+- `make coverage` writes `coverage.json` and runs `python -m scripts.check_coverage coverage.json`. It prints one line
+  per package and fails when a package is under its floor or has no data, when a `packages/*/src/agent_hub/**/*.py` file
+  is missing from the report, or when the report has no branch data. Run it after `test-suite` and
+  `test-suite-serial`, as `make check` does (or after `test-fast` and `test-integration`); on its own it checks stale
+  data. CI's shards each write `.coverage.<shard>` (`COVERAGE_FILE`); its `coverage` job runs `coverage combine` first.
+
+coverage.py and pytest-cov only offer a global `--fail-under`, which is why the floors are a script.
+
+## Gates
+
+`make check-fast` and `make check` install the web app's dependencies first (`web-install`: `npm ci` only when
+`package-lock.json` is newer than the install), then run two lanes at once (`make -j2`): the checks, and the test
+runners. pytest-xdist and Vitest each use every CPU, so they share the tests lane and never overlap; the checks (mostly
+one CPU each) run beside them. Inside a lane the steps run in order and stop at the first failure; each lane's output is
+printed when it ends. `make check-changed`, a narrower run for one change, comes after them.
+
+`make check-fast` (while working):
+
+- Checks: `format` (`ruff format --check`), `lint` (`ruff check`), `typecheck` (`mypy`, strict), `layout` (the layout
+  checker), `lockstep` (the cli and meta versions are equal), `web-static` (typecheck, ESLint, Prettier check, tokens
+  drift) and `openapi-check` (the committed `openapi.json` and `schema.d.ts` match the app).
+- Tests: `test-fast` (unit and contract tests with coverage), then `web-test` (Vitest with coverage).
+- `web-static` and `web-test` (together `web-fast`, about 5 minutes) run only when a file under `apps/web/` differs
+  from `origin/main` (committed, staged, unstaged or new), or with `WEB_FAST=1`; `WEB_FAST=0` skips them.
+  `openapi-check` always runs.
+
+`make check` (before a PR; CI runs the same steps as parallel jobs):
+
+- Checks: `check-fast`'s (web included), `imports` (`lint-imports`), `migrations` (upgrade a scratch SQLite database
+  to head, then `alembic check`) and `web-dist-check` (bundle the web app in a scratch folder and diff it with the
+  committed `web_dist/`).
+- Tests: `test-suite` (unit, contract and integration tests in one pytest-xdist session, with coverage), then
+  `test-e2e-parallel`, then `web-test`.
+- Then, alone: `test-suite-serial` and `test-e2e-serial` (the `serial` tests, see [Markers](#markers)), and `coverage`
+  (the floors).
+
+The API's integration tests (including `test_performance.py`, the NFR budgets on 10,000 synthetic events, `serial`)
+run in `test-suite` and `test-suite-serial`, and the web smoke in `test-e2e-serial`. Its hook POST p95 counts the
+process's CPU time, not wall time: each POST commits with an fsync, and a runner's disk can stall one for 100 ms
+while the route's work takes 3 ms (AGH-506), so a wall-time p95 there measures the disk, not the code. The wall
+time's median keeps the same 50 ms bound, so a wait on every POST still fails it. `test-fast`, `test-integration` and
+`test-e2e` stay for running one level by hand.
+
+`make check-changed` (while working, for one change; `scripts/check_changed.py`):
+
+- Paths: the script's arguments, else `PATHS` from make's command line (`make check-changed PATHS="a.py docs/x.md"`,
+  split on whitespace), else `HUB_CHANGED_FILES` (one path a line, as the Stop gate sets it), else what
+  `git diff --name-only` lists against the merge base with `origin/main`, plus untracked files. It never fetches.
+  make hands `PATHS` on as plain text, never expanded (a `$(...)` in it does not run, in make or in the makes the
+  script starts), and drops a `PATHS` that the shell exports. The recipe never names it, and no path becomes a
+  command argument. `$R python -m scripts.check_changed --plan <paths>` prints the plan and runs nothing.
+- Checks, always on the whole tree: `format`, `lint`, `typecheck` (pack loop included), `layout`, `lockstep`; then
+  `export_openapi --check` when the plan reaches `api` or `packages/api/openapi.json` changed. That is the Python half
+  of `openapi-check` only: its TypeScript half (`gen:api:check`) runs in `make check-fast` and `make check`.
+- Tests: `pytest -m "unit or contract"` on the planned folders and files alone, without coverage, so the data that
+  `make coverage` reads stays the gates'. The web steps (`web-install` first) run only for a path under `apps/web/`,
+  or when the changed paths are unknown. They are narrowed when every changed web path is a `.ts` or `.tsx` file
+  under `apps/web/src/`: the checks lane runs the web typecheck (the whole app, so a deleted source still fails
+  where it is imported) and `npm run lint:changed` (ESLint with no warning allowed, and the Prettier check, on
+  those files), the tests lane `npm run test:related` (the Vitest files that import them, directly or not, without
+  coverage; Vitest itself runs every file for a change to its config, `package.json` or setup file). Both scripts
+  are `apps/web/scripts/check-changed.mjs`, which reads the files from a list file the run writes, so no path
+  becomes an argument; its tests (`src/build/checkChanged.test.ts`) run it on a scratch project. Any other web
+  path (a config, `package.json`, a stylesheet, a Playwright spec, the design tokens), with a reason line, or an
+  unknown change set runs the full `web-static` and `web-test`. `make check-fast` and `make check` keep the full
+  web steps.
+- What a path runs: a package's `src/` or `tests/data/` runs the fast tests of that package and of every package that
+  imports it, directly or not (read from the import statements of each `src/` and of `scripts/`, which root
+  `tests/unit` tests). A change under `src/` also runs core's `hub_config/test_model.py` and `test_conventions.py`,
+  which scan every package's source; one under `tests/data/` does not. A core change leaves out the pack-script tests
+  under `packages/core/tests/unit/workflows/builtin/`; a pack's `scripts/` runs that pack's tests, the generator's and
+  those two files; another pack file is a core `src/` change plus that pack's tests. A changed unit or contract test
+  runs its package's fast tests; `scripts/` and root `tests/unit/` run `tests/unit`; the docs, root Markdown and the
+  llms files run the root tests that read them; `apps/web/src/routes.tsx` and `screens/` add
+  `test_playground_export.py`. Integration and e2e tests, `.github/`, the Docker files, `.gitattributes`,
+  `.gitignore`, `.importlinter` and a `*.log` at the top run the checks alone, with a reason line.
+- Full plan, every unit and contract test: a build file (`pyproject.toml`, `uv.lock`, `conftest.py`, `pytest.ini`,
+  `mypy.ini`, `Makefile` or `.python-version` in any folder, and `scripts/pytest_levels.py`), a path it cannot place
+  (absolute, with a `..` part, in a pack that does not exist, or matching no rule), or no merge base with
+  `origin/main`.
+- Lanes: when a step fails, the other lane is stopped at once: its running step is ended with everything it
+  started, and its next steps never start (both lanes' first steps always start). Each step runs under
+  `scripts/step_guard.py`, the leader of a process group of its own, which ends that group when the run stops the
+  step or when the run itself ends, even killed (the Stop gate kills its check's process group with SIGKILL), as
+  it then reads the end of a pipe only the run held open.
+- Output: the plan (at most 20 reason lines, then one that counts the rest; the web steps: `no`, `full` or
+  `narrowed`, then at most 20 `web file:` lines), then each lane when it ends (a stopped one with a line naming its
+  stopped step), a failed lane last, and a final line naming the failed step; exit 0, or 1 when a step failed. CI
+  and the PR gate keep `make check`.
+
+Never run the gate targets with `-j`: they set it themselves, and the tests are already parallel inside each target
+(pytest-xdist).
+
+CI (`.github/workflows/ci.yml`) runs the same make targets as separate jobs at once: `checks`, `web`, `tests` (three
+shards set by `TESTS`: `packages/generator`, `packages/cli`, and the rest, each running its own serial tests after its
+parallel ones), `coverage` (combines the shards' data, then the floors), `e2e`, `e2e-serial` (the visual file and
+the rest, each on its own runner), and `perf` (the perf suite and its gate, see Performance). The required `check`
+job passes only when all of them did. PR titles are not checked in CI: run `make pr-title TITLE="<title>"` before
+opening the PR ([CONTRIBUTING.md](CONTRIBUTING.md)).
+
+Notes:
+
+- `test-e2e` installs `hub` with `uv tool install` into temporary tool dirs, so it needs the package index or a warm uv
+  cache. Offline, `make check` can fail there while `make check-fast` passes.
+- `tests/e2e/test_quality_gates.py` runs ruff and mypy with the repo's configs against scratch modules that break each
+  convention (complexity, positional params, boolean flags, swallowed exceptions, commented-out code, formatting, missing
+  annotations). A config change that switches a rule off fails `make check`. See [CONVENTIONS.md](CONVENTIONS.md).
+- `packages/storage/tests/integration/test_migrations.py` upgrades a `tmp_path` database to `head` and downgrades it
+  to `base` through `agent_hub.storage.migration.alembic_config`, checks that `alembic check` finds no pending changes,
+  covers the offline (`--sql`) mode of `env.py` and runs `python -m agent_hub.storage.migration` as a module.
+- `tests/e2e/test_hub_cli.py` installs `hub` once per module (the `installed_hub` fixture in `tests/e2e/conftest.py`,
+  which rebuilds every workspace package, so a stale uv cache entry is never installed),
+  then checks `hub --version` and runs `hub collect` twice with `HOME` and `XDG_DATA_HOME` under `tmp_path` and a working
+  directory outside the repo: the second run reports only duplicates, and the default database is at the Alembic head.
+  This proves the installed package ships and applies its own migrations. It also runs `hub init` of the `demo` flags
+  and checks that the installed `hub` writes the same `hub.lock` as an in-process run, and that `hub doctor` on a
+  fresh `demo` hub exits 0 and lists only the seeded workflows' `workflows.shadow` warnings (AGH-699).
+- Redirect gate output to a file and check the exit code: `make check > check.log 2>&1; echo $?`. `make check | tail`
+  hides a failure.

@@ -1,0 +1,227 @@
+import { useMemo } from "react";
+
+import { Banner, Button, CodeBlock, StatusBadge } from "../../components";
+import { useLaunchCookie } from "../../shell/queries";
+import { isRunControlOff } from "./Investigation";
+import { DEBUG_LOCKED } from "./parts";
+import { useSetBreakpoints, type RunBlock, type ScenarioRunDetail } from "./queries";
+
+/* The blocks a scenario run written as blocks pinned when it started (ADR 0049, spec 23): each
+ * one's address, kind and label, its state in this run and, off production, its breakpoint. The
+ * blocks come from the run, never from the scenario file as it reads now, so an edit in the
+ * builder changes none of them. */
+
+const KIND_WORDS: Readonly<Record<string, string>> = {
+  stage: "Stage",
+  do: "Do",
+  wait_until: "Wait until",
+  you: "You",
+  wait: "Wait",
+  include: "Include",
+  repeat: "Repeat",
+  if: "If",
+  together: "At the same time",
+};
+
+// The blocks that run a node of their own: their lines in the run give their state.
+const OWN_NODES = new Set(["do", "wait_until", "you", "wait", "include", "repeat"]);
+const GATE_SUFFIXES = ["__ask", "__investigation"];
+
+/** A breakpoint before block `address` (a scenario written as blocks, ADR 0049): a toggle whose
+ * name stays the same, its state in `aria-pressed`; Tab reaches it, Space or Enter presses it.
+ * While `busy` (a change on its way) a press does nothing, and the toggle keeps focus
+ * (`aria-disabled`, not `disabled`). */
+function BreakpointToggle({
+  address,
+  on,
+  busy,
+  locked,
+  onToggle,
+}: {
+  address: string;
+  on: boolean;
+  busy?: boolean | undefined;
+  /** Why the breakpoint cannot change from this page (the launch cookie), if so. */
+  locked?: string | undefined;
+  onToggle: () => void;
+}) {
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      icon={on ? "circle-dot" : "circle"}
+      className={on ? "sc-break sc-break-on" : "sc-break"}
+      aria-pressed={on}
+      aria-label={`Breakpoint before block ${address}`}
+      title={
+        locked ??
+        (on
+          ? `The scenario run pauses before block ${address}. Press to remove the breakpoint.`
+          : `Press to pause the scenario run before block ${address}.`)
+      }
+      aria-disabled={busy === true || locked !== undefined || undefined}
+      onClick={() => {
+        if (!busy && locked === undefined) onToggle();
+      }}
+    >
+      Breakpoint
+    </Button>
+  );
+}
+
+/** A block in words: its kind, then its label (`Do: queue-send`). */
+export function blockWords(block: RunBlock | undefined): string {
+  if (block === undefined) return "";
+  return `${KIND_WORDS[block.kind] ?? block.kind}: ${block.label}`;
+}
+
+/** The pinned block at `address`, if the run holds one. */
+export function runBlock(run: ScenarioRunDetail, address: string): RunBlock | undefined {
+  return run.blocks.find((block) => block.address === address);
+}
+
+/** How deep a block sits: a stage is 0, its blocks 1, and each container's blocks one more. */
+function depthOf(address: string): number {
+  return address.split(".").filter((part) => /^[0-9]+$/.test(part)).length - 1;
+}
+
+/** A block's state in a run; `waiting` is a gate that waits for a person, `pending` a block
+ * of its own nodes not started yet. */
+export type BlockState =
+  "paused" | "running" | "done" | "failed" | "skipped" | "waiting" | "pending" | null;
+type TimelineLine = ScenarioRunDetail["timeline"][number];
+
+/** Each block's last start or end line of its own, in one pass over the timeline (a gate's
+ * lines are its step's, but neither starts nor ends the step). */
+export function lastLines(timeline: readonly TimelineLine[]): ReadonlyMap<string, TimelineLine> {
+  const last = new Map<string, TimelineLine>();
+  for (const entry of timeline) {
+    if (entry.block === null || entry.block === undefined) continue;
+    if (entry.event !== "step_start" && entry.event !== "step_end") continue;
+    if (GATE_SUFFIXES.some((suffix) => (entry.node ?? "").endsWith(suffix))) continue;
+    last.set(entry.block, entry);
+  }
+  return last;
+}
+
+/** A block's state in the run, from its last line of its own; `pending` for a block of its own
+ * nodes not started yet. */
+export function blockStateOf(
+  run: ScenarioRunDetail,
+  block: RunBlock,
+  lines: ReadonlyMap<string, TimelineLine>,
+): BlockState {
+  if (run.debug?.block === block.address) return "paused";
+  if (!OWN_NODES.has(block.kind)) return null;
+  const last = lines.get(block.address);
+  if (last === undefined) return run.status === null ? "pending" : null;
+  if (last.event === "step_start") return "running";
+  if (last.status === "failed") return "failed";
+  if (last.status === "skipped") return "skipped";
+  return "done";
+}
+
+function State({ state }: { state: BlockState }) {
+  if (state === "paused") return <StatusBadge status="waiting" label="Paused before it" />;
+  if (state === "running") return <StatusBadge status="running" />;
+  if (state === "done") return <StatusBadge status="done" />;
+  if (state === "failed") return <StatusBadge status="failed" />;
+  if (state === "skipped") return <span className="ah-small ah-subtle">Skipped</span>;
+  if (state === "pending") return <span className="ah-small ah-subtle">Not started</span>;
+  if (state === "waiting") return <StatusBadge status="waiting" label="Waiting for you" />;
+  return null;
+}
+
+/** The run's blocks. `production` is the run environment's flag as the hub reads it now (null
+ * while unknown): breakpoints are set only off production, and never once the run ended done
+ * or cancelled. */
+export function RunBlocks({
+  run,
+  production,
+}: {
+  run: ScenarioRunDetail;
+  production: boolean | null;
+}) {
+  const set = useSetBreakpoints(run.run_id);
+  const { lock } = useLaunchCookie();
+  // Once per read of the record, not on every tick of the page's clock.
+  const lines = useMemo(() => lastLines(run.timeline), [run.timeline]);
+  const ended = run.status === "done" || run.status === "cancelled";
+  const settable = !ended && production === false;
+  // While a change is on its way, its set shows; then the one the server wrote.
+  const shown = (set.isPending ? set.variables : undefined) ?? run.breakpoints;
+  const toggle = (address: string) => {
+    const wanted = new Set(shown);
+    if (wanted.has(address)) wanted.delete(address);
+    else wanted.add(address);
+    // In the pinned tree's order, as the server writes them.
+    set.mutate(run.blocks.map((block) => block.address).filter((each) => wanted.has(each)));
+  };
+  const error = set.error;
+  return (
+    <section aria-label="Blocks" className="ah-stack" style={{ gap: 8, minWidth: 0 }}>
+      <h2 className="ah-h3" style={{ margin: 0 }}>
+        Blocks
+      </h2>
+      <span className="ah-small ah-muted">
+        As this scenario run pinned them when it started: editing the scenario changes none of them.
+        {settable &&
+          " A breakpoint pauses the scenario run before its block, from the next block it starts."}
+        {settable && lock && ` ${lock.title}. ${lock.detail}`}
+        {!ended &&
+          production === true &&
+          ` Breakpoints are off: ${run.environment ?? "this"} is a production environment.`}
+      </span>
+      <ol className="sc-blocks">
+        {run.blocks.map((block) => (
+          <li
+            key={block.address}
+            className="sc-block"
+            style={{ paddingLeft: 8 + 20 * depthOf(block.address) }}
+          >
+            <span className="ah-mono ah-small sc-block-address">{block.address}</span>
+            <span
+              className={
+                block.kind === "stage" ? "sc-block-label sc-block-stage" : "sc-block-label"
+              }
+            >
+              {blockWords(block)}
+            </span>
+            <span className="ah-grow" />
+            <State state={blockStateOf(run, block, lines)} />
+            {settable && (
+              <BreakpointToggle
+                address={block.address}
+                on={shown.includes(block.address)}
+                busy={set.isPending}
+                locked={lock?.detail}
+                onToggle={() => {
+                  toggle(block.address);
+                }}
+              />
+            )}
+          </li>
+        ))}
+      </ol>
+      {error !== null && (
+        <Banner tone="error" boxed>
+          <span className="ah-stack" style={{ gap: 4 }}>
+            <b>Could not set the breakpoints</b>
+            {isRunControlOff(error) ? (
+              <>
+                <span>
+                  Breakpoints cannot be set from the agent-hub container. Set them from a terminal:
+                </span>
+                <CodeBlock
+                  code={`./hub scenario break ${run.run_id} --set ${set.variables.join(" ")}`.trimEnd()}
+                />
+              </>
+            ) : (
+              <span>{error.status === 401 ? DEBUG_LOCKED : (error.detail ?? error.title)}</span>
+            )}
+          </span>
+        </Banner>
+      )}
+    </section>
+  );
+}

@@ -1,0 +1,31 @@
+# Agent instructions for `<repo>`
+
+Copied from the hub's `docs/app-repo-AGENTS.md`: replace every `<…>` slot, then delete this line.
+
+## What this repo is
+
+- `<what it does and who uses it, in one or two lines>`
+- `<main language and framework; where the code, the tests and the docs live>`
+
+## Run it locally
+
+- Install: `<install command>`
+- Run: `<run command>`
+
+## Checks
+
+- `check_fast`, after each change: `<check_fast>`
+- `check`, before every PR: `<check>`
+
+## Conventions
+
+- `<naming and formatting rules, and the tool that enforces each one>`
+- `<how tests are named and where each kind of test goes>`
+
+## Never
+
+- Run deploy or release commands.
+- Push to the default branch or force-push: every change lands through a PR.
+- Commit secrets, tokens, keys or real user data.
+
+Keep it short, under 100 lines (the limit `hub doctor` sets for a hub's root `AGENTS.md`): every session loads it.

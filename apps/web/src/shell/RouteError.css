@@ -1,0 +1,33 @@
+/* The page-level error in `main#main`: the 404 page's column and spacing (spec 22, Screen 2). The
+   selectors that change a utility class's value (`.ah-h1`, `.ah-row`) are two classes deep, so they
+   win whatever order the stylesheets load in. */
+.ah-route-error {
+  padding: 96px var(--space-8) 40px;
+}
+.ah-route-error-column,
+.ah-route-error-alert {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.ah-route-error-column {
+  max-width: 640px;
+  margin: 0 auto;
+}
+.ah-route-error .ah-h1 {
+  font-size: 30px;
+  line-height: 38px;
+}
+.ah-route-error p {
+  margin: 0;
+}
+.ah-route-error-actions {
+  margin-top: var(--space-2);
+}
+/* One column: the two actions sit under each other. */
+@media (max-width: 899px) {
+  .ah-route-error .ah-route-error-actions {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

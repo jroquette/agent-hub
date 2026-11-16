@@ -1,0 +1,355 @@
+"""What ``hub web`` runs around the agent-session use case for as long as it serves (P9, P12).
+
+``SessionRuntime`` is the app's lifecycle for the sessions: at start it ends the rows a crash
+left unfinished (``ended``/``server_stopped``) and starts the sweep task, which applies time
+every ``SWEEP_SECONDS`` (permission deadlines, idle timeouts) and purges the sessions past their
+retention at start and then every ``PURGE_SECONDS``. ``begin_exit`` is the server's signal hook
+(``server.serve_on``): called from the signal handler, before uvicorn's graceful wait, it starts
+``shutdown`` on the loop, so the live sessions end and their streams close at once. ``stop`` (the
+lifespan's exit) starts it if no signal did, and waits for it: no ``claude`` is left behind.
+
+``UnavailableSessionDriver`` and ``UnavailableCloudLauncher`` stand in for the Claude adapters
+when the ``sessions`` extra is not installed (P2): the capabilities say why, and starting a
+session raises ``SessionsUnavailableError`` (503).
+
+``HubCredentials`` reads the credentials a project's hub declares (``hub.json`` and
+``hub.local.json``, environments and endpoints) each time a session starts: the names every
+driven session loses (AM-13, P-9) and the env files the investigation's tool policy denies
+(P-17). Names and paths only; no env file is ever opened here. When ``hub.local.json`` cannot
+be read, only ``hub.json``'s are known (``complete`` is false): ``names`` then refuses
+(``HubLocalInvalidError``), as it does when the registry cannot be read, so no driven session
+starts with credentials it could not hide (E-8).
+"""
+
+import asyncio
+import contextlib
+import logging
+import time
+from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Final, Protocol
+
+from agent_hub.core.agent_sessions.agent_session import EndReason
+from agent_hub.core.agent_sessions.cloud import CloudReply
+from agent_hub.core.agent_sessions.driver import (
+    DriverAnswer,
+    DriverCapabilities,
+    DriverEvent,
+    DriverFile,
+    DriverHandle,
+    DriverImage,
+    EffortLevel,
+    PastSession,
+    PermissionMode,
+    StartSpec,
+)
+from agent_hub.core.agent_sessions.errors import (
+    HubLocalInvalidError,
+    HubRegistryUnreadableError,
+    SessionsUnavailableError,
+)
+from agent_hub.core.hub_config.effective_environments import (
+    EffectiveEnvironments,
+    declared_env_files,
+    effective_environments,
+    local_environment_problems,
+)
+from agent_hub.core.hub_config.effective_identity import effective_config
+from agent_hub.core.hub_config.local_config import LocalConfig
+from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hubs.hub_document import read_hub_document
+from agent_hub.core.hubs.hub_registry import HubFileReader, HubRegistry, HubRegistryError
+from agent_hub.core.readmodels.read_ports import EntityNotFoundError
+from agent_hub.core.scenarios.credentials import NO_CREDENTIALS, CredentialNames
+
+SWEEP_SECONDS: Final = 0.5
+PURGE_SECONDS: Final = 3600.0
+INSTALL_EXTRA: Final = "Install agent-hub[sessions] to drive sessions"
+
+_log = logging.getLogger(__name__)
+
+
+class UnavailableSessionDriver:
+    """A ``SessionDriver`` that can start nothing, for ``reason`` (see the module docstring)."""
+
+    def __init__(self, reason: str = INSTALL_EXTRA) -> None:
+        self._reason = reason
+
+    def _refuse(self) -> SessionsUnavailableError:
+        return SessionsUnavailableError(self._reason)
+
+    async def start(self, spec: StartSpec) -> DriverHandle:  # noqa: ARG002 -- the port's signature
+        """Never starts: ``SessionsUnavailableError``."""
+        raise self._refuse()
+
+    async def send(
+        self,
+        handle: DriverHandle,  # noqa: ARG002 -- same
+        text: str,  # noqa: ARG002 -- same
+        *,
+        images: tuple[DriverImage, ...] = (),  # noqa: ARG002 -- same
+        files: tuple[DriverFile, ...] = (),  # noqa: ARG002 -- same
+    ) -> None:
+        """No session exists to send to."""
+        raise self._refuse()
+
+    async def interrupt(self, handle: DriverHandle) -> None:  # noqa: ARG002 -- same
+        """No session exists to interrupt."""
+        raise self._refuse()
+
+    async def stop_task(
+        self,
+        handle: DriverHandle,  # noqa: ARG002 -- same
+        task_id: str,  # noqa: ARG002 -- same
+    ) -> None:
+        """No session exists to stop a task in."""
+        raise self._refuse()
+
+    async def answer_permission(
+        self,
+        handle: DriverHandle,  # noqa: ARG002 -- same
+        request_id: str,  # noqa: ARG002 -- same
+        answer: DriverAnswer,  # noqa: ARG002 -- same
+    ) -> None:
+        """No session exists to answer."""
+        raise self._refuse()
+
+    async def set_mode(self, handle: DriverHandle, mode: PermissionMode) -> None:  # noqa: ARG002 -- same
+        """No session exists to change."""
+        raise self._refuse()
+
+    async def set_model(self, handle: DriverHandle, model: str | None) -> None:  # noqa: ARG002 -- same
+        """No session exists to change."""
+        raise self._refuse()
+
+    async def set_effort(self, handle: DriverHandle, effort: EffortLevel) -> None:  # noqa: ARG002 -- same
+        """No session exists to change."""
+        raise self._refuse()
+
+    async def set_ultracode(self, handle: DriverHandle, *, on: bool) -> None:  # noqa: ARG002 -- same
+        """No session exists to change."""
+        raise self._refuse()
+
+    async def close(self, handle: DriverHandle) -> None:  # noqa: ARG002 -- same
+        """Nothing to close."""
+
+    async def events(self, handle: DriverHandle) -> AsyncIterator[DriverEvent]:  # noqa: ARG002 -- same
+        """No session has events."""
+        raise self._refuse()
+        yield  # pragma: no cover -- makes this an async generator
+
+    async def list_resumable(self, cwd: str) -> tuple[PastSession, ...]:  # noqa: ARG002 -- same
+        """Nothing can be resumed without the driver."""
+        return ()
+
+    async def capabilities(self) -> DriverCapabilities:
+        """Unavailable, and why."""
+        return DriverCapabilities(available=False, reason=self._reason)
+
+
+class UnavailableCloudLauncher:
+    """A ``CloudLauncher`` that runs nothing, for ``reason`` (the ``sessions`` extra is not
+    installed); ``CloudSessions`` never reaches it while the capabilities say unavailable."""
+
+    def __init__(self, reason: str = INSTALL_EXTRA) -> None:
+        self._reason = reason
+
+    async def follow_up(self, cloud_id: str, text: str, *, timeout_seconds: int) -> CloudReply:  # noqa: ARG002 -- the port's signature
+        """Never runs: ``SessionsUnavailableError``."""
+        raise SessionsUnavailableError(self._reason)
+
+
+class SweptSessions(Protocol):
+    """What the runtime drives of ``AgentSessionControl``."""
+
+    async def sweep(self, now: datetime | None = None, *, purge: bool = True) -> None:
+        """Apply time; with ``purge``, remove sessions past their retention."""
+        ...
+
+    async def shutdown(self) -> None:
+        """End every live session ``server_stopped``."""
+        ...
+
+
+class UnfinishedSessions(Protocol):
+    """The store's half of a restart: rows a crash left live."""
+
+    def end_unfinished(self, at: datetime, reason: EndReason) -> int:
+        """End every session not yet ended; answers how many."""
+        ...
+
+
+class SessionRuntime:
+    """The agent sessions' lifecycle in ``hub web`` (see the module docstring)."""
+
+    def __init__(  # noqa: PLR0913 -- the runtime's ports and timings, all injected
+        self,
+        control: SweptSessions,
+        store: UnfinishedSessions,
+        *,
+        clock: Callable[[], datetime],
+        sweep_seconds: float = SWEEP_SECONDS,
+        purge_seconds: float = PURGE_SECONDS,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._control = control
+        self._store = store
+        self._clock = clock
+        self._sweep_seconds = sweep_seconds
+        self._purge_seconds = purge_seconds
+        self._monotonic = monotonic
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._sweeper: asyncio.Task[None] | None = None
+        self._shutdown: asyncio.Task[None] | None = None
+
+    async def start(self) -> None:
+        """End what a crash left unfinished, then start sweeping."""
+        self._loop = asyncio.get_running_loop()
+        await asyncio.to_thread(self._store.end_unfinished, self._clock(), EndReason.SERVER_STOPPED)
+        self._sweeper = asyncio.create_task(self._sweep_forever())
+
+    def begin_exit(self) -> None:
+        """Start the shutdown on the loop; safe from a signal handler or another thread."""
+        if self._loop is not None and not self._loop.is_closed():
+            self._loop.call_soon_threadsafe(self._begin_shutdown)
+
+    async def stop(self) -> None:
+        """Stop sweeping, end every live session and wait until they have ended."""
+        self._begin_shutdown()
+        if self._sweeper is not None:
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._sweeper
+        if self._shutdown is not None:
+            await asyncio.shield(self._shutdown)
+
+    def _begin_shutdown(self) -> None:
+        if self._shutdown is not None:
+            return
+        if self._sweeper is not None:
+            self._sweeper.cancel()
+        self._shutdown = asyncio.get_running_loop().create_task(self._control.shutdown())
+
+    async def _sweep_forever(self) -> None:
+        purged_at: float | None = None
+        while True:
+            now = self._monotonic()
+            purge = purged_at is None or now - purged_at >= self._purge_seconds
+            try:
+                await self._control.sweep(self._clock(), purge=purge)
+            except Exception:  # noqa: BLE001 -- one failed sweep never stops the next
+                _log.warning("agent session sweep failed", exc_info=True)
+            else:
+                if purge:
+                    purged_at = now
+            await asyncio.sleep(self._sweep_seconds)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class DeclaredCredentials:
+    """The credentials one hub declares: the names (``credentials.env`` and ``aws_profile``),
+    the env files as declared (relative to the workspace), whether both files were read, and
+    the repos ``hub.json`` declares (their folders, relative to the workspace)."""
+
+    names: CredentialNames
+    env_files: tuple[str, ...]
+    complete: bool
+    repos: tuple[str, ...] = ()
+
+
+NO_DECLARED: Final = DeclaredCredentials(names=NO_CREDENTIALS, env_files=(), complete=False)
+
+
+class HubCredentials:
+    """Each registered hub's declared credentials, read on every call (see the module
+    docstring); a project no valid registered hub names declares none."""
+
+    def __init__(
+        self, *, registry: HubRegistry, reader: HubFileReader, running_version: str
+    ) -> None:
+        self._registry = registry
+        self._reader = reader
+        self._running = running_version
+
+    def project_hubs(self) -> list[tuple[str, str]]:
+        """Each project's hub folder: the first valid registered hub naming it."""
+        try:
+            entries = self._registry.entries()
+        except HubRegistryError:
+            return []
+        found: dict[str, str] = {}
+        for entry in entries:
+            document = read_hub_document(
+                self._reader.read_hub_json(entry.path), running_version=self._running
+            )
+            if document.config is not None:
+                found.setdefault(document.config.project.name, entry.path)
+        return list(found.items())
+
+    def names(self, project: str) -> CredentialNames:
+        """The credential names ``project``'s hub declares; ``HubLocalInvalidError`` when they
+        cannot all be read (``HubRegistryUnreadableError`` when the registry cannot)."""
+        try:
+            entries = self._registry.entries()
+        except HubRegistryError:
+            raise HubRegistryUnreadableError(project) from None
+        for entry in entries:
+            document = read_hub_document(
+                self._reader.read_hub_json(entry.path), running_version=self._running
+            )
+            if document.config is not None and document.config.project.name == project:
+                declared = self.of_hub(entry.path)
+                if not declared.complete:
+                    raise HubLocalInvalidError(project, before="starting a session")
+                return declared.names
+        return NO_CREDENTIALS
+
+    def config_of(self, hub_path: str) -> HubConfig | None:
+        """The hub's ``hub.json`` at ``hub_path``, read now; None when it is not valid."""
+        return read_hub_document(
+            self._reader.read_hub_json(hub_path), running_version=self._running
+        ).config
+
+    def environments_of(self, hub_path: str, project: str) -> EffectiveEnvironments:
+        """The effective environments of ``project``'s hub (``hub.json`` tightened by
+        ``hub.local.json``, read now); ``HubLocalInvalidError`` when ``hub.local.json`` cannot be
+        read (fail closed, E-8), ``EntityNotFoundError`` when ``hub.json`` is not valid."""
+        config, local = self._files(hub_path, project)
+        return effective_environments(config, local)
+
+    def effective_config_of(self, hub_path: str, project: str) -> HubConfig:
+        """``project``'s ``hub.json`` with its ``hub.local.json`` over it, as the CLI merges
+        them (``effective_config``: a local ``tracker.transport`` wins); raises as
+        ``environments_of``."""
+        config, local = self._files(hub_path, project)
+        return effective_config(config, local)
+
+    def _files(self, hub_path: str, project: str) -> tuple[HubConfig, LocalConfig]:
+        """Both files, read now; a local file with a problem of its own or against
+        ``hub.json`` is ``HubLocalInvalidError``, as the CLI refuses it."""
+        config = self.config_of(hub_path)
+        if config is None:
+            raise EntityNotFoundError(entity="project", entity_id=project)
+        local = self._reader.read_local(hub_path)
+        if not isinstance(local, LocalConfig) or local_environment_problems(config, local):
+            raise HubLocalInvalidError(project)
+        return config, local
+
+    def of_hub(self, hub_path: str) -> DeclaredCredentials:
+        """What the hub at ``hub_path`` declares."""
+        config = read_hub_document(
+            self._reader.read_hub_json(hub_path), running_version=self._running
+        ).config
+        if config is None:
+            return NO_DECLARED
+        local = self._reader.read_local(hub_path)
+        complete = isinstance(local, LocalConfig)
+        view = effective_environments(
+            config, local if isinstance(local, LocalConfig) else LocalConfig()
+        )
+        return DeclaredCredentials(
+            names=CredentialNames.of(view),
+            env_files=tuple(found.path for found in declared_env_files(view)),
+            complete=complete,
+            repos=tuple(str(repo.dir) for repo in config.repos),
+        )

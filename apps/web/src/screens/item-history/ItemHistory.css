@@ -1,0 +1,49 @@
+/* The History panel, Compare and the Restore dialog (AGH-295); tokens only. */
+.ah-history {
+  min-width: 0;
+}
+.ah-history-head {
+  gap: var(--space-2);
+}
+.ah-history-body {
+  gap: var(--space-3);
+  min-width: 0;
+}
+.ah-history-unit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  margin: 0;
+  min-width: 0;
+}
+.ah-history-notice-detail {
+  display: block;
+  color: var(--text-muted);
+}
+.ah-history-origin {
+  gap: var(--space-1);
+}
+.ah-history-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.ah-history-compare {
+  gap: var(--space-3);
+  min-width: 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+.ah-history-change {
+  gap: var(--space-1);
+  min-width: 0;
+}
+.ah-history-change-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+}

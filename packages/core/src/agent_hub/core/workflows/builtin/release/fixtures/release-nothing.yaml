@@ -1,0 +1,19 @@
+# No PR merged since the last tag: nothing is bumped, the run ends nothing.
+workflow: release
+inputs: {issue: DEM-9, repo: demo-api, version: ""}
+stubs:
+  worktree:
+    output:
+      path: /ws/demo-api/.claude/worktrees/dem-9
+      branch: jdoe/dem-9
+      base: origin/trunk
+      hub: /ws/hub
+      hub_name: hub
+      check: make check
+      prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}
+      target: {path: /ws/demo-api/.claude/worktrees/dem-9, branch: jdoe/dem-9, base: origin/trunk}
+  since:
+    output: {last_tag: v0.20.1, previous: 0.20.1, version: 0.20.1, bump: none, reason: no PR merged since the tag, count: 0, prs: [], text: "", omitted: 0}
+  report: {output: {outcome: nothing, version: 0.21.0, pr: "", pin_pr: "", reason: the run's outcome}}
+expect: {status: done, outcome: nothing}
+reached: [worktree, since, report]

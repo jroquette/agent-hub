@@ -1,0 +1,352 @@
+import { QueryClient, queryOptions, useQuery } from "@tanstack/react-query";
+import type { QueryKey, UseQueryOptions } from "@tanstack/react-query";
+import { createContext, useContext } from "react";
+
+import { client } from "../api/client";
+import type { components, paths } from "../api/schema";
+import {
+  LAUNCH_COOKIE_UNAUTHORIZED_TYPE,
+  launchCookieLock,
+  launchCookieState,
+  needsLaunchCookie,
+  noteLaunchCookie,
+} from "./launchCookie";
+
+/* The data layer: typed GET queries over the generated client, and RFC 9457 problems as errors. */
+
+export type ProblemDetails = components["schemas"]["ProblemDetails"];
+
+type Operation<P extends keyof paths, M extends "get" | "post" | "put" | "delete"> = NonNullable<
+  paths[P][M]
+>;
+
+/** API paths with a GET operation. */
+export type GetPath = {
+  [P in keyof paths]: [NonNullable<paths[P]["get"]>] extends [never] ? never : P;
+}[keyof paths];
+export type PostPath = {
+  [P in keyof paths]: [NonNullable<paths[P]["post"]>] extends [never] ? never : P;
+}[keyof paths];
+export type PutPath = {
+  [P in keyof paths]: [NonNullable<paths[P]["put"]>] extends [never] ? never : P;
+}[keyof paths];
+export type DeletePath = {
+  [P in keyof paths]: [NonNullable<paths[P]["delete"]>] extends [never] ? never : P;
+}[keyof paths];
+
+type JsonOf<R> = R extends { content: { "application/json": infer D } } ? D : undefined;
+type SuccessOf<Op> = Op extends { responses: infer Rs }
+  ? 200 extends keyof Rs
+    ? JsonOf<Rs[200]>
+    : 201 extends keyof Rs
+      ? JsonOf<Rs[201]>
+      : 202 extends keyof Rs
+        ? JsonOf<Rs[202]>
+        : undefined
+  : never;
+
+/** The JSON body a GET of `P` answers with. */
+export type ApiData<P extends GetPath> = SuccessOf<Operation<P, "get">>;
+
+type ParamsOf<Op> = Op extends { parameters: infer Prm }
+  ? {
+      [
+        K in keyof Prm as K extends "path" | "query"
+          ? [NonNullable<Prm[K]>] extends [never]
+            ? never
+            : K
+          : never
+      ]: Prm[K];
+    }
+  : never;
+
+/** The path and query parameters of a GET of `P`. */
+export type ApiParams<P extends GetPath> = ParamsOf<Operation<P, "get">>;
+
+/** The JSON body of an operation, required or optional (`requestBody?: never` has none). */
+type BodyOf<Op> = Op extends { requestBody?: infer R }
+  ? [NonNullable<R>] extends [never]
+    ? undefined
+    : NonNullable<R> extends { content: { "application/json": infer B } }
+      ? B
+      : undefined
+  : undefined;
+
+/** An RFC 9457 problem the API answered with, or a network failure (status 0). */
+export class ApiProblem extends Error {
+  readonly status: number;
+  readonly title: string;
+  readonly detail: string | null;
+  readonly type: string;
+  readonly instance: string | null;
+  /** The extension member `code` (an item write's refusal, AGH-297), when the problem names one. */
+  readonly code: string | null;
+  /** The extension member `reason`, in words, when the problem names one. */
+  readonly reason: string | null;
+  /** The field problems of a 422 (`errors`: a JSON path and a message each), when it lists them. */
+  readonly errors: readonly { pointer: string; message: string }[];
+  /** The extension member `published`: true when a failed Publish still landed the item (its
+   * draft stayed, AGH-298), so the draft is spent. */
+  readonly published: boolean;
+
+  constructor(problem: {
+    status: number;
+    title: string;
+    detail?: string | null | undefined;
+    type?: string | undefined;
+    instance?: string | null | undefined;
+    code?: string | null | undefined;
+    reason?: string | null | undefined;
+    errors?: readonly { pointer: string; message: string }[] | undefined;
+    published?: boolean | undefined;
+  }) {
+    super(problem.detail ? `${problem.title}: ${problem.detail}` : problem.title);
+    this.name = "ApiProblem";
+    this.status = problem.status;
+    this.title = problem.title;
+    this.detail = problem.detail ?? null;
+    this.type = problem.type ?? "about:blank";
+    this.instance = problem.instance ?? null;
+    this.code = problem.code ?? null;
+    this.reason = problem.reason ?? null;
+    this.errors = problem.errors ?? [];
+    this.published = problem.published ?? false;
+  }
+}
+
+function isProblemBody(body: unknown): body is ProblemDetails {
+  return (
+    typeof body === "object" &&
+    body !== null &&
+    typeof (body as { title?: unknown }).title === "string" &&
+    typeof (body as { status?: unknown }).status === "number"
+  );
+}
+
+/** The problem an error stands for; anything unexpected becomes a generic one. */
+export function toProblem(error: unknown): ApiProblem {
+  if (error instanceof ApiProblem) return error;
+  return new ApiProblem({
+    status: 0,
+    title: "Could not reach agent-hub",
+    detail: "The request did not get an answer. Check that hub web is running.",
+  });
+}
+
+function fieldErrors(body: object): { pointer: string; message: string }[] {
+  const raw = (body as { errors?: unknown }).errors;
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item: unknown) => {
+    if (typeof item !== "object" || item === null) return [];
+    const { pointer, message } = item as { pointer?: unknown; message?: unknown };
+    return typeof pointer === "string" && typeof message === "string" ? [{ pointer, message }] : [];
+  });
+}
+
+function problemFrom(response: Response, body: unknown): ApiProblem {
+  if (isProblemBody(body)) {
+    return new ApiProblem({
+      status: body.status,
+      title: body.title,
+      detail: body.detail,
+      type: body.type,
+      instance: body.instance,
+      code: typeof body.code === "string" ? body.code : null,
+      reason: typeof body.reason === "string" ? body.reason : null,
+      errors: fieldErrors(body),
+      published: body.published === true,
+    });
+  }
+  return new ApiProblem({
+    status: response.status,
+    title: response.statusText || `HTTP ${String(response.status)}`,
+  });
+}
+
+interface LooseInit {
+  params?: object | undefined;
+  body?: unknown;
+  signal?: AbortSignal | undefined;
+  baseUrl: string;
+  fetch: (request: Request) => Promise<Response>;
+}
+type LooseMethod = (
+  path: string,
+  init: LooseInit,
+) => Promise<{ data?: unknown; error?: unknown; response: Response }>;
+
+type Verb = "GET" | "POST" | "PUT" | "DELETE";
+
+/**
+ * A write that needs the launch cookie, from a page known not to hold it, is refused here, before
+ * any request, with the same words the locked controls show; every screen gets that for free. A
+ * real 401 from such a write teaches the app the cookie is missing, so the controls lock.
+ */
+function launchCookieRefusal(verb: Verb, path: string): ApiProblem | null {
+  if (verb === "GET" || !needsLaunchCookie(verb, path)) return null;
+  const state = launchCookieState();
+  const lock = launchCookieLock(state);
+  if (lock === null) return null;
+  return new ApiProblem({
+    status: state === "off" ? 404 : 401,
+    title: lock.title,
+    detail: lock.detail,
+    type:
+      state === "off"
+        ? "urn:agent-hub:problem:agent-sessions-off"
+        : LAUNCH_COOKIE_UNAUTHORIZED_TYPE,
+  });
+}
+
+async function send(
+  verb: Verb,
+  path: string,
+  init: { params?: object | undefined; body?: unknown; signal?: AbortSignal | undefined },
+): Promise<unknown> {
+  const refused = launchCookieRefusal(verb, path);
+  if (refused) throw refused;
+  const method = METHODS[verb];
+  let result: Awaited<ReturnType<LooseMethod>>;
+  try {
+    result = await method(path, {
+      ...init,
+      // Same origin only (D25). The base and the fetch are read per call so tests can stub them.
+      baseUrl: window.location.origin,
+      fetch: (request) => globalThis.fetch(request),
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    throw toProblem(error);
+  }
+  if (!result.response.ok) {
+    const problem = problemFrom(result.response, result.error);
+    // Only the server's own refusal of a write teaches it (its problem type); the agent-session
+    // reads carry their own 401 handling.
+    if (
+      problem.type === LAUNCH_COOKIE_UNAUTHORIZED_TYPE &&
+      verb !== "GET" &&
+      needsLaunchCookie(verb, path)
+    )
+      noteLaunchCookie("missing");
+    throw problem;
+  }
+  return result.data;
+}
+
+const METHODS: Record<Verb, LooseMethod> = {
+  GET: client.GET as unknown as LooseMethod,
+  POST: client.POST as unknown as LooseMethod,
+  PUT: client.PUT as unknown as LooseMethod,
+  DELETE: client.DELETE as unknown as LooseMethod,
+};
+
+/** GETs `path`; resolves with its body or rejects with an ApiProblem. */
+export async function apiGet<P extends GetPath>(
+  path: P,
+  params?: ApiParams<P>,
+  signal?: AbortSignal,
+): Promise<ApiData<P>> {
+  return (await send("GET", path, { params, signal })) as ApiData<P>;
+}
+
+/** POSTs a JSON body to `path` (Phase 2 writes: registering a hub). */
+export async function apiPost<P extends PostPath>(
+  path: P,
+  body: BodyOf<Operation<P, "post">>,
+  params?: ParamsOf<Operation<P, "post">>,
+): Promise<SuccessOf<Operation<P, "post">>> {
+  return (await send("POST", path, { params, body })) as SuccessOf<Operation<P, "post">>;
+}
+
+/** PUTs `body` to `path`; resolves with the answer or rejects with an ApiProblem. */
+export async function apiPut<P extends PutPath>(
+  path: P,
+  body: BodyOf<Operation<P, "put">>,
+  params?: ParamsOf<Operation<P, "put">>,
+): Promise<SuccessOf<Operation<P, "put">>> {
+  return (await send("PUT", path, { params, body })) as SuccessOf<Operation<P, "put">>;
+}
+
+/** POSTs an empty JSON object to a command route that takes no body (a run's cancel, resume or
+ * abandon): a strict write needs a JSON body (S7), which a cross-site form cannot send. */
+export async function apiCommand<P extends PostPath>(
+  path: P,
+  params: ParamsOf<Operation<P, "post">>,
+): Promise<SuccessOf<Operation<P, "post">>> {
+  return (await send("POST", path, { params, body: {} })) as SuccessOf<Operation<P, "post">>;
+}
+
+/** DELETEs `path` (Phase 2 writes: removing a hub). */
+export async function apiDelete<P extends DeletePath>(
+  path: P,
+  params: ParamsOf<Operation<P, "delete">>,
+): Promise<void> {
+  await send("DELETE", path, { params });
+}
+
+/** The query key of a GET: `["api", path, params]`, so a path prefix invalidates its family. */
+export function apiKey<P extends GetPath>(path: P, params?: ApiParams<P>) {
+  return ["api", path, params ?? {}] as const;
+}
+
+/** Query options of a GET, for useQuery, prefetching or invalidation. */
+export function apiQuery<P extends GetPath>(path: P, params?: ApiParams<P>) {
+  return queryOptions({
+    queryKey: apiKey(path, params),
+    queryFn: ({ signal }) => apiGet(path, params, signal),
+  });
+}
+
+type ExtraOptions<P extends GetPath> = Omit<
+  UseQueryOptions<ApiData<P>, ApiProblem, ApiData<P>, ReturnType<typeof apiKey<P>>>,
+  "queryKey" | "queryFn"
+>;
+
+/**
+ * A screen read above a query (ADR 0056), given by `ScreenReadProvider` (`lib/screenRead.tsx`).
+ * `hold(key)` is null for a key the read does not bring, or once it has answered; else it
+ * resolves when the read answers, with that key's data, or with undefined when the query must
+ * read its route (the read failed or did not answer in time).
+ */
+export interface ScreenReadHold {
+  hold(key: QueryKey): Promise<unknown> | null;
+}
+
+export const ScreenReadContext = createContext<ScreenReadHold | null>(null);
+
+/** A GET as a TanStack query; `error` is always an ApiProblem. While a screen read above brings
+ * its data, the query waits for it instead of sending its own request. */
+export function useApi<P extends GetPath>(
+  path: P,
+  params?: ApiParams<P>,
+  options?: ExtraOptions<P>,
+) {
+  const screenRead = useContext(ScreenReadContext);
+  return useQuery<ApiData<P>, ApiProblem, ApiData<P>, ReturnType<typeof apiKey<P>>>({
+    ...options,
+    queryKey: apiKey(path, params),
+    queryFn: ({ queryKey, signal }) => {
+      const held = screenRead?.hold(queryKey);
+      if (!held) return apiGet(path, params, signal);
+      return held.then((data) =>
+        data === undefined ? apiGet(path, params, signal) : (data as ApiData<P>),
+      );
+    },
+  });
+}
+
+/** Retries network failures and 503s (busy database) twice; never a 4xx or a 500. */
+export function shouldRetry(failureCount: number, error: unknown): boolean {
+  const status = error instanceof ApiProblem ? error.status : 0;
+  return failureCount < 2 && (status === 0 || status === 503);
+}
+
+/** The app's query client: live views refresh through SSE, so data stays fresh for 10 s. */
+export function createQueryClient(): QueryClient {
+  return new QueryClient({
+    defaultOptions: {
+      queries: { staleTime: 10_000, retry: shouldRetry, refetchOnWindowFocus: false },
+      mutations: { retry: false },
+    },
+  });
+}

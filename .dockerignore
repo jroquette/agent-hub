@@ -1,0 +1,15 @@
+# Only what the image builds from: the workspace, its lockfile and the web app's sources.
+*
+!pyproject.toml
+!uv.lock
+!.python-version
+!packages/
+!apps/web/
+packages/*/tests/
+apps/web/node_modules/
+apps/web/coverage/
+apps/web/test-results/
+apps/web/playwright-report/
+**/__pycache__/
+**/*.pyc
+**/.DS_Store

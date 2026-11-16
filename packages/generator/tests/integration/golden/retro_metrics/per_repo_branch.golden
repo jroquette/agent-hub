@@ -1,0 +1,93 @@
+--- rc (2 bytes) ---
+0
+
+--- stdout (1789 bytes) ---
+{
+  "window": "2026-01-01 .. 2026-01-15",
+  "prs": {
+    "acme/api": {
+      "merged": 3,
+      "median_cycle_h": 1.1,
+      "agent_prs": 2,
+      "agent_merged_without_edits": 1
+    },
+    "acme/web": {
+      "merged": 0,
+      "median_cycle_h": null,
+      "agent_prs": 0,
+      "agent_merged_without_edits": 0
+    },
+    "acme/demo-hub": {
+      "merged": 4,
+      "median_cycle_h": 2.7,
+      "agent_prs": 1,
+      "agent_merged_without_edits": 1
+    }
+  },
+  "pr_follow_up": {
+    "limit_h": 1,
+    "checked": 0,
+    "slow": 0,
+    "slow_prs": [],
+    "unchecked": 0,
+    "note": "agent PRs are the ones a review record names (PRs from /change, /refactor, /upgrade, /release and the hub's records PRs are not counted, nor are records whose pr is still <repo>#pending); the commit date stands in for the push time; a conflict counts only on an open PR, so one a merged PR had is not counted"
+  },
+  "agent_runs": {
+    "outcomes": {
+      "failed:verify": 2,
+      "pr_opened": 5,
+      "failed:check": 1
+    },
+    "cost_per_issue": {
+      "TST-3": 0.3,
+      "TST-1": 1.45,
+      "TST-2": 0.17,
+      "TST-4": 0.0,
+      "TST-5": 2.0
+    }
+  },
+  "ci": {
+    "acme/api": {
+      "runs": 8,
+      "failed": 6,
+      "failed_workflows": [
+        "build",
+        "docs",
+        "lint",
+        "lint \u2713",
+        "security"
+      ]
+    },
+    "acme/web": {
+      "runs": 2,
+      "failed": 1,
+      "failed_workflows": [
+        "None"
+      ]
+    },
+    "acme/demo-hub": {
+      "runs": 0,
+      "failed": 0,
+      "failed_workflows": []
+    }
+  },
+  "memory": {
+    "inbox_pending": 2,
+    "inbox_older_than_2d": 0,
+    "learnings_added_or_changed": 3,
+    "note": "sessions that needed re-explanation are not measurable from files yet; count them by hand in the retro"
+  }
+}
+
+--- stderr (0 bytes) ---
+
+--- fs (0 bytes) ---
+
+--- calls (1262 bytes) ---
+{"tool": "gh", "cwd": "<ROOT>/ws/demo-hub", "argv": ["<ROOT>/bin/gh", "pr", "list", "-R", "acme/api", "--state", "merged", "--limit", "40", "--search", "merged:>=2026-01-01", "--json", "number,createdAt,mergedAt,body,commits"]}
+{"tool": "gh", "cwd": "<ROOT>/ws/demo-hub", "argv": ["<ROOT>/bin/gh", "pr", "list", "-R", "acme/web", "--state", "merged", "--limit", "40", "--search", "merged:>=2026-01-01", "--json", "number,createdAt,mergedAt,body,commits"]}
+{"tool": "gh", "cwd": "<ROOT>/ws/demo-hub", "argv": ["<ROOT>/bin/gh", "pr", "list", "-R", "acme/demo-hub", "--state", "merged", "--limit", "40", "--search", "merged:>=2026-01-01", "--json", "number,createdAt,mergedAt,body,commits"]}
+{"tool": "gh", "cwd": "<ROOT>/ws/demo-hub", "argv": ["<ROOT>/bin/gh", "run", "list", "-R", "acme/api", "--branch", "master", "--limit", "60", "--json", "conclusion,createdAt,workflowName"]}
+{"tool": "gh", "cwd": "<ROOT>/ws/demo-hub", "argv": ["<ROOT>/bin/gh", "run", "list", "-R", "acme/web", "--branch", "trunk", "--limit", "60", "--json", "conclusion,createdAt,workflowName"]}
+{"tool": "gh", "cwd": "<ROOT>/ws/demo-hub", "argv": ["<ROOT>/bin/gh", "run", "list", "-R", "acme/demo-hub", "--branch", "trunk", "--limit", "60", "--json", "conclusion,createdAt,workflowName"]}
+

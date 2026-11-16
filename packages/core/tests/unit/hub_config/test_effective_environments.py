@@ -1,0 +1,322 @@
+from typing import Any
+
+import pytest
+
+from agent_hub.core.hub_config.effective_environments import (
+    effective_environments,
+    env_file_for,
+    local_environment_problems,
+)
+from agent_hub.core.hub_config.local_config import LocalConfig, check_local_document
+from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.testing.blocked_words_cases import BLOCKED_WORDS_CASES, BlockedWordsCase
+from agent_hub.core.testing.builders import (
+    a_local_environments_document,
+    an_environments_document,
+)
+
+
+def hub_config() -> HubConfig:
+    return HubConfig.model_validate(an_environments_document())
+
+
+def local_config(document: dict[str, Any]) -> LocalConfig:
+    local = check_local_document(document)
+    assert isinstance(local, LocalConfig), local
+    return local
+
+
+def local_problems(document: dict[str, Any]) -> list[tuple[str, str]]:
+    problems = local_environment_problems(hub_config(), local_config(document))
+    return [(problem.path, problem.message) for problem in problems]
+
+
+def test_finds_no_problem_when_local_declares_own_environments() -> None:
+    assert local_problems(a_local_environments_document()) == []
+
+
+def with_change(path: tuple[str | int, ...], value: object) -> dict[str, Any]:
+    document = a_local_environments_document()
+    parent: Any = document
+    for segment in path[:-1]:
+        parent = parent[segment]
+    parent[path[-1]] = value
+    return document
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "where", "message"),
+    [
+        pytest.param(
+            ("environments", "live"),
+            {"production": True},
+            "environments.live.production",
+            "hub.json declares live; hub.local.json may only tighten its access or set values",
+            id="redeclare_live",
+        ),
+        pytest.param(
+            ("environments", "live"),
+            {"description": "mine"},
+            "environments.live.description",
+            "hub.json declares live; hub.local.json may only tighten its access or set values",
+            id="describe_live",
+        ),
+        pytest.param(
+            ("repos", 0, "services", "api", "endpoints", "staging"),
+            {"url": "https://api.jane.example.com"},
+            "repos[0].services.api.endpoints.staging",
+            "staging is declared in hub.json; a local endpoint names a local environment",
+            id="endpoint_staging",
+        ),
+        pytest.param(
+            ("repos", 0, "services", "api", "endpoints", "qa"),
+            {"url": "https://api.qa.example.com"},
+            "repos[0].services.api.endpoints.qa",
+            'environment "qa" is not in environments',
+            id="endpoint_undeclared",
+        ),
+        pytest.param(
+            ("repos", 0, "dir"),
+            "other",
+            "repos[0].dir",
+            'repo dir "other" is not in hub.json\'s repos',
+            id="dir_other",
+        ),
+        pytest.param(
+            ("repos", 0, "services", "api", "kind"),
+            "lambda",
+            "repos[0].services.api.kind",
+            "hub.json declares api; hub.local.json may only add its endpoints",
+            id="committed_service_kind",
+        ),
+        pytest.param(
+            ("environments", "jane-cloud"),
+            {"credentials": {"aws_profile": "jane-sandbox"}},
+            "environments.jane-cloud.access",
+            "a new environment needs an access: read, write or ask",
+            id="new_without_access",
+        ),
+        pytest.param(
+            ("environments", "Live"),
+            {"access": "read"},
+            "environments.Live",
+            'environment name "Live" is already used by "live" in hub.json, ignoring case',
+            id="name_case",
+        ),
+        pytest.param(
+            ("environments", "JANE-CLOUD"),
+            {"access": "read"},
+            "environments.JANE-CLOUD",
+            'environment name "JANE-CLOUD" is already used by "jane-cloud" in hub.local.json,'
+            " ignoring case",
+            id="local_name_case",
+        ),
+    ],
+)
+def test_rejects_local_environments_when_conflict_given(
+    path: tuple[str | int, ...], value: object, *, where: str, message: str
+) -> None:
+    assert local_problems(with_change(path, value)) == [(where, message)]
+
+
+@pytest.mark.parametrize(
+    ("name", "access", "committed"),
+    [("staging", "write", "ask"), ("staging", "ask", "ask"), ("live", "write", "read")],
+    ids=["looser", "equal", "live_looser"],
+)
+def test_rejects_tighten_when_access_looser_or_equal(
+    name: str, access: str, committed: str
+) -> None:
+    document = with_change(("environments", name), {"access": access})
+
+    assert local_problems(document) == [
+        (f"environments.{name}.access", f"may only tighten hub.json's {committed}")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("name", "access"), [("staging", "read"), ("local", "ask"), ("local", "read")]
+)
+def test_accepts_tighten_when_access_stricter(name: str, access: str) -> None:
+    assert local_problems(with_change(("environments", name), {"access": access})) == []
+
+
+def environment_rows(local: dict[str, Any]) -> list[tuple[str, str, bool, str]]:
+    effective = effective_environments(hub_config(), local_config(local))
+    return [
+        (environment.name, environment.access, environment.production, environment.source)
+        for environment in effective.environments
+    ]
+
+
+def test_merges_local_environments_when_local_declares_them() -> None:
+    effective = effective_environments(hub_config(), local_config(a_local_environments_document()))
+
+    assert environment_rows(a_local_environments_document()) == [
+        ("local", "write", False, "hub.json"),
+        ("staging", "ask", False, "hub.json"),
+        ("live", "read", True, "hub.json"),
+        ("jane-cloud", "write", False, "hub.local.json"),
+    ]
+    jane = effective.environments[-1]
+    assert jane.credentials is not None
+    assert jane.credentials.aws_profile == "jane-sandbox"
+    assert [(service.repo, service.name) for service in effective.services] == [
+        ("demo-api", "api"),
+        ("demo-api", "orders"),
+    ]
+    api = effective.services[0]
+    assert api.kind == "api"
+    assert [(row.environment, row.endpoint.url, row.source) for row in api.endpoints] == [
+        ("local", "http://localhost:8000", "hub.json"),
+        ("staging", "https://api.staging.example.com", "hub.json"),
+        ("live", "https://api.example.com", "hub.json"),
+        ("jane-cloud", "https://api.jane.example.com", "hub.local.json"),
+    ]
+    assert [(entry.value, entry.layer) for entry in effective.blocked_words] == [
+        ("prod", "hub.json"),
+        ("production", "hub.json"),
+        ("demo-live", "hub.local.json"),
+    ]
+    assert [entry.value for entry in effective.blocked_files] == [
+        "config/*.json",
+        "serverless.yml",
+        "deploy/*.tfvars",
+    ]
+
+
+def test_tightens_access_when_local_sets_stricter() -> None:
+    local = a_local_environments_document()
+    local["environments"]["staging"] = {"access": "read"}
+
+    assert environment_rows(local)[1] == ("staging", "read", False, "hub.local.json")
+
+
+def test_keeps_hub_environments_when_local_file_absent() -> None:
+    assert environment_rows({}) == [
+        ("local", "write", False, "hub.json"),
+        ("staging", "ask", False, "hub.json"),
+        ("live", "read", True, "hub.json"),
+    ]
+
+
+def test_adds_local_service_when_local_names_new_one() -> None:
+    local = a_local_environments_document()
+    local["repos"][0]["services"]["queue"] = {
+        "kind": "sqs",
+        "endpoints": {"jane-cloud": {"resource": "jane-queue"}},
+    }
+
+    services = effective_environments(hub_config(), local_config(local)).services
+
+    assert [(service.name, service.kind) for service in services] == [
+        ("api", "api"),
+        ("orders", "dynamodb"),
+        ("queue", "sqs"),
+    ]
+    assert [(row.environment, row.source) for row in services[2].endpoints] == [
+        ("jane-cloud", "hub.local.json")
+    ]
+
+
+@pytest.mark.parametrize(
+    "case", BLOCKED_WORDS_CASES, ids=[case.name for case in BLOCKED_WORDS_CASES]
+)
+def test_unions_blocked_words_when_case_table_read(case: BlockedWordsCase) -> None:
+    config = HubConfig.model_validate(case.hub_document())
+    local = check_local_document(case.local_document() or {})
+    assert isinstance(local, LocalConfig), local
+
+    effective = effective_environments(config, local)
+
+    assert [(entry.value, entry.layer) for entry in effective.blocked_words] == list(case.words)
+    assert [(entry.value, entry.layer) for entry in effective.blocked_files] == list(case.files)
+    assert [(entry.value, entry.layer) for entry in effective.blocked_env] == list(case.env)
+
+
+def test_covers_each_layer_when_case_table_read() -> None:
+    names = [case.name for case in BLOCKED_WORDS_CASES]
+    layers = {
+        layer for case in BLOCKED_WORDS_CASES for _, layer in (*case.words, *case.files, *case.env)
+    }
+
+    assert len(set(names)) == len(names)
+    assert layers == {"hub.json", "hub.local.json"}
+    assert any(case.local_document() is None for case in BLOCKED_WORDS_CASES)
+    assert any(case.env for case in BLOCKED_WORDS_CASES)
+
+
+@pytest.mark.parametrize(("name", "committed"), [("staging", "ask"), ("live", "read")])
+def test_rejects_committed_name_when_local_entry_sets_nothing(name: str, committed: str) -> None:
+    document = with_change(("environments", name), {})
+
+    assert local_problems(document) == [
+        (f"environments.{name}.access", f"may only tighten hub.json's {committed}")
+    ]
+
+
+def test_accepts_env_file_when_local_environment_declares_it() -> None:
+    # AC-350.43: hub.local.json declares an env file on its own environment and endpoint.
+    document = a_local_environments_document()
+    document["environments"]["jane-cloud"]["credentials"]["env_file"] = "demo-api/.env.jane"
+    endpoint = document["repos"][0]["services"]["api"]["endpoints"]["jane-cloud"]
+    endpoint["credentials"] = {"env_file": "demo-api/.env.jane-api"}
+    local = local_config(document)
+
+    view = effective_environments(hub_config(), local)
+
+    assert local_problems(document) == []
+    [jane] = [row for row in view.environments if row.name == "jane-cloud"]
+    assert jane.credentials is not None
+    assert jane.credentials.env_file == "demo-api/.env.jane"
+    assert env_file_for(view, "jane-cloud", service=("demo-api", "api")) == (
+        "demo-api/.env.jane-api"
+    )
+
+
+def test_prefers_endpoint_env_file_when_both_declared() -> None:
+    # AC-350.43: an endpoint's env file wins over its environment's.
+    document = an_environments_document()
+    document["environments"]["staging"]["credentials"]["env_file"] = "demo-api/.env.staging"
+    endpoints = document["repos"][0]["services"]["orders"]["endpoints"]
+    endpoints["staging"]["credentials"] = {"env_file": "demo-api/.env.orders"}
+    view = effective_environments(HubConfig.model_validate(document), LocalConfig())
+
+    assert env_file_for(view, "staging", service=("demo-api", "orders")) == ("demo-api/.env.orders")
+    assert env_file_for(view, "staging", service=("demo-api", "api")) == "demo-api/.env.staging"
+    assert env_file_for(view, "staging") == "demo-api/.env.staging"
+    assert env_file_for(view, "live") is None
+    assert env_file_for(view, "qa") is None
+
+
+def test_merges_values_per_key_when_local_sets_values_on_committed_environment() -> None:
+    document = an_environments_document()
+    document["environments"]["staging"]["values"] = {"account_id": "111", "region": "eu-west-1"}
+    local = a_local_environments_document()
+    local["environments"]["staging"] = {"values": {"account_id": "222", "user_name": "jane"}}
+    local["environments"]["jane-cloud"]["values"] = {"user_name": "jane-own"}
+
+    problems = local_environment_problems(HubConfig.model_validate(document), local_config(local))
+    view = effective_environments(HubConfig.model_validate(document), local_config(local))
+
+    assert problems == ()
+    values = {row.name: row.values for row in view.environments}
+    assert values["staging"] == {"account_id": "222", "region": "eu-west-1", "user_name": "jane"}
+    assert values["local"] == {}
+    assert values["jane-cloud"] == {"user_name": "jane-own"}
+    # Values alone never tighten: the access and its source stay the team's.
+    staging = next(row for row in view.environments if row.name == "staging")
+    assert (staging.access, staging.source) == ("ask", "hub.json")
+
+
+def test_rejects_local_values_when_entry_also_sets_production() -> None:
+    document = with_change(
+        ("environments", "live"), {"values": {"user_name": "jane"}, "production": False}
+    )
+
+    assert local_problems(document) == [
+        (
+            "environments.live.production",
+            "hub.json declares live; hub.local.json may only tighten its access or set values",
+        )
+    ]

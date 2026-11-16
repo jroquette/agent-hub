@@ -1,0 +1,345 @@
+/* The Brain browser (D3): a note tree beside the selected note. */
+.ah-brain-layout {
+  display: grid;
+  grid-template-columns: minmax(200px, 280px) minmax(0, 1fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .ah-brain-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.ah-brain-tree {
+  list-style: none;
+  margin: 0;
+  padding-left: 12px;
+}
+.ah-brain-tree[data-root] {
+  padding-left: 0;
+}
+/* The tree card stays under the top bar while a long note scrolls. It is at most the
+   visible part of main under the page header (the breadcrumb, title and purpose with their gaps,
+   132 px, and the page's bottom padding), so all of it shows at first paint; inside it the search
+   field and the listing banner stay put while the rows, or the search's results, scroll. */
+.ah-brain-panel {
+  position: sticky;
+  top: var(--space-4);
+  z-index: var(--z-sticky);
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - var(--topbar) - 156px);
+}
+/* The collector's offline banner takes its height from main. */
+.ah-shell:has(.ah-shell-banner > .ah-banner) .ah-brain-panel {
+  max-height: calc(100dvh - var(--topbar) - 200px);
+}
+.ah-brain-panel > .ah-stack {
+  min-height: 0;
+}
+/* The tree's own scroll box: only the rows in its view are in the page. Its inline padding keeps
+   a row's focus ring inside it, and the negative margin keeps the rows where the card puts them;
+   a row it scrolls to stays below its group's sticky heading. The search's results scroll in the
+   same place when they replace the tree. */
+.ah-brain-scroll,
+.ah-brain-results {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  margin: 0 calc(-1 * var(--space-1));
+  padding: 0 var(--space-1) var(--space-1);
+}
+.ah-brain-scroll {
+  scroll-padding: 24px 0 var(--space-1);
+}
+/* The results have no sticky heading: a focused result's ring shows whole at either edge. */
+.ah-brain-results {
+  scroll-padding: var(--space-1) 0;
+}
+/* Stacked above the note, the card stays in the page: its rows at most half the screen high, and
+   at least 240 px high (a group heading and about 8 rows). */
+@media (max-width: 900px) {
+  .ah-brain-panel,
+  .ah-shell:has(.ah-shell-banner > .ah-banner) .ah-brain-panel {
+    position: static;
+    max-height: none;
+  }
+  .ah-brain-scroll {
+    max-height: max(240px, 50dvh);
+  }
+  .ah-brain-results {
+    overflow: visible;
+  }
+}
+/* The loading panel's group heading and 10 rows, at the tree's row heights. */
+.ah-brain-skeleton {
+  display: flex;
+  flex-direction: column;
+}
+.ah-brain-scroll .ah-brain-group {
+  display: block;
+}
+.ah-brain-scroll .ah-brain-group + .ah-brain-group {
+  margin-top: var(--space-6);
+}
+/* The heading stays at the top of the box while its group's rows pass under it. The 4 px below
+   it are left clear, so the focus ring of the row under it shows whole. */
+.ah-brain-scroll .ah-brain-group-label {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: 20px;
+  margin: 0 0 4px;
+  background: var(--surface);
+}
+/* The rows' heights are fixed per kind (BrainTree's SIZE): padding stands in for the rows out of
+   view, so the scrollbar never jumps. */
+.ah-brain-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ah-brain-rows > li[data-kind="note"] {
+  height: 26px;
+}
+.ah-brain-rows > li[data-kind="folder"] {
+  height: 28px;
+}
+.ah-brain-folder {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 100%;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.ah-brain-folder:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.ah-brain-folder > .ah-mono {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ah-brain-folder > .ah-count {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.ah-brain-scroll .ah-brain-group > .ah-brain-link {
+  margin-top: 2px;
+}
+.ah-brain-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ah-brain-group + .ah-brain-group {
+  margin-top: var(--space-3);
+}
+.ah-brain-group-label {
+  margin: 0 0 2px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-subtle);
+}
+.ah-brain-link-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ah-brain-link-folder {
+  margin-left: auto;
+  padding-left: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ah-brain-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  min-height: 24px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ah-brain-link:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+  text-decoration: none;
+}
+.ah-brain-link[aria-current="page"] {
+  background: var(--surface-sunken);
+  color: var(--text);
+  font-weight: 500;
+}
+/* Prose reads best at a bounded line length, as elsewhere in the app. */
+.ah-brain-note > :last-child {
+  max-width: 80ch;
+}
+/* The Brain search's knowledge rows (AGH-393): title, path, kind and snippet in the narrow panel. */
+.ah-know-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ah-know-row {
+  display: block;
+  min-height: 24px;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-muted);
+}
+/* Only a row that opens a note lights up: a text row (repo doc, refused note) stays still.
+   `:where` keeps the old specificity, so the open note's row keeps its background on hover. */
+:where(a).ah-know-row:hover {
+  background: var(--surface-hover);
+  text-decoration: none;
+}
+.ah-know-row[aria-current="page"] {
+  background: var(--surface-sunken);
+}
+.ah-know-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ah-know-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text);
+  font-weight: 500;
+}
+.ah-know-title .ah-icon {
+  flex: none;
+  color: var(--text-subtle);
+}
+.ah-know-title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ah-know-details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ah-know-details .ah-path {
+  font-size: 12px;
+  color: var(--text-subtle);
+}
+.ah-know-kind {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-subtle);
+}
+/* Clamped for the eye only: the whole snippet stays in the DOM for a screen reader. */
+.ah-know-snippet {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  color: var(--text-muted);
+}
+@media (max-width: 899px) {
+  .ah-know-snippet {
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+  }
+}
+.ah-know-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-1) var(--space-2);
+}
+.ah-know-skipped {
+  margin: 0;
+  padding-left: var(--space-4);
+  color: var(--text-muted);
+}
+/* The note column's sections after the body (AGH-393): Where this note came from, Linked from. */
+.ah-note-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+.ah-note-section > h2:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+@media (max-width: 899px) {
+  .ah-brain-note-head {
+    flex-wrap: wrap;
+  }
+  .ah-brain-jumps {
+    order: 3;
+    flex-basis: 100%;
+  }
+}
+.ah-origin {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+}
+.ah-origin-row {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: var(--space-3);
+}
+.ah-origin-row > dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.ah-origin-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ah-origin-learning {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ah-origin-learning .ah-icon {
+  color: var(--text-subtle);
+}

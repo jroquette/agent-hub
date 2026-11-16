@@ -1,0 +1,206 @@
+import { screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { seriousViolations } from "../../testing/axe";
+import {
+  aFeature,
+  aFeatureTickets,
+  aPage,
+  aSession,
+  aTicketRow,
+  aSessionLabel,
+  anAgentSession,
+  renderWithApi,
+} from "../../testing/builders";
+import {
+  RAIL_KEY,
+  RAIL_MIN,
+  RAIL_WIDTH_KEY,
+  SessionRail,
+  railGroups,
+  railMax,
+  railName,
+  railTagsOf,
+} from "./SessionRail";
+
+const at = (minutes: number) => new Date(Date.UTC(2026, 9, 20, 12, minutes)).toISOString();
+const sessions = [
+  anAgentSession({ id: "a", title: "Ship the rail", status: "running", updated_at: at(5) }),
+  anAgentSession({
+    id: "b",
+    title: "Fix the guard",
+    status: "waiting_permission",
+    updated_at: at(1),
+  }),
+  anAgentSession({ id: "c", title: "Old spike", status: "ended", updated_at: at(0) }),
+  anAgentSession({
+    id: "d",
+    title: null,
+    last_prompt: "  write\nthe plan ",
+    status: "idle",
+    updated_at: at(9),
+  }),
+];
+
+afterEach(() => {
+  window.localStorage.clear();
+});
+
+describe("railGroups", () => {
+  it("AC-422.18 lists the sessions waiting for you first, then the open ones, then the recent ended ones", () => {
+    expect(railGroups(sessions, "").map((g) => [g.id, g.sessions.map((s) => s.id)])).toEqual([
+      ["needs", ["b"]],
+      ["active", ["d", "a"]],
+      ["recent", ["c"]],
+    ]);
+  });
+
+  it("AC-422.19 filters by name, project, folder or tag, and drops empty groups", () => {
+    expect(railGroups(sessions, "GUARD").map((g) => g.id)).toEqual(["needs"]);
+    const tagged = () => ({ ticket: "DEMO-1576", feature: "fraud-check", name: null });
+    expect(railGroups(sessions, "demo-1576", tagged)).toHaveLength(3);
+  });
+
+  it("AC-422.20 names a session by its title, else its last prompt on one line", () => {
+    const untitled = anAgentSession({ title: null, last_prompt: "  write\nthe plan " });
+    expect(railName(untitled)).toBe("write the plan");
+  });
+
+  it("AC-422.20 names a session on a ticket by its ticket, as the chat's header does", () => {
+    const titled = anAgentSession({ title: "Campos buyer_ip_address" });
+    const tags = { ticket: "DEMO-1577", feature: "fraud-check", name: "DEMO-1577: Add the client" };
+    expect(railName(titled, tags)).toBe("DEMO-1577: Add the client");
+  });
+});
+
+describe("railTagsOf", () => {
+  it("AC-422.20 tags a session with its observed twin's ticket and the feature that plans it", () => {
+    const twin = aSession({ id: "obs-1", label: aSessionLabel({ issue: "DEMO-1576" }) });
+    const lookup = new Map([
+      ["DEMO-1576", { project: "demo", slug: "fraud-check", title: "Add the fraud-check client" }],
+    ]);
+    const tagsOf = railTagsOf([twin], lookup);
+
+    expect(tagsOf(anAgentSession({ observed_session_id: "obs-1" }))).toEqual({
+      ticket: "DEMO-1576",
+      feature: "fraud-check",
+      name: "DEMO-1576: Add the fraud-check client",
+    });
+    expect(tagsOf(anAgentSession({ observed_session_id: null }))).toEqual({
+      ticket: null,
+      feature: null,
+      name: null,
+    });
+  });
+});
+
+describe("railMax", () => {
+  it("keeps the chat its room beside a widened rail, never below the rail's minimum", () => {
+    expect(railMax(0)).toBe(560);
+    expect(railMax(1600)).toBe(560);
+    expect(railMax(900)).toBe(420);
+    expect(railMax(500)).toBe(RAIL_MIN);
+  });
+});
+
+describe("SessionRail", () => {
+  const routes = {
+    "/api/v1/agent-sessions": aPage(sessions),
+    "/api/v1/sessions": aPage([]),
+    "/api/v1/features": aPage([]),
+  };
+
+  it("AGH-800 names a session on a ticket of the feature's plan (not in its issues) by the ticket's title", async () => {
+    const twin = aSession({
+      id: "obs-1",
+      label: aSessionLabel({ issue: "AGH-202", branch: "main", title: "Unblock the helper" }),
+    });
+    renderWithApi(<SessionRail current="a" />, {
+      routes: {
+        "/api/v1/agent-sessions": aPage([
+          anAgentSession({ id: "a", title: "Unblock the helper", observed_session_id: "obs-1" }),
+        ]),
+        "/api/v1/sessions": aPage([twin]),
+        "/api/v1/features": aPage([aFeature({ issues: ["AGH-200"] })]),
+        "/api/v1/features/agent-hub/control-plane/tickets": aFeatureTickets({
+          tickets: [aTicketRow()],
+        }),
+      },
+    });
+
+    expect(await screen.findByText("AGH-202: Serve the ticket summaries")).toBeInTheDocument();
+    expect(screen.getByText("control-plane")).toBeInTheDocument();
+  });
+
+  it("AC-422.18 marks the current session and links the others to their chat", async () => {
+    const { container } = renderWithApi(<SessionRail current="a" />, { routes });
+    const rail = await screen.findByRole("navigation", { name: "Sessions" });
+
+    const current = await within(rail).findByRole("link", { current: "page" });
+    expect(current).toHaveTextContent("Ship the rail");
+    expect(within(rail).getByRole("link", { name: /Fix the guard/ })).toHaveAttribute(
+      "href",
+      "/agent-sessions/b",
+    );
+    expect(await seriousViolations(container)).toEqual([]);
+  });
+
+  it("AC-422.21 folds to a strip of the open sessions and remembers it", async () => {
+    renderWithApi(<SessionRail current="a" />, { routes });
+    await userEvent.click(await screen.findByRole("button", { name: "Hide sessions" }));
+
+    expect(window.localStorage.getItem(RAIL_KEY)).toBe("closed");
+    expect(screen.getByRole("button", { name: "Show sessions" })).toBeInTheDocument();
+    // The strip keeps the open sessions only.
+    expect(screen.queryByRole("link", { name: /Old spike/ })).toBeNull();
+    expect(screen.getByRole("link", { name: /Fix the guard/ })).toBeInTheDocument();
+  });
+
+  it("AC-422.19 narrows the rail with its filter and clears it on Escape", async () => {
+    renderWithApi(<SessionRail current="a" />, { routes });
+    const filter = await screen.findByRole("searchbox", { name: "Filter sessions" });
+    await within(await screen.findByRole("navigation", { name: "Sessions" })).findByRole("link", {
+      name: /Old spike/,
+    });
+
+    await userEvent.type(filter, "guard");
+    expect(screen.queryByRole("link", { name: /Old spike/ })).toBeNull();
+    expect(screen.getByRole("link", { name: /Fix the guard/ })).toBeInTheDocument();
+
+    await userEvent.keyboard("{Escape}");
+    expect(filter).toHaveValue("");
+    expect(screen.getByRole("link", { name: /Old spike/ })).toBeInTheDocument();
+  });
+
+  it("resizes from its right edge with the arrows, kept in this browser; Home resets it", async () => {
+    renderWithApi(<SessionRail current="a" />, { routes });
+    const handle = await screen.findByRole("separator", { name: "Resize the sessions list" });
+    expect(handle).toHaveAttribute("aria-valuenow", "260");
+
+    handle.focus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(window.localStorage.getItem(RAIL_WIDTH_KEY)).toBe("300");
+    expect(
+      screen.getByRole("navigation", { name: "Sessions" }).style.getPropertyValue("--as-rail-w"),
+    ).toBe("300px");
+
+    await userEvent.keyboard("{Home}");
+    expect(window.localStorage.getItem(RAIL_WIDTH_KEY)).toBeNull();
+  });
+
+  it("tells the layout how wide it is, so the chat centres past it and never moves", async () => {
+    renderWithApi(<SessionRail current="a" />, { routes });
+    const handle = await screen.findByRole("separator", { name: "Resize the sessions list" });
+    const layout = handle.parentElement;
+    expect(layout?.style.getPropertyValue("--as-chat-rail-w")).toBe("260px");
+
+    handle.focus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(layout?.style.getPropertyValue("--as-chat-rail-w")).toBe("300px");
+
+    // Folded, the strip's own width (from the stylesheet) takes over.
+    await userEvent.click(screen.getByRole("button", { name: "Hide sessions" }));
+    expect(layout?.style.getPropertyValue("--as-chat-rail-w")).toBe("");
+  });
+});

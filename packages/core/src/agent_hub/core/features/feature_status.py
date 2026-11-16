@@ -1,0 +1,604 @@
+"""A feature folder's state (D23, AGH-136), from the files the generator read: pure, no I/O.
+
+``features.json`` (``feature_record.py``) gives the acceptance criteria and the ticket plan:
+passing ACs, owner steps (a criterion whose verification starts with ``manual`` and does not pass
+yet), the planned tickets and the Linear ids. ``spec.md``'s frontmatter gives the size
+(``process_size``), ``repos`` and ``linear`` issues; ``eval.md``'s first ``Verdict`` line the
+verdict. ``evals/*.md`` and ``reviews/*.md`` are the evals per delivery and the review records.
+The golden path (``golden_path.py``) folds all of it with the ticket board (``ticket_planning.py``)
+over a tracker snapshot when one is given (the warm cache), else the plan; ``phase`` is its
+phase. The detail's ``records`` name each record file (brain-relative, so the brain note route
+reads it) and whether it is present. A malformed or unreadable record degrades this feature
+only: its ``problem`` says why and its criteria are unknown.
+"""
+
+import re
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Final, Literal, cast
+
+from agent_hub.core.events.event import EventSource
+from agent_hub.core.features.feature_evals import (
+    OwnerWait,
+    acceptance_eval,
+    eval_coverage,
+    eval_records,
+    legacy_verdict_line,
+    owner_wait,
+    signoff_block,
+)
+from agent_hub.core.features.feature_record import (
+    RECORD_FILE,
+    FeatureRecordFile,
+    RecordAc,
+    record_from_bytes,
+)
+from agent_hub.core.features.feature_reviews import (
+    approved_tickets,
+    review_pull_requests,
+    review_records,
+)
+from agent_hub.core.features.feature_view import (
+    AcceptanceEval,
+    AcCounts,
+    AcRow,
+    EvalRecord,
+    FeatureDetail,
+    FeatureRecord,
+    FeatureRecordName,
+    FeatureView,
+    GoldenPath,
+    OwnerStatus,
+    OwnerStatusKind,
+    OwnerWaitState,
+    OwnerWaitView,
+    PlanView,
+    TicketsSource,
+    UxDesignView,
+    Verdict,
+    WaitingOnOwner,
+)
+from agent_hub.core.features.golden_path import EvalGate, GoldenInputs, golden_path
+from agent_hub.core.features.plan_version import plan_version
+from agent_hub.core.features.ticket_planning import TicketBoard, ticket_board
+from agent_hub.core.features.ticket_records import (
+    ChangeRequests,
+    OutcomeFile,
+    TicketFiles,
+    TicketOutcome,
+    change_requests,
+    recorded_outcomes,
+    request_view,
+)
+from agent_hub.core.features.ticket_snapshots import SnapshotRead
+from agent_hub.core.hub_config.problems import one_line
+from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN
+from agent_hub.core.tracker.tracker_reader import MAX_READ_IDS
+
+SPEC: Final = "spec.md"
+RESEARCH: Final = "research.md"
+PLAN: Final = "plan.md"
+ISSUES: Final = "issues.md"
+RECORD: Final = RECORD_FILE
+EVAL: Final = "eval.md"
+# The owner's decision on the feature (shipped, closed, paused), written from hub web.
+STATUS: Final = "status.md"
+STATUS_HEAD_BYTES: Final = 4096
+# The ``/feature`` intake brief: only its presence counts (AC-1.2); it has no tab of its own.
+BRIEF: Final = "brief.md"
+# The record files of a feature folder, in the order a feature is built.
+RECORD_FILES: Final = (BRIEF, SPEC, RESEARCH, PLAN, ISSUES, RECORD, EVAL)
+# How much of ``spec.md`` and ``eval.md`` is read for the frontmatter and the verdict.
+HEAD_BYTES: Final = 65_536
+# ``plan.md`` is read whole up to this size, so its ``## Amendments`` at the end is seen (P1).
+MAX_PLAN_BYTES: Final = 262_144
+# The UX designs are the folder's own ``ux-*.md`` files: at most this many, their head only (P2).
+UX_PREFIX: Final = "ux-"
+MAX_UX_FILES: Final = 50
+UX_HEAD_BYTES: Final = 4096
+# A design's visual mockup is the ``ux-*.html`` with its stem: listed with the folder, read alone.
+UX_MOCKUP_SUFFIX: Final = ".html"
+MAX_UX_MOCKUP_BYTES: Final = 1_048_576
+_UX_MOCKUP_NAME: Final = re.compile(r"ux-[A-Za-z0-9][A-Za-z0-9._-]*\.html")
+PLAN_TOO_LARGE: Final = (
+    f"{PLAN} is larger than {MAX_PLAN_BYTES // 1024} KiB; its version could not be read."
+)
+_VERDICT_LINE_CHARS: Final = 200
+_SIZES: Final = ("spike", "bounded", "architectural")
+
+type FeatureSize = Literal["spike", "bounded", "architectural"]
+_MANUAL: Final = re.compile(r"\s*manual\b", re.IGNORECASE)
+# The records a feature detail lists, each with its file (AC-201.32), in the order shown.
+_RECORDS: Final[tuple[tuple[FeatureRecordName, str], ...]] = (
+    ("spec", SPEC),
+    ("research", RESEARCH),
+    ("plan", PLAN),
+    ("eval", EVAL),
+    ("issues", ISSUES),
+)
+FEATURES_FOLDER: Final = "features"
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class RecordHead:
+    """The start of one file of ``evals/`` or ``reviews/``: its ``name`` and ``head`` bytes, or
+    the one-line ``problem`` that kept it from being read (a link, not a regular file)."""
+
+    name: str
+    head: bytes | None
+    problem: str | None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class FeatureFolder:
+    """What was read of ``brain/features/<slug>/``.
+
+    ``files`` names the record files present as regular files. ``features_json`` holds the
+    record's bytes, a one-line problem when it could not be read, or None when absent;
+    ``spec_head`` and ``eval_head`` are the first ``HEAD_BYTES`` of ``spec.md`` and ``eval.md``.
+    ``evals`` and ``reviews`` hold the heads of ``evals/*.md`` and ``reviews/*.md`` sorted by
+    name; ``evals_skipped`` counts the eval files left unread over the cap.
+    ``plan`` holds ``plan.md`` whole, None when absent or larger than ``MAX_PLAN_BYTES``
+    (``plan_too_large`` then says so). ``ux_designs`` holds the heads of the folder's own
+    ``ux-*.md`` sorted by name; ``ux_skipped`` counts those left unread over ``MAX_UX_FILES``;
+    ``ux_mockups`` names its ``ux-*.html`` mockups (listed, never read here).
+    ``review_round_tickets`` names the ``reviews/`` ticket folders holding a review round
+    (``<reviewer>-r<N>.json``, never read). ``ticket_folders`` holds what was read of each
+    ``tickets/<ticket>/`` (``ticket_folders_skipped`` counts those left unread over the cap);
+    ``change_requests`` the heads of ``change-requests/*.md`` sorted by name
+    (``change_requests_skipped`` counts those left unread). ``outcomes`` holds each
+    ``tickets/<ticket>/outcome.md`` read (every read of the feature reads them: Build counts them).
+    """
+
+    slug: str
+    files: tuple[str, ...]
+    features_json: bytes | str | None = None
+    spec_head: bytes | None = None
+    eval_head: bytes | None = None
+    evals: tuple[RecordHead, ...] = ()
+    reviews: tuple[RecordHead, ...] = ()
+    evals_skipped: int = 0
+    plan: bytes | None = None
+    plan_too_large: bool = False
+    ux_designs: tuple[RecordHead, ...] = ()
+    ux_skipped: int = 0
+    ux_mockups: tuple[str, ...] = ()
+    review_round_tickets: tuple[str, ...] = ()
+    ticket_folders: tuple[TicketFiles, ...] = ()
+    ticket_folders_skipped: int = 0
+    change_requests: tuple[RecordHead, ...] = ()
+    change_requests_skipped: int = 0
+    outcomes: tuple[OutcomeFile, ...] = ()
+    status_head: bytes | None = None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class FeatureParts:
+    """What the feature views share: the parsed ``record`` (its one-line problem, or None when
+    absent), every eval, the ticket ``board``, the ``golden_path``, the tickets' ``source``,
+    what the acceptance eval waits on from the owner (``owner_wait``), the plan change
+    ``requests`` and the ACs the owner ``signed_off`` by hand (``EvalCoverage.signed_off``)."""
+
+    record: FeatureRecordFile | str | None
+    evals: tuple[EvalRecord, ...]
+    board: TicketBoard
+    golden_path: GoldenPath
+    source: TicketsSource
+    owner_wait: OwnerWaitView | None
+    requests: ChangeRequests
+    signed_off: tuple[str, ...] = ()
+
+
+def ticket_ids(folder: FeatureFolder) -> tuple[str, ...]:
+    """The tracker ids a snapshot of the feature reads, sorted and unique: its tickets' (planned
+    ones created, and ``linear``), then the tracker ids the plan's ``blocked_by`` names outside
+    the feature, so a blocker known only to the plan gets its status (AC-136.10). The feature's
+    own ids always fit (``MAX_TICKETS`` is ``MAX_READ_IDS``); outside blockers fill what room is
+    left under ``MAX_READ_IDS``, lowest ids first, and any over it stay unread (status unknown).
+    Empty for a record that is absent or malformed."""
+    record = _record(folder.features_json)
+    if not isinstance(record, FeatureRecordFile):
+        return ()
+    own = {
+        *(ticket.id for ticket in record.tickets if ticket.id is not None),
+        *(issue for issue in record.linear if _is_issue_id(issue)),
+    }
+    keys = {ticket.key for ticket in record.tickets}
+    outside = sorted(
+        {
+            name
+            for ticket in record.tickets
+            for name in ticket.blocked_by
+            if _is_issue_id(name) and name not in own and name not in keys
+        },
+        key=_id_order,
+    )
+    room = max(MAX_READ_IDS - len(own), 0)
+    return tuple(sorted(own | set(outside[:room])))
+
+
+def _is_issue_id(text: str) -> bool:
+    return ISSUE_ID_PATTERN.fullmatch(text) is not None
+
+
+def _id_order(issue: str) -> tuple[str, int]:
+    """``OPS-9`` before ``OPS-10``: an issue id by team, then number."""
+    team, _, number = issue.rpartition("-")
+    return team, int(number)
+
+
+def feature_parts(
+    folder: FeatureFolder,
+    read: SnapshotRead | None = None,
+    *,
+    now: datetime,
+    repos: Mapping[str, str] | None = None,
+) -> FeatureParts:
+    """The feature's evals, ticket board and golden path, over ``read``'s snapshot when it holds
+    one (else the plan; ``read`` None is a hub web with no tracker reader: not connected), read
+    at ``now`` (an acceptance eval dated after it cannot be signed off yet, A15). ``repos`` maps
+    each hub repo's ``dir`` to its GitHub ``owner/name``, to link each ticket's pull request from
+    its review record."""
+    record = _record(folder.features_json)
+    parsed = record if isinstance(record, FeatureRecordFile) else None
+    acs = () if parsed is None else parsed.acs
+    tickets = () if parsed is None else parsed.tickets
+    evals = eval_records(folder.evals, folder.eval_head, slug=folder.slug)
+    coverage = eval_coverage(evals, acs, tickets=tickets)
+    reviews = review_records(folder.reviews, slug=folder.slug)
+    approved = approved_tickets(reviews)
+    accepted = acceptance_eval(evals)
+    snapshot = None if read is None else read.snapshot
+    board = ticket_board(
+        tickets,
+        acs,
+        snapshot,
+        linear=() if parsed is None else parsed.linear,
+        approved=approved,
+        pull_requests=review_pull_requests(reviews, repos or {}),
+    )
+    source: TicketsSource = "plan" if snapshot is None else "linear"
+    waiting = owner_wait(evals, acs, tickets=tickets)
+    block = None if waiting is None else signoff_block(waiting.acceptance, now=now)
+    gate = EvalGate(
+        evals=len(evals),
+        covered=len(coverage.covered),
+        wait=_wait_state(waiting, block),
+        owner_steps=0 if waiting is None else len(waiting.acs),
+        reopened=0 if waiting is None else len(waiting.reopened),
+        # The web's date-time in UTC ("21 Nov 2026, 09:01:00 UTC"), so the step reads as the prompt.
+        signable_after=(
+            f"{block.day} {block:%b %Y, %H:%M:%S} UTC" if isinstance(block, datetime) else None
+        ),
+        skipped=folder.evals_skipped,
+        acceptance=None if accepted is None else accepted.verdict,
+    )
+    ux_designs, ux_problem = _ux_designs(folder)
+    requests = change_requests(folder.change_requests, skipped=folder.change_requests_skipped)
+    path = golden_path(
+        GoldenInputs(
+            files=folder.files,
+            rows=board.rows,
+            acs=acs,
+            coverage=gate,
+            ux_designs=ux_designs,
+            ux_problem=ux_problem,
+            plan=plan_view(folder),
+            requests=requests,
+            merged=frozenset(
+                name
+                for name, outcome in recorded_outcomes(folder.outcomes).items()
+                if isinstance(outcome, TicketOutcome)
+            ),
+            source=source,
+            not_loaded=read is not None and snapshot is None and read.failure is None,
+        )
+    )
+    return FeatureParts(
+        record=record,
+        evals=evals,
+        board=board,
+        golden_path=path,
+        source=source,
+        owner_wait=None if folder.evals_skipped else _owner_wait_view(waiting, block),
+        requests=requests,
+        signed_off=coverage.signed_off,
+    )
+
+
+def _wait_state(
+    waiting: OwnerWait | None, block: Literal["undated"] | datetime | None
+) -> OwnerWaitState | None:
+    """The Acceptance wait's state in the order the sign-off refuses (A9-A11, A15; evals left
+    unread, its first refusal, are the caller's): no AC to sign off, then no sign-off able to
+    follow the eval, then reopened ACs; None when nothing waits."""
+    if waiting is None:
+        return None
+    if not waiting.acs:
+        return "no_acs"
+    if block == "undated":
+        return "undated"
+    if block is not None:
+        return "future"
+    return "reopened" if waiting.reopened else "sign_off"
+
+
+def _owner_wait_view(
+    waiting: OwnerWait | None, block: Literal["undated"] | datetime | None
+) -> OwnerWaitView | None:
+    """The Acceptance wait the Eval tab's prompt shows; None when nothing waits or an owner
+    decision newer than the eval already settled it (A11)."""
+    state = _wait_state(waiting, block)
+    if waiting is None or state is None or waiting.settled:
+        return None
+    return OwnerWaitView(
+        state=state,
+        acs=waiting.acs,
+        reopened=waiting.reopened,
+        signable_after=block if isinstance(block, datetime) else None,
+    )
+
+
+def feature_view(
+    folder: FeatureFolder, *, project: str, now: datetime, read: SnapshotRead | None = None
+) -> FeatureView:
+    """The feature as the Features list shows it (``read``: the warm snapshot, as the detail)."""
+    detail = feature_detail(folder, project=project, now=now, read=read)
+    return FeatureView.model_validate(detail.model_dump(include=set(FeatureView.model_fields)))
+
+
+def feature_detail(
+    folder: FeatureFolder, *, project: str, now: datetime, read: SnapshotRead | None = None
+) -> FeatureDetail:
+    """The feature with its acceptance criteria rows and every eval; ``read`` is what the
+    snapshot cache holds for its tickets (never a tracker read), None when hub web has none."""
+    front = _frontmatter(folder.spec_head)
+    parts = feature_parts(folder, read, now=now)
+    record = parts.record
+    signed = frozenset(parts.signed_off)
+    rows = (
+        ()
+        if not isinstance(record, FeatureRecordFile)
+        else tuple(_row(ac, signed_off=ac.id in signed) for ac in record.acs)
+    )
+    accepted = acceptance_eval(parts.evals)
+    verdict, verdict_line = _verdict(accepted, folder.eval_head)
+    spec_repos = _listed(front.get("repos"))
+    return FeatureDetail(
+        project=project,
+        slug=folder.slug,
+        issues=_unique(
+            (
+                *_listed(front.get("linear")),
+                *(record.linear if isinstance(record, FeatureRecordFile) else ()),
+            )
+        ),
+        size=_size(front.get("process_size")),
+        phase=parts.golden_path.phase,
+        files=tuple(name for name in RECORD_FILES if name in folder.files),
+        acs=None if not isinstance(record, FeatureRecordFile) else _counts(rows),
+        verdict=verdict,
+        verdict_line=verdict_line,
+        repos=spec_repos or _unique(row.repo for row in rows if row.repo),
+        golden_path=parts.golden_path,
+        tickets_source=parts.source,
+        problem=record if isinstance(record, str) else None,
+        waiting_on_owner=_waiting_on_owner(parts),
+        sources_missing=(EventSource.GITHUB,),
+        ac_rows=rows,
+        records=_records(folder),
+        ux_designs=_ux_views(folder),
+        evals=parts.evals,
+        plan=plan_view(folder),
+        acceptance_eval=(
+            None
+            if accepted is None or accepted.verdict is None
+            else AcceptanceEval(
+                delivery=accepted.delivery, verdict=accepted.verdict, owner_wait=parts.owner_wait
+            )
+        ),
+        change_requests=tuple(
+            request_view(request, slug=folder.slug) for request in parts.requests.requests
+        ),
+        owner_status=(status := owner_status(folder.status_head)),
+        last_activity_on=_last_activity(front, parts.evals, status),
+    )
+
+
+_OWNER_STATUSES: Final[tuple[OwnerStatusKind, ...]] = ("shipped", "closed", "paused")
+_DAY: Final = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def owner_status(head: bytes | None) -> OwnerStatus | None:
+    """The owner's decision in ``status.md``'s frontmatter; None when absent, reopened
+    (``status: active``) or unreadable. Its note is the body after the frontmatter and heading."""
+    front = _frontmatter(head)
+    status = front.get("status")
+    if head is None or status not in _OWNER_STATUSES:
+        return None
+    text = head.decode("utf-8", "replace")
+    body = text.split("---", 2)[2] if text.count("---") >= 2 else ""
+    lines = [line for line in body.strip().splitlines() if not line.startswith("# ")]
+    note = "\n".join(lines).strip()
+    return OwnerStatus(
+        status=status,
+        decided_at=front.get("decided_at") or None,
+        note=note or None,
+    )
+
+
+def _last_activity(
+    spec: Mapping[str, str], evals: Iterable[EvalRecord], status: OwnerStatus | None
+) -> str | None:
+    """The newest ``YYYY-MM-DD`` among the spec's ``last_verified``, the evals' dates and the
+    owner's decision; None when none is dated."""
+    dates = [spec.get("last_verified"), *(e.evaluated_at for e in evals)]
+    dates.append(None if status is None else status.decided_at)
+    days = [found.group(0) for d in dates if d and (found := _DAY.match(d.strip()))]
+    return max(days, default=None)
+
+
+def _waiting_on_owner(parts: FeatureParts) -> WaitingOnOwner | None:
+    """What the feature waits on from the owner: an open plan change request first (it pauses
+    tickets), then the acceptance eval's owner steps (A17: by hand when no AC is listed)."""
+    if asking := parts.requests.open:
+        tickets = tuple(dict.fromkeys(request.ticket for request in asking if request.ticket))
+        return WaitingOnOwner(kind="change_request", tickets=tickets)
+    state = None if parts.owner_wait is None else parts.owner_wait.state
+    if state == "sign_off":
+        return WaitingOnOwner(kind="owner_signoff")
+    if state == "no_acs":
+        return WaitingOnOwner(kind="owner_signoff_manual")
+    return None
+
+
+def _ux_designs(folder: FeatureFolder) -> tuple[tuple[bool, ...], str | None]:
+    """Whether each UX design says ``status: approved`` (one whose head could not be read is a
+    draft), and why they could not all be read: more than the cap (an unread one could be a
+    draft)."""
+    if folder.ux_skipped:
+        return (), f"more than {MAX_UX_FILES} UX designs; not all were read"
+    return tuple(
+        _frontmatter(design.head).get("status") == "approved" for design in folder.ux_designs
+    ), None
+
+
+def _ux_views(folder: FeatureFolder) -> tuple[UxDesignView, ...]:
+    """Each UX design the folder holds, named from its frontmatter, else from its file name
+    (``ux-<new|change>-<screen>.md``); one whose head could not be read still shows, unapproved."""
+    views: list[UxDesignView] = []
+    for design in folder.ux_designs:
+        front = _frontmatter(design.head)
+        stem = design.name.removesuffix(".md").removeprefix(UX_PREFIX)
+        named_change, _, named_screen = stem.partition("-")
+        if named_change not in ("new", "change"):
+            named_change, named_screen = "new", stem
+        screen = front.get("screen") or named_screen
+        mockup = f"{design.name.removesuffix('.md')}{UX_MOCKUP_SUFFIX}"
+        views.append(
+            UxDesignView(
+                path=f"{FEATURES_FOLDER}/{folder.slug}/{design.name}",
+                screen=screen,
+                change=front.get("change") or named_change,
+                title=_first_heading(design.head) or screen,
+                approved=front.get("status") == "approved",
+                mockup=mockup if mockup in folder.ux_mockups else None,
+            )
+        )
+    return tuple(views)
+
+
+def is_ux_mockup_name(name: str) -> bool:
+    """Whether ``name`` is one file name a UX mockup may have (``ux-<stem>.html``, no folder, not
+    hidden), checked before any read."""
+    return _UX_MOCKUP_NAME.fullmatch(name) is not None
+
+
+def _first_heading(head: bytes | None) -> str | None:
+    """The text of the first ``# `` heading of a head, None without one."""
+    if head is None:
+        return None
+    for line in head.decode("utf-8", "replace").splitlines():
+        if line.startswith("# "):
+            return line[2:].strip() or None
+    return None
+
+
+def _records(folder: FeatureFolder) -> tuple[FeatureRecord, ...]:
+    """Each record file with its brain-relative path and whether the folder listing had it."""
+    return tuple(
+        FeatureRecord(
+            name=name,
+            path=f"{FEATURES_FOLDER}/{folder.slug}/{file}",
+            present=file in folder.files,
+        )
+        for name, file in _RECORDS
+    )
+
+
+def _record(read: bytes | str | None) -> FeatureRecordFile | str | None:
+    if read is None:
+        return None
+    if isinstance(read, str):
+        return one_line(f"{RECORD} could not be read ({read})")
+    return record_from_bytes(read)
+
+
+def _row(ac: RecordAc, *, signed_off: bool = False) -> AcRow:
+    return AcRow(
+        id=ac.id,
+        description=ac.description,
+        repo=ac.repo,
+        passes=ac.passes,
+        signed_off=signed_off and not ac.passes,
+        manual=ac.verification is not None and _MANUAL.match(ac.verification) is not None,
+        evidence=ac.evidence,
+        command=ac.verification,
+    )
+
+
+def _counts(rows: tuple[AcRow, ...]) -> AcCounts:
+    return AcCounts(
+        passing=sum(row.passes or row.signed_off for row in rows),
+        total=len(rows),
+        owner_steps=sum(row.manual and not (row.passes or row.signed_off) for row in rows),
+    )
+
+
+def _verdict(
+    accepted: EvalRecord | None, legacy_head: bytes | None
+) -> tuple[Verdict | None, str | None]:
+    """The header verdict: the acceptance eval's, with the legacy ``eval.md``'s own verdict line
+    when it is that eval, else a line naming its delivery; none before an acceptance eval."""
+    if accepted is None or accepted.verdict is None:
+        return None, None
+    found = legacy_verdict_line(legacy_head) if accepted.legacy and legacy_head else None
+    if found is None:
+        return accepted.verdict, f"Verdict: {accepted.verdict}, from the {accepted.delivery} eval"
+    return accepted.verdict, one_line(found[1].strip())[:_VERDICT_LINE_CHARS]
+
+
+def plan_view(folder: FeatureFolder) -> PlanView | None:
+    """The plan's version and amendments; a record problem when it was too large to read."""
+    if folder.plan_too_large:
+        return PlanView(version=None, problem=PLAN_TOO_LARGE)
+    return None if folder.plan is None else plan_version(folder.plan)
+
+
+def _frontmatter(head: bytes | None) -> dict[str, str]:
+    """The ``key: value`` lines between the leading ``---`` lines; nothing without them."""
+    if head is None:
+        return {}
+    lines = head.decode("utf-8", "replace").splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}
+    found: dict[str, str] = {}
+    for line in lines[1:]:
+        if line.strip() == "---":
+            return found
+        key, colon, value = line.partition(":")
+        if colon and key and not key.startswith((" ", "\t")):
+            found[key.strip()] = value.strip()
+    return {}
+
+
+def spec_linear(head: bytes | None) -> tuple[str, ...]:
+    """The tracker ids in ``spec.md``'s frontmatter ``linear``, as the feature detail reads them."""
+    return _listed(_frontmatter(head).get("linear"))
+
+
+def _listed(value: str | None) -> tuple[str, ...]:
+    """``[a, b]`` or a single ``a`` as a tuple; quotes around items are dropped."""
+    if not value:
+        return ()
+    inner = value[1:-1] if value.startswith("[") and value.endswith("]") else value
+    return _unique(item.strip().strip("'\"") for item in inner.split(","))
+
+
+def _size(value: str | None) -> FeatureSize | None:
+    return cast("FeatureSize", value) if value in _SIZES else None
+
+
+def _unique(items: Iterable[str]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(item for item in items if item))

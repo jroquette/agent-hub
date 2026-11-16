@@ -1,0 +1,477 @@
+"""``features.tracker``: every feature record is well formed and agrees with its spec (spec Q-16).
+
+The port of the hub's feature check (``features_check.py`` and its ``Makefile`` loop): each listed
+``brain/features/<name>/features.json`` (a ``<name>`` starting with ``.`` is skipped, as a shell
+glob does) is read as ``json.load`` read it (a repeated key: the last wins), and must hold
+``{"feature", "linear", "acs": [{id, description, repo, verification, passes, evidence}]}``:
+``linear`` ids carry a configured tracker team's prefix (exact case); ``repo`` is a ``repos[].dir``
+or the hub's repo name (the last segment of ``project.hub_repo``, whatever folder the hub sits in);
+ids look like ``AC-<n>`` or ``AC-<n>.<m>`` (``\\d`` takes any script's digits, as before) and are
+unique; a pending AC's verification keeps its exit code; ``passes: true`` needs evidence. When a
+sibling ``spec.md`` is listed, the ``AC-…`` ids it names anywhere (a range's ends and a placeholder
+included, which the hub's spec rule relies on) and the record's ids are the same set, each side
+reported in numeric order (compared as digit strings, so an id of any length orders). An id is
+echoed cut to 80 characters. Every finding names the record, except a spec that cannot be read (not
+UTF-8, a link: links are never followed, or a failed read), which names the spec; the record is then
+checked without the cross-check.
+
+A record whose folder lists ``issues.md`` while no tracker id is recorded, neither in its
+``linear`` (absent or ``[]``), nor as a planned ticket's ``id``, nor in the spec's frontmatter
+``linear:`` (read as ``hub web`` reads it, its first 64 KiB; only ids of a team key count, so a
+placeholder does not), gets a
+warning on the record: the issues were drafted, likely created, and their ids never written back,
+so ``hub web`` shows the feature with none (AGH-143). A record that is not an object, a malformed
+``linear`` or a spec that cannot be read already has its error, and no warning.
+
+AGH-136 (``feature_plan_checks``): the record's optional ticket plan (``tickets``, each AC's
+``ticket`` and ``withdrawn``) and the folder's ``evals/<delivery>.md`` files are checked too, each
+eval finding naming the eval. A cycle of ``blocked_by`` is a warning. A withdrawn AC stays in the
+cross-check (the spec keeps naming it, under ``## Amendments``) and skips the pending-command check.
+
+AGH-139 (``feature_output_checks``): the folder's agent outputs, ``evals/*.json`` and
+``reviews/<ticket>/*.json`` or ``reviews/<ticket>/<repo>/*.json`` (hidden names skipped), get
+warnings only: one without its ``.md`` record, one that fails ``agent_outputs``' validation (its
+problem count and first problem), within per-feature file caps and one validation budget per run,
+which the records spend in listing order; an output is validated when it fits the remaining budget,
+and the skipped outputs are counted in one info finding per run, on ``brain/features``. Only folders
+with a listed record are checked; the outputs change no other finding."""
+
+import re
+import unicodedata
+from collections.abc import Iterable, Iterator, Mapping
+from dataclasses import dataclass, replace
+from typing import Final
+
+from agent_hub.core.doctor.feature_output_checks import (
+    EVALS_FOLDER,
+    OUTPUT_SUFFIX,
+    REVIEWS_FOLDER,
+    SKIPPED_FIX,
+    OutputBudget,
+    output_problems,
+    skipped_message,
+)
+from agent_hub.core.doctor.feature_plan_checks import (
+    RECORD_FIX,
+    ac_plan_problems,
+    eval_problems,
+    file_content,
+    ticket_plan,
+)
+from agent_hub.core.doctor.feature_plan_checks import Problem as _Problem
+from agent_hub.core.doctor.finding import Finding, Read, Rule
+from agent_hub.core.doctor.snapshot import DoctorSnapshot
+from agent_hub.core.features.feature_status import HEAD_BYTES, spec_linear
+from agent_hub.core.hub_config.doctor_rules import FEATURES_TRACKER_RULE, RULE_MODULES, Severity
+from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_config.problems import ROOT_PATH
+from agent_hub.core.hub_config.team_keys import teams_text
+from agent_hub.core.hub_config.versions import cut_echo
+from agent_hub.core.hub_files.tree_snapshot import FileEntry, TreeEntry
+from agent_hub.core.json_form import InvalidJsonError, JsonValue, load_json_bytes
+
+FEATURES_FOLDER: Final = ("brain", "features")
+RECORD_NAME: Final = "features.json"
+SPEC_NAME: Final = "spec.md"
+ISSUES_NAME: Final = "issues.md"
+MASKED_FIX: Final = "end the verification with the check itself, so a failure exits non-zero"
+EVIDENCE_FIX: Final = "record the command run and its result in evidence"
+SPEC_FIX: Final = "give spec.md and features.json the same AC ids"
+JSON_FIX: Final = "fix the JSON of the record"
+TEXT_FIX: Final = "save it as UTF-8 text"
+NO_IDS: Final = "issues.md exists but `linear` holds no tracker id, here or in spec.md"
+NO_IDS_FIX: Final = "write the created issue ids into features.json → linear"
+MASKED: Final = (
+    "`verification` must keep its exit code (no trailing `echo $?`, `|| true` or `| tail`)"
+)
+
+_AC_ID: Final = re.compile(r"AC-\d+(?:\.\d+)*")
+# An id anywhere in the spec, prose and code alike; ``AC-1.2x`` and a ``.<digit>`` tail are none.
+_SPEC_ID: Final = re.compile(r"\b" + _AC_ID.pattern + r"\b(?!\.\d)")
+# A last step of ``echo … $?``, ``|| true`` or a pipe into a pager always exits 0, so a failing
+# check would read as passing. Only pending ACs: passed ones keep the command the evaluator ran.
+_MASKED_EXIT: Final = re.compile(
+    r"(;|&&)\s*echo\b[^;&|]*\$\?\s*$|\|\|\s*(true|:)\s*$|\|\s*(tail|head|less|more)\b[^|;&]*$"
+)
+_TEXT_FIELDS: Final = ("id", "description", "repo", "verification")
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _Folders:
+    """The listed evals and agent outputs of each feature folder, by folder path."""
+
+    evals: Mapping[str, list[str]]
+    outputs: Mapping[str, list[str]]
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _Project:
+    """What the records are checked against: the repo names and the tracker's team keys."""
+
+    names: tuple[str, ...]
+    teams: tuple[str, ...]
+
+
+def _features_tracker(snapshot: DoctorSnapshot) -> Iterable[Finding]:
+    project = _project_of(snapshot.hub_config)
+    listed = frozenset(snapshot.hub.listed)
+    entries = snapshot.hub.entries
+    folders = _Folders(
+        evals=_evals_by_folder(snapshot.hub.listed),
+        outputs=_outputs_by_folder(snapshot.hub.listed),
+    )
+    found: list[Finding] = []
+    # One output budget for the run, spent by the records in listing order (E22).
+    budget = OutputBudget()
+    for path in snapshot.hub.listed:
+        if _is_record(path):
+            findings, budget = _record_findings(
+                path,
+                entries=entries,
+                listed=listed,
+                project=project,
+                folders=folders,
+                budget=budget,
+            )
+            found.extend(findings)
+    if budget.skipped:
+        found.append(_skipped_info(budget.skipped))
+    return tuple(found)
+
+
+def _evals_by_folder(listed: Iterable[str]) -> dict[str, list[str]]:
+    """The listed ``evals/<name>.md`` (not hidden) of each feature folder, by folder path."""
+    found: dict[str, list[str]] = {}
+    depth = len(FEATURES_FOLDER) + 3
+    for path in listed:
+        parts = tuple(path.split("/"))
+        if (
+            len(parts) == depth
+            and parts[: len(FEATURES_FOLDER)] == FEATURES_FOLDER
+            and parts[-2] == EVALS_FOLDER
+            and parts[-1].endswith(".md")
+            and not parts[-1].startswith(".")
+        ):
+            found.setdefault("/".join(parts[:-2]) + "/", []).append(path)
+    return found
+
+
+def _outputs_by_folder(listed: Iterable[str]) -> dict[str, list[str]]:
+    """The listed ``evals/*.json`` and ``reviews/<ticket>/*.json`` of each feature folder (no
+    hidden file or ticket folder), by folder path: ``_evals_by_folder``'s twin for outputs."""
+    found: dict[str, list[str]] = {}
+    for path in listed:
+        folder = _output_folder(tuple(path.split("/")))
+        if folder is not None:
+            found.setdefault(folder, []).append(path)
+    return found
+
+
+def _output_folder(parts: tuple[str, ...]) -> str | None:
+    """The feature folder of an output path, or None when the path is not one."""
+    depth = len(FEATURES_FOLDER) + 1
+    inside = parts[depth:-1]
+    is_output = (
+        len(parts) > depth
+        and parts[: len(FEATURES_FOLDER)] == FEATURES_FOLDER
+        and parts[-1].endswith(OUTPUT_SUFFIX)
+        and (inside == (EVALS_FOLDER,) or (len(inside) in {2, 3} and inside[0] == REVIEWS_FOLDER))
+        and not any(part.startswith(".") for part in (*inside, parts[-1]))
+    )
+    return "/".join(parts[:depth]) + "/" if is_output else None
+
+
+def _project_of(config: HubConfig) -> _Project:
+    hub_name = config.project.hub_repo.rsplit("/", 1)[-1]
+    names = sorted({*(repo.dir for repo in config.repos), hub_name})
+    return _Project(names=tuple(names), teams=config.tracker.team_keys)
+
+
+def _is_record(path: str) -> bool:
+    parts = tuple(path.split("/"))
+    return (
+        len(parts) == len(FEATURES_FOLDER) + 2
+        and parts[: len(FEATURES_FOLDER)] == FEATURES_FOLDER
+        and parts[-1] == RECORD_NAME
+        and not parts[-2].startswith(".")
+    )
+
+
+def _record_findings(
+    path: str,
+    *,
+    entries: Mapping[str, TreeEntry],
+    listed: frozenset[str],
+    project: _Project,
+    folders: _Folders,
+    budget: OutputBudget,
+) -> tuple[tuple[Finding, ...], OutputBudget]:
+    """The findings on one record and its folder, and the run's output budget after them."""
+    folder = path.removesuffix(RECORD_NAME)
+    spec_path = folder + SPEC_NAME
+    spec = _spec_text(entries.get(spec_path)) if spec_path in listed else None
+    document = _document(entries.get(path))
+    ac_ids: frozenset[str] | None = None
+    if isinstance(document, _Problem):
+        problems: tuple[_Problem, ...] = (document,)
+    else:
+        problems = _record_problems(
+            document, spec=spec if isinstance(spec, str) else None, project=project
+        )
+        ac_ids = _ac_ids(document)
+    spec_problems = (spec,) if isinstance(spec, _Problem) else ()
+    issues_path = path.removesuffix(RECORD_NAME) + ISSUES_NAME
+    unlinked = (
+        issues_path in listed
+        and _linear_empty(document)
+        and not spec_problems
+        and not any(
+            _team_id(project).fullmatch(item)
+            for item in spec_linear(_spec_head(entries.get(spec_path), spec))
+        )
+    )
+    outputs = output_problems(
+        folder,
+        outputs=folders.outputs.get(folder, ()),
+        entries=entries,
+        listed=listed,
+        record=_record_bytes(entries.get(path)),
+        budget=budget,
+    )
+    return (
+        *(_finding(spec_path, problem) for problem in spec_problems),
+        *(_finding(path, problem) for problem in problems),
+        *(
+            _finding(eval_path, problem)
+            for eval_path in folders.evals.get(folder, ())
+            for problem in _eval_file_problems(eval_path, entries.get(eval_path), ac_ids=ac_ids)
+        ),
+        *(_finding(output_path, problem) for output_path, problem in outputs.found),
+        *((_no_ids_warning(path),) if unlinked else ()),
+    ), outputs.budget
+
+
+def _skipped_info(count: int) -> Finding:
+    """The run's one info line on the agent outputs no cap or budget let it validate (E22)."""
+    finding = FEATURES_TRACKER.finding(
+        path="/".join(FEATURES_FOLDER), message=skipped_message(count), fix=SKIPPED_FIX
+    )
+    return replace(finding, severity=Severity.INFO)
+
+
+def _record_bytes(entry: TreeEntry | None) -> bytes | None:
+    """The record's bytes for the output check; None when it is no file or was not read."""
+    return entry.content if isinstance(entry, FileEntry) else None
+
+
+def _ac_ids(document: JsonValue) -> frozenset[str] | None:
+    """The record's AC ids, ``None`` when it holds no list of ACs."""
+    acs = document.get("acs") if isinstance(document, dict) else None
+    if not isinstance(acs, list):
+        return None
+    return frozenset(
+        ac_id for ac in acs if isinstance(ac, dict) and isinstance(ac_id := ac.get("id"), str)
+    )
+
+
+def _eval_file_problems(
+    path: str, entry: TreeEntry | None, *, ac_ids: frozenset[str] | None
+) -> tuple[_Problem, ...]:
+    text = _spec_text(entry)
+    if isinstance(text, _Problem):
+        return (text,)
+    return eval_problems(path.rsplit("/", 1)[-1], text, ac_ids=ac_ids)
+
+
+def _spec_head(entry: TreeEntry | None, spec: str | _Problem | None) -> bytes | None:
+    """The spec's head ``hub web`` reads, when it was read as text; else ``None``."""
+    if not isinstance(spec, str) or not isinstance(entry, FileEntry) or entry.content is None:
+        return None
+    return entry.content[:HEAD_BYTES]
+
+
+def _linear_empty(document: JsonValue | _Problem) -> bool:
+    """A record object whose ``linear`` is absent or ``[]`` and none of whose planned ``tickets``
+    holds an ``id`` yet; any other value has ids or an error (AGH-136: a ticket's ``id`` is a
+    recorded tracker id too)."""
+    if not isinstance(document, dict) or document.get("linear", []) != []:
+        return False
+    tickets = document.get("tickets", [])
+    return not (
+        isinstance(tickets, list)
+        and any(isinstance(ticket, dict) and ticket.get("id") is not None for ticket in tickets)
+    )
+
+
+def _no_ids_warning(path: str) -> Finding:
+    finding = FEATURES_TRACKER.finding(path=path, message=NO_IDS, fix=NO_IDS_FIX)
+    return replace(finding, severity=Severity.WARNING)
+
+
+def _finding(path: str, problem: _Problem) -> Finding:
+    finding = FEATURES_TRACKER.finding(path=path, message=problem.message, fix=problem.fix)
+    return replace(finding, severity=Severity.WARNING) if problem.warning else finding
+
+
+def _document(entry: TreeEntry | None) -> JsonValue | _Problem:
+    content = file_content(entry)
+    if isinstance(content, _Problem):
+        return content
+    try:
+        return load_json_bytes(content)
+    except InvalidJsonError as error:
+        return _Problem(f"{ROOT_PATH}: {error.message}", JSON_FIX)
+
+
+def _spec_text(entry: TreeEntry | None) -> str | _Problem:
+    """The spec's text; any UTF-8 is read (a NUL too), as the old check opened it."""
+    content = file_content(entry)
+    if isinstance(content, _Problem):
+        return content
+    try:
+        return content.decode("utf-8")
+    except UnicodeDecodeError as error:
+        return _Problem(f"not UTF-8 text: byte {error.start} cannot be decoded", TEXT_FIX)
+
+
+def _record_problems(
+    data: JsonValue, *, spec: str | None, project: _Project
+) -> tuple[_Problem, ...]:
+    if not isinstance(data, dict):
+        return (_Problem("top level must be an object", RECORD_FIX),)
+    problems = list(_header_problems(data, project=project))
+    plan_problems, refs = ticket_plan(data, names=project.names)
+    problems.extend(plan_problems)
+    acs = data.get("acs")
+    if not isinstance(acs, list) or not acs:
+        return (*problems, _Problem("`acs` must be a non-empty list", RECORD_FIX))
+    # Every id read, malformed ones too, in order: a duplicate is one seen before.
+    seen: dict[str, None] = {}
+    for index, ac in enumerate(acs):
+        problems.extend(_ac_problems(index, ac, project=project, seen=seen, refs=refs))
+    if spec is not None:
+        problems.extend(_cross_check(spec, seen))
+    return tuple(problems)
+
+
+def _header_problems(data: Mapping[str, JsonValue], *, project: _Project) -> Iterator[_Problem]:
+    feature = data.get("feature")
+    if not isinstance(feature, str) or not feature:
+        yield _Problem("`feature` must be a non-empty string", RECORD_FIX)
+    linear = data.get("linear", [])
+    team_id = _team_id(project)
+    if not isinstance(linear, list) or not all(
+        isinstance(item, str) and team_id.fullmatch(item) for item in linear
+    ):
+        yield _Problem(_linear_message(project.teams), RECORD_FIX)
+
+
+def _team_id(project: _Project) -> re.Pattern[str]:
+    """A tracker id of one of the project's team keys (exact case)."""
+    keys = "|".join(re.escape(team) for team in project.teams)
+    return re.compile(rf"(?:{keys})-\d+")
+
+
+def _linear_message(teams: tuple[str, ...]) -> str:
+    """One team: ``TST-<n> ids``, as before; several: ``<TEAM>-<n>`` and the keys."""
+    if len(teams) == 1:
+        return f"`linear` must be a list of {teams[0]}-<n> ids"
+    return f"`linear` must be a list of <TEAM>-<n> ids, <TEAM> one of {teams_text(teams)}"
+
+
+def _ac_problems(
+    index: int,
+    ac: JsonValue,
+    *,
+    project: _Project,
+    seen: dict[str, None],
+    refs: Mapping[str, tuple[str, ...]] | None,
+) -> list[_Problem]:
+    where = f"acs[{index}]"
+    if not isinstance(ac, dict):
+        return [_Problem(f"{where}: must be an object", RECORD_FIX)]
+    problems = [
+        _Problem(f"{where}: `{field}` must be a non-empty string", RECORD_FIX)
+        for field in _TEXT_FIELDS
+        if not _filled(ac.get(field))
+    ]
+    if not isinstance(ac.get("passes"), bool):
+        problems.append(_Problem(f"{where}: `passes` must be true or false", RECORD_FIX))
+    ac_id = ac.get("id")
+    if isinstance(ac_id, str):
+        # From here the AC is named by its id.
+        where = cut_echo(ac_id)
+        problems.extend(_id_problems(ac_id, seen))
+    problems.extend(_value_problems(where, ac, project=project))
+    problems.extend(ac_plan_problems(where, ac, refs=refs))
+    return problems
+
+
+def _filled(value: JsonValue) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _id_problems(ac_id: str, seen: dict[str, None]) -> list[_Problem]:
+    problems = []
+    shown = cut_echo(ac_id)
+    if not _AC_ID.fullmatch(ac_id):
+        problems.append(_Problem(f"{shown}: id must look like AC-<n>", RECORD_FIX))
+    if ac_id in seen:
+        problems.append(_Problem(f"{shown}: duplicate id", RECORD_FIX))
+    seen[ac_id] = None
+    return problems
+
+
+def _value_problems(
+    where: str, ac: Mapping[str, JsonValue], *, project: _Project
+) -> Iterator[_Problem]:
+    repo = ac.get("repo")
+    if isinstance(repo, str) and repo not in project.names:
+        names = ", ".join(project.names)
+        yield _Problem(f"{where}: repo must be one of {names}", RECORD_FIX)
+    verification = ac.get("verification")
+    passes = ac.get("passes")
+    # A withdrawn AC keeps the command it had: it is never run again.
+    pending = passes is False and ac.get("withdrawn") is not True
+    if pending and isinstance(verification, str) and _MASKED_EXIT.search(verification):
+        yield _Problem(f"{where}: {MASKED}", MASKED_FIX)
+    evidence = ac.get("evidence")
+    if evidence is not None and not isinstance(evidence, str):
+        yield _Problem(f"{where}: `evidence` must be null or a string", RECORD_FIX)
+    if passes is True and not _filled(evidence):
+        yield _Problem(f"{where}: passes=true needs evidence (command + result)", EVIDENCE_FIX)
+
+
+def _cross_check(spec: str, seen: Mapping[str, None]) -> Iterator[_Problem]:
+    in_spec = dict.fromkeys(_SPEC_ID.findall(spec))
+    for missing in sorted((ac_id for ac_id in in_spec if ac_id not in seen), key=_ac_key):
+        yield _Problem(f"{cut_echo(missing)}: in spec.md but not in features.json", SPEC_FIX)
+    for extra in sorted((ac_id for ac_id in seen if ac_id not in in_spec), key=_ac_key):
+        yield _Problem(f"{cut_echo(extra)}: in features.json but not in spec.md", SPEC_FIX)
+
+
+def _ac_key(ac_id: str) -> tuple[tuple[tuple[int, str], ...], str]:
+    """Numeric order (``AC-2`` before ``AC-10``); a malformed id first, then by its text.
+
+    Each number is compared as its digit string, never through ``int`` (which refuses more
+    than 4300 digits): leading zeros dropped, shorter first, then digit by digit by value.
+    """
+    if not _AC_ID.fullmatch(ac_id):
+        return (), ac_id
+    return tuple(_number_key(part) for part in ac_id[3:].split(".")), ac_id
+
+
+def _number_key(digits: str) -> tuple[int, str]:
+    """A decimal number's order key; any script's digits count by their value."""
+    ascii_digits = "".join(str(unicodedata.decimal(digit)) for digit in digits).lstrip("0")
+    return len(ascii_digits), ascii_digits
+
+
+FEATURES_TRACKER: Final = Rule(
+    id=FEATURES_TRACKER_RULE,
+    severity=Severity.ERROR,
+    summary="each brain/features/*/features.json is well formed and matches its spec.md",
+    module=RULE_MODULES.get(FEATURES_TRACKER_RULE),
+    reads=frozenset({Read.HUB_LISTING}),
+    check=_features_tracker,
+)

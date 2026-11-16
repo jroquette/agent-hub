@@ -1,0 +1,22 @@
+# The owner keeps none of the vetted changes: no draft file is written.
+workflow: retro
+inputs: {since: 7}
+stubs:
+  metrics:
+    output: {days: 7, since: "YYYY-MM-08", until: "YYYY-MM-15", runs: 2, nothing: false, metrics: {workflow.deliver.runs: 2, workflow.deliver.failed: 1}, idle: {skills: [], agents: []}, sources: [{name: runs, status: ok, reason: ""}], left_out: [], summary: "Runs started: 2 workflow runs."}
+  changes:
+    output:
+      changes:
+        - {title: Run the lint before the tests, kind: workflow, change: Add a lint step., metrics: [{key: workflow.deliver.failed, value: 1}], links: [], expected_effect: Fewer failed runs., how_to_tell: failed drops to 0.}
+  vet:
+    output:
+      count: 1
+      kept:
+        - {n: 1, title: Run the lint before the tests, kind: workflow, change: Add a lint step., metrics: [{key: workflow.deliver.failed, value: 1}], links: [], expected_effect: Fewer failed runs., how_to_tell: failed drops to 0.}
+      dropped: []
+      message: "The retro proposes 1 changes, each citing step 1's numbers: 1. Run the lint before the tests (workflow)"
+  pick: {decision: none, text: "", approver: Jo}
+  drafts:
+    output: {outcome: none kept, kept: 0, path: "", summary: "None kept: the owner kept none; no draft written."}
+expect: {status: done, outcome: none kept}
+reached: [metrics, changes, vet, pick, drafts]

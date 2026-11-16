@@ -1,0 +1,560 @@
+import { act, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it } from "vitest";
+
+import { GlobalStreamProvider } from "../../shell/GlobalStream";
+import { seriousViolations } from "../../testing/axe";
+import {
+  aLearning,
+  aLearningActionResult,
+  aLearningDetail,
+  anId,
+  aPage,
+  aProblem,
+  aProjectDetail,
+  aStreamCounts,
+  at,
+  renderWithApi,
+  type ApiRoutes,
+} from "../../testing/builders";
+import { LearningsScreen } from "./index";
+import { stageDecision } from "./staged";
+
+const newer = aLearning({
+  id: "l-new",
+  text: "Order book snapshot before diff replay",
+  proposed_at: at(900),
+  provenance: "agent-from-code",
+  project: "acme-market",
+  summary: null,
+  note_unavailable: "Note not in the hub checkout",
+});
+const older = aLearning({
+  id: "l-old",
+  text: "Retry flaky CI before calling a run failed",
+  proposed_at: at(100),
+  provenance: "agent-from-external",
+  summary: "Rerun once; a second failure is real.",
+});
+const learnings = [newer, older];
+const detailOf = (l: typeof newer) =>
+  aLearningDetail({ ...l, note: null, note_unavailable: l.note_unavailable ?? null });
+const routes: ApiRoutes = {
+  "/api/v1/learnings": aPage(learnings),
+  "/api/v1/learnings/l-new": detailOf(newer),
+  "/api/v1/learnings/l-old": detailOf(older),
+  "/api/v1/projects/agent-hub": aProjectDetail({ hub_repo: "agent-hub-hub" }),
+  "/api/v1/projects/acme-market": aProjectDetail({ hub_repo: "acme-market-hub" }),
+};
+
+function open(extra: ApiRoutes = {}, path = "/knowledge/learnings", connected = true) {
+  const ui = connected ? (
+    <GlobalStreamProvider project={null}>
+      <LearningsScreen />
+    </GlobalStreamProvider>
+  ) : (
+    <LearningsScreen />
+  );
+  return renderWithApi(ui, { routes: { ...routes, ...extra }, path });
+}
+
+describe("LearningsScreen", () => {
+  it("lists proposals oldest first with their summaries", async () => {
+    open();
+
+    expect(screen.getByRole("heading", { level: 1, name: "Knowledge" })).toBeInTheDocument();
+    const table = await screen.findByRole("table", { name: "Proposed learnings" });
+    await within(table).findByText("Retry flaky CI before calling a run failed");
+    const titles = within(table)
+      .getAllByRole("row")
+      .slice(1)
+      .map((row) => row.textContent);
+    expect(titles[0]).toContain("Retry flaky CI");
+    expect(titles[0]).toContain("Rerun once; a second failure is real.");
+    expect(titles[1]).toContain("Order book snapshot");
+    expect(titles[1]).toContain("Note not in the hub checkout");
+  });
+
+  it("shows the oldest proposal with its provenance, note and source", async () => {
+    open();
+
+    const detail = await screen.findByRole("region", { name: "Proposal" });
+    expect(
+      within(detail).getByRole("heading", { name: "Retry flaky CI before calling a run failed" }),
+    ).toBeInTheDocument();
+    expect(within(detail).getByText(/External/)).toBeInTheDocument();
+    expect(within(detail).getByText("Proposed")).toBeInTheDocument();
+    expect(within(detail).getByRole("link", { name: /Open at that moment/ })).toHaveAttribute(
+      "href",
+      `/sessions/${anId(1, "5091b986")}?event=${anId(10, "0192aaaa")}`,
+    );
+  });
+
+  it("lets accept and reject act and keeps only snooze in Phase 3", async () => {
+    open();
+
+    const detail = await screen.findByRole("region", { name: "Proposal" });
+    expect(await within(detail).findByRole("button", { name: "Accept" })).toBeEnabled();
+    expect(within(detail).getByRole("button", { name: "Reject" })).toBeEnabled();
+    const snooze = within(detail).getByRole("button", { name: /^Snooze/ });
+    expect(snooze).toBeDisabled();
+    expect(snooze).toHaveAttribute("title", "Available in Phase 3. This version is read-only.");
+  });
+
+  it("disables accept and reject on a read-only hub (read-only)", async () => {
+    open({
+      "/api/v1/learnings/l-old": aLearningDetail({
+        ...older,
+        actions_unavailable: "Hub is read-only here",
+      }),
+    });
+
+    const detail = await screen.findByRole("region", { name: "Proposal" });
+    await within(detail).findByText("Hub is read-only here");
+    for (const name of ["Accept", "Reject"]) {
+      const button = within(detail).getByRole("button", { name });
+      expect(button).toBeDisabled();
+      expect(button).toHaveAttribute("title", "Hub is read-only here");
+    }
+  });
+
+  it("keeps the decided learning open with its pull request after the list moves on", async () => {
+    let decided = false;
+    const { router } = open({
+      "/api/v1/learnings": () => aPage(decided ? [newer] : learnings),
+      "POST /api/v1/learnings/l-old/accept": () => {
+        decided = true;
+        return aLearningActionResult();
+      },
+    });
+    const detail = await screen.findByRole("region", { name: "Proposal" });
+
+    await userEvent.click(await within(detail).findByRole("button", { name: "Accept" }));
+    await userEvent.click(screen.getByRole("button", { name: "Open pull request" }));
+
+    expect(await screen.findByText("Pull request opened")).toBeInTheDocument();
+    expect(router.state.location.search).toBe("?learning=l-old");
+    await waitFor(() => {
+      expect(screen.getAllByRole("row")).toHaveLength(2);
+    });
+    expect(
+      within(screen.getByRole("region", { name: "Proposal" })).getByRole("heading", {
+        name: "Retry flaky CI before calling a run failed",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the decided learning open with its pull request when it was the last proposal", async () => {
+    let decided = false;
+    open({
+      "/api/v1/learnings": () => aPage(decided ? [] : [older]),
+      "POST /api/v1/learnings/l-old/accept": () => {
+        decided = true;
+        return aLearningActionResult();
+      },
+    });
+    const detail = await screen.findByRole("region", { name: "Proposal" });
+
+    await userEvent.click(await within(detail).findByRole("button", { name: "Accept" }));
+    await userEvent.click(screen.getByRole("button", { name: "Open pull request" }));
+
+    expect(await screen.findByText("Pull request opened")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getAllByRole("row")).toHaveLength(1);
+    });
+    expect(screen.getByText("Pull request opened")).toBeInTheDocument();
+    expect(screen.queryByText("Inbox empty")).not.toBeInTheDocument();
+  });
+
+  it("opens the proposal named in the path when a link points at one", async () => {
+    renderWithApi(<LearningsScreen />, {
+      routes,
+      path: "/knowledge/learnings/l-new",
+      route: "/knowledge/learnings/:learningId",
+    });
+
+    const detail = await screen.findByRole("region", { name: "Proposal" });
+    expect(
+      await within(detail).findByRole("heading", {
+        name: "Order book snapshot before diff replay",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("selects another proposal from the queue and keeps it in the URL", async () => {
+    const { router } = open();
+
+    await userEvent.click(await screen.findByText("Order book snapshot before diff replay"));
+
+    const detail = screen.getByRole("region", { name: "Proposal" });
+    expect(
+      within(detail).getByRole("heading", { name: "Order book snapshot before diff replay" }),
+    ).toBeInTheDocument();
+    expect(await within(detail).findByText("Note not in the hub checkout")).toBeInTheDocument();
+    expect(router.state.location.search).toBe("?learning=l-new");
+  });
+
+  it("asks for accepted learnings when the status changes", async () => {
+    const { requests } = open();
+    await screen.findByRole("table", { name: "Proposed learnings" });
+
+    await userEvent.click(screen.getByRole("button", { name: "Accepted" }));
+
+    await waitFor(() => {
+      expect(requests.some((r) => new URL(r.url).searchParams.get("status") === "accepted")).toBe(
+        true,
+      );
+    });
+  });
+
+  it("refetches when the stream's proposal count changes", async () => {
+    const { requests, stream } = open();
+    await screen.findByRole("table", { name: "Proposed learnings" });
+    const before = requests.length;
+
+    act(() => {
+      stream("/api/v1/events/stream").emit("counts", aStreamCounts({ learnings_proposed: 2 }));
+    });
+    act(() => {
+      stream("/api/v1/events/stream").emit("counts", aStreamCounts({ learnings_proposed: 3 }));
+    });
+
+    await waitFor(() => {
+      expect(requests.length).toBeGreaterThan(before);
+    });
+  });
+
+  describe("states", () => {
+    it("shows skeletons while loading", async () => {
+      const { container } = open({ "/api/v1/learnings": "pending" });
+
+      await waitFor(() => {
+        expect(container.querySelector(".ah-skel")).not.toBeNull();
+      });
+    });
+
+    it("shows the inbox empty copy", async () => {
+      open({ "/api/v1/learnings": aPage([]) });
+
+      expect(await screen.findByText("Inbox empty")).toBeInTheDocument();
+      expect(
+        screen.getByText(/notes in brain\/_inbox\/ appear here for triage/),
+      ).toBeInTheDocument();
+    });
+
+    it("shows the problem with Try again", async () => {
+      open({
+        "/api/v1/learnings": aProblem({ status: 503, title: "Database busy", detail: "Locked." }),
+      });
+
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent("Database busy");
+      expect(within(alert).getByRole("button", { name: "Try again" })).toBeInTheDocument();
+    });
+
+    it("shows the as-of stamp when the collector is offline", () => {
+      open({}, "/knowledge/learnings", false);
+
+      expect(screen.getByText(/Stale · as of/)).toBeInTheDocument();
+    });
+  });
+
+  it("lists decidable proposals before blocked ones and says why each is blocked", async () => {
+    const blocked = aLearning({
+      id: "l-gone",
+      text: "Proposal: a note nobody pushed",
+      proposed_at: at(10),
+      note_path: "brain/_inbox/nobody-pushed.md",
+      summary: null,
+      note_unavailable: "Note not in the hub checkout",
+      actions_unavailable: "Note not in the hub checkout",
+    });
+    open({
+      "/api/v1/learnings": aPage([blocked, older]),
+      "/api/v1/learnings/l-gone": detailOf(blocked),
+    });
+
+    const table = await screen.findByRole("table", { name: "Proposed learnings" });
+    await within(table).findByText("Retry flaky CI before calling a run failed");
+    const [first, second] = within(table).getAllByRole("row").slice(1);
+    if (!first || !second) throw new Error("expected two rows");
+    expect(first.textContent).toContain("Retry flaky CI");
+    expect(second.textContent).toContain("a note nobody pushed");
+    expect(second.textContent).not.toContain("Proposal:");
+    expect(within(second).getByText("Note not in the hub checkout")).toBeVisible();
+    const decision = screen.getByRole("group", { name: "Decision" });
+    expect(within(decision).getByRole("button", { name: "Ready to decide · 1" })).toBeVisible();
+    expect(within(decision).getByRole("button", { name: "Blocked · 1" })).toBeVisible();
+
+    await userEvent.click(within(decision).getByRole("button", { name: "Blocked · 1" }));
+    await waitFor(() => {
+      expect(within(table).queryByText(/Retry flaky CI/)).not.toBeInTheDocument();
+    });
+    expect(within(table).getByText(/a note nobody pushed/)).toBeInTheDocument();
+  });
+
+  const RESOLVED = "Resolved outside the app: the note is no longer in the inbox";
+  const resolved = aLearning({
+    id: "l-merged",
+    text: "A gotcha merged into another note by hand",
+    proposed_at: at(5),
+    note_path: "brain/_inbox/merged-by-hand.md",
+    summary: null,
+    state: "resolved_elsewhere",
+    note_unavailable: null,
+    actions_unavailable: RESOLVED,
+  });
+  const twice = aLearning({ ...resolved, id: "l-merged-again", proposed_at: at(6) });
+  const openResolved = (path = "/knowledge/learnings") =>
+    open(
+      {
+        "/api/v1/learnings": aPage([resolved, twice, older]),
+        "/api/v1/learnings/l-merged": aLearningDetail({ ...resolved, note: null }),
+      },
+      path,
+    );
+
+  it("hides what was resolved outside the app and counts it once in its own view", async () => {
+    openResolved();
+
+    const table = await screen.findByRole("table", { name: "Proposed learnings" });
+    await within(table).findByText("Retry flaky CI before calling a run failed");
+    expect(within(table).queryByText(/merged into another note/)).not.toBeInTheDocument();
+    const decision = screen.getByRole("group", { name: "Decision" });
+    expect(within(decision).getByRole("button", { name: "All · 1" })).toBeVisible();
+    const view = within(decision).getByRole("button", { name: "Resolved elsewhere · 1" });
+
+    await userEvent.click(view);
+    const [row, again] = (await within(table).findAllByText(/merged into another note/)).map(
+      (title) => title.closest("tr"),
+    );
+    if (!row || !again) throw new Error("expected both proposals of the note");
+    expect(within(row).getByText(RESOLVED)).toBeVisible();
+    expect(within(row).getByText("Resolved elsewhere")).toBeVisible();
+    expect(within(row).queryByText("Blocked")).not.toBeInTheDocument();
+    expect(within(table).queryByText(/Retry flaky CI/)).not.toBeInTheDocument();
+  });
+
+  it("disables accept and reject on a learning resolved outside the app", async () => {
+    openResolved("/knowledge/learnings?readiness=resolved");
+
+    const detail = await screen.findByRole("region", { name: "Proposal" });
+    await within(detail).findByText("Nothing to decide here.");
+    for (const name of ["Accept", "Reject"]) {
+      const button = within(detail).getByRole("button", { name });
+      expect(button).toBeDisabled();
+      expect(button).toHaveAttribute("title", RESOLVED);
+    }
+    const note = within(detail).getByRole("region", { name: "Note" });
+    expect(within(note).getByText(RESOLVED)).toBeVisible();
+    expect(within(note).getByText("brain/_inbox/merged-by-hand.md")).toBeVisible();
+  });
+
+  it("has no serious a11y violations in the resolved view (a11y)", async () => {
+    const { container } = openResolved("/knowledge/learnings?readiness=resolved");
+    const detail = await screen.findByRole("region", { name: "Proposal" });
+    await within(detail).findByText("Nothing to decide here.");
+
+    expect(await seriousViolations(container)).toEqual([]);
+  });
+
+  it("keeps the status in the URL", async () => {
+    open({}, "/knowledge/learnings?status=rejected");
+
+    await screen.findByRole("table", { name: "Proposed learnings" });
+    expect(screen.getByRole("button", { name: "Rejected" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("writes the status to the URL and goes back to the previous one", async () => {
+    const user = userEvent.setup();
+    const { router } = open();
+    await screen.findByRole("table", { name: "Proposed learnings" });
+
+    await user.click(screen.getByRole("button", { name: "Accepted" }));
+    expect(router.state.location.search).toBe("?status=accepted");
+
+    await act(async () => {
+      await router.navigate(-1);
+    });
+    expect(router.state.location.search).toBe("");
+    expect(screen.getByRole("button", { name: "Proposed" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("wraps a long title and keeps it whole on hover", async () => {
+    const long = "A".repeat(30) + " long learning title that needs two lines in the queue";
+    open({ "/api/v1/learnings": aPage([aLearning({ id: "l-long", text: long })]) });
+
+    const table = await screen.findByRole("table", { name: "Proposed learnings" });
+    const title = await within(table).findByTitle(long);
+    expect(title.style.webkitLineClamp).toBe("2");
+  });
+
+  it("has no serious a11y violations (a11y)", async () => {
+    const { container } = open();
+    const detail = await screen.findByRole("region", { name: "Proposal" });
+    await within(detail).findByRole("button", { name: "Accept" });
+
+    expect(await seriousViolations(container)).toEqual([]);
+  });
+});
+
+describe("LearningsScreen filters", () => {
+  it("narrows the queue to one project and keeps the choice in the URL", async () => {
+    const { router } = open();
+    const table = await screen.findByRole("table", { name: "Proposed learnings" });
+    await within(table).findByText("Order book snapshot before diff replay");
+
+    await userEvent.click(screen.getByRole("button", { name: "Project: All" }));
+    const menu = screen.getByRole("dialog", { name: "Project filter" });
+    await userEvent.click(within(menu).getByRole("checkbox", { name: /acme-market/ }));
+
+    await waitFor(() => {
+      expect(within(table).queryByText(/Retry flaky CI/)).not.toBeInTheDocument();
+    });
+    expect(within(table).getByText("Order book snapshot before diff replay")).toBeInTheDocument();
+    expect(router.state.location.search).toContain("project=acme-market");
+    expect(screen.getByRole("button", { name: "Project: acme-market" })).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+  });
+
+  it("closes a filter menu on Escape and on a click outside it", async () => {
+    open();
+    const table = await screen.findByRole("table", { name: "Proposed learnings" });
+    await within(table).findByText("Order book snapshot before diff replay");
+
+    await userEvent.click(screen.getByRole("button", { name: "Project: All" }));
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Project filter" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Project: All" }));
+    await userEvent.click(screen.getByRole("heading", { level: 1, name: "Knowledge" }));
+    expect(screen.queryByRole("dialog", { name: "Project filter" })).not.toBeInTheDocument();
+  });
+
+  it("says nothing matches when the search finds no learning", async () => {
+    open();
+    await screen.findByRole("table", { name: "Proposed learnings" });
+
+    await userEvent.type(await screen.findByRole("searchbox", { name: "Search learnings" }), "zzz");
+
+    expect(await screen.findByText("No learnings match these filters.")).toBeInTheDocument();
+  });
+});
+
+describe("LearningsScreen triage marks", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  const queueOf = (texts: string[]) =>
+    texts.map((text, n) => aLearning({ id: `q-${String(n)}`, text, proposed_at: at(100 + n) }));
+
+  /** A decidable, B blocked, C already marked, D decidable, in that order. */
+  function openQueue() {
+    const [a, b, c, d] = queueOf(["Alpha gate", "Bravo gate", "Charlie gate", "Delta gate"]);
+    if (!a || !b || !c || !d) throw new Error("expected four learnings");
+    const blocked = { ...b, actions_unavailable: "Note not in the hub checkout" };
+    stageDecision(c.id, { action: "reject", project: c.project, title: c.text, reason: "Old" });
+    const result = open({
+      "/api/v1/learnings": aPage([a, blocked, c, d]),
+      [`/api/v1/learnings/${a.id}`]: detailOf(a),
+      [`/api/v1/learnings/${b.id}`]: detailOf(blocked),
+      [`/api/v1/learnings/${c.id}`]: detailOf(c),
+      [`/api/v1/learnings/${d.id}`]: detailOf(d),
+    });
+    return { ...result, a, d };
+  }
+
+  async function markShown(action: "Accept" | "Reject") {
+    const detail = await screen.findByRole("region", { name: "Proposal" });
+    await userEvent.click(await within(detail).findByRole("button", { name: action }));
+    const dialog = screen.getByRole("dialog");
+    if (action === "Reject") {
+      await userEvent.type(within(dialog).getByRole("textbox", { name: /Reason/ }), "Duplicate");
+    }
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: `Mark to ${action.toLowerCase()}` }),
+    );
+  }
+
+  it("moves to the next decidable unmarked learning after a mark", async () => {
+    const { router, d } = openQueue();
+    const detail = await screen.findByRole("region", { name: "Proposal" });
+    await within(detail).findByRole("heading", { name: "Alpha gate" });
+
+    await markShown("Accept");
+
+    await waitFor(() => {
+      expect(router.state.location.search).toBe(`?learning=${d.id}`);
+    });
+    expect(
+      await within(screen.getByRole("region", { name: "Proposal" })).findByRole("heading", {
+        name: "Delta gate",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("stays on the learning when no decidable unmarked one follows it", async () => {
+    const [a] = queueOf(["Alpha gate"]);
+    if (!a) throw new Error("expected a learning");
+    const { router } = open({
+      "/api/v1/learnings": aPage([a]),
+      [`/api/v1/learnings/${a.id}`]: detailOf(a),
+    });
+    const detail = await screen.findByRole("region", { name: "Proposal" });
+    await within(detail).findByRole("heading", { name: "Alpha gate" });
+
+    await markShown("Accept");
+
+    expect(await within(detail).findByText("Marked to accept")).toBeInTheDocument();
+    expect(router.state.location.search).toBe("");
+    expect(within(detail).getByRole("heading", { name: "Alpha gate" })).toBeInTheDocument();
+  });
+
+  it("shows the marks bar for proposed learnings only", async () => {
+    const [a] = queueOf(["Alpha gate"]);
+    if (!a) throw new Error("expected a learning");
+    open({
+      "/api/v1/learnings": aPage([a]),
+      [`/api/v1/learnings/${a.id}`]: detailOf(a),
+    });
+    await within(await screen.findByRole("region", { name: "Proposal" })).findByRole("heading", {
+      name: "Alpha gate",
+    });
+
+    await markShown("Accept");
+    expect(await screen.findByRole("region", { name: "Marked learnings" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Accepted" }));
+    expect(screen.queryByRole("region", { name: "Marked learnings" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["Accept", "Marked: accept"],
+    ["Reject", "Marked: reject"],
+  ] as const)("badges the queue row after a mark to %s", async (action, badge) => {
+    const [a] = queueOf(["Alpha gate"]);
+    if (!a) throw new Error("expected a learning");
+    open({
+      "/api/v1/learnings": aPage([a]),
+      [`/api/v1/learnings/${a.id}`]: detailOf(a),
+    });
+    const table = await screen.findByRole("table", { name: "Proposed learnings" });
+    await within(await screen.findByRole("region", { name: "Proposal" })).findByRole("heading", {
+      name: "Alpha gate",
+    });
+
+    await markShown(action);
+
+    const row = await within(table).findByRole("row", { name: /Alpha gate/ });
+    expect(await within(row).findByText(badge)).toBeInTheDocument();
+  });
+});

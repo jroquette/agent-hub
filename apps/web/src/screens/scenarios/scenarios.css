@@ -1,0 +1,175 @@
+/* The plan tables of a scenario (spec 23): fixed columns that wrap, so Step and Policy stay
+ * in view at 1280; a draft's commit line takes a full-width row under its step. */
+.ah-table.sc-plan {
+  table-layout: fixed;
+}
+.ah-table.sc-plan td {
+  white-space: normal;
+  /* Break a separator-less token rather than overflow; BreakId's <wbr> breaks come first. */
+  overflow-wrap: break-word;
+  vertical-align: top;
+  padding-top: var(--space-2);
+  padding-bottom: var(--space-2);
+}
+.ah-table.sc-plan tbody tr {
+  cursor: default;
+}
+.ah-table.sc-plan tr.sc-plan-extra td {
+  padding-top: 0;
+}
+.ah-table.sc-plan tr.sc-plan-main:has(+ .sc-plan-extra) td {
+  border-bottom: 0;
+}
+/* The answer bar stays above the tables' sticky heads while the options scroll. */
+.sc-answer-bar {
+  position: sticky;
+  bottom: 0;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-2);
+}
+.sc-plan .ah-code pre {
+  overflow-wrap: anywhere;
+}
+
+/* The Scenarios list: centred, at most 1440 px. */
+.sc-page {
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+}
+.sc-values {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: var(--space-3);
+  row-gap: 2px;
+  font-size: 13px;
+}
+.sc-value {
+  display: contents;
+}
+.sc-value dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.sc-file pre {
+  max-height: 70vh;
+  overflow: auto;
+}
+
+/* A scenario run written as blocks (ADR 0049): its pinned blocks, one row each, indented by depth,
+ * with a breakpoint toggle at the end; the values a paused run shows, folded per block. */
+.sc-blocks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.sc-block {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  padding-right: var(--space-2);
+  border-top: 1px solid var(--border);
+}
+.sc-block:first-child {
+  border-top: 0;
+}
+.sc-block-address {
+  min-width: 44px;
+  color: var(--text-muted);
+}
+.sc-block-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.sc-block-stage {
+  font-weight: 600;
+}
+.sc-break {
+  color: var(--text-subtle);
+}
+.sc-break-on {
+  /* A set breakpoint is a pressed toggle, not a status: accent, like a pressed chip. */
+  color: var(--accent);
+  font-weight: 600;
+}
+.sc-values-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-wrap: anywhere;
+}
+.sc-values-block summary {
+  cursor: pointer;
+}
+.sc-value-json {
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The Scenarios list: the Features list's rows (features.css) with three fixed columns, Steps,
+ * Last scenario run and the row menu. The card lets the menu open past its edge, so its own
+ * corners are drawn by its first and last parts. */
+.ft-card.sc-list {
+  --ft-meta: 56px 240px 28px;
+  overflow: visible;
+}
+.sc-list .ft-cols {
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+.sc-list .ft-row:last-child {
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+.sc-list .sc-steps {
+  text-align: right;
+}
+.sc-menu {
+  position: relative;
+  display: inline-flex;
+  justify-content: flex-end;
+}
+.sc-menu-off {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-subtle);
+  cursor: default;
+}
+.sc-toast {
+  position: fixed;
+  right: var(--space-6);
+  bottom: var(--space-6);
+  z-index: var(--z-toast);
+}
+/* Steps goes first (it stays in the row's name and on the scenario's page), then the time. */
+@media (max-width: 1279px) {
+  .ft-card.sc-list {
+    --ft-meta: 240px 28px;
+  }
+  .sc-list .sc-steps {
+    display: none;
+  }
+}
+@media (max-width: 1099px) {
+  .ft-card.sc-list {
+    --ft-meta: 160px 28px;
+  }
+  .sc-list .ft-row-head {
+    flex-wrap: wrap;
+  }
+  .sc-list .sc-last-time {
+    display: none;
+  }
+}

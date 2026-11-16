@@ -1,0 +1,48 @@
+/* The project picker of Toolkit, Brain, Environments and Hub config: a grid of Portfolio cards. */
+.ah-pick-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(360px, 100%), 1fr));
+  gap: var(--space-4);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ah-pick-grid > li {
+  display: flex;
+  min-width: 0;
+}
+.ah-pick-grid .ah-pcard {
+  flex: 1;
+  min-width: 0;
+}
+.ah-pick-grid .ah-pcard:focus-within {
+  border-color: var(--border-control);
+}
+.ah-pcard-name {
+  color: var(--text);
+  text-decoration: none;
+}
+.ah-pcard:hover .ah-pcard-name {
+  text-decoration: underline;
+}
+.ah-pick-chevron {
+  color: var(--text-subtle);
+  align-self: center;
+}
+.ah-pick-stats {
+  grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
+}
+.ah-pick-lead {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ah-pick-foot {
+  margin-top: auto;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+.ah-pick-foot[data-tone="error"] {
+  color: var(--failed);
+}

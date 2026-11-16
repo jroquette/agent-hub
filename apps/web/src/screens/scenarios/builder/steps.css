@@ -1,0 +1,1536 @@
+/* The step list (scenario builder v6): numbered two-line rows in one centred column, groups
+ * indented under a tree line, a "+" in each gap. */
+.st-scroll {
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--space-6) var(--space-5) var(--space-8);
+}
+.st-column {
+  /* Against the left column: on a wide screen the free width is never between the palette and
+   * the blocks. */
+  max-width: 960px;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.st-tree {
+  display: flex;
+  flex-direction: column;
+}
+.st-row {
+  position: relative;
+  display: grid;
+  /* The title keeps a readable minimum: a full right side (effect, status, run state, time)
+   * wraps in its own column rather than squeezing the title to nothing. */
+  grid-template-columns: 16px 28px 24px minmax(160px, 1fr) minmax(0, auto);
+  align-items: center;
+  column-gap: var(--space-2);
+  min-height: 56px;
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-1);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.st-row:hover {
+  background: var(--surface-hover);
+}
+.st-row:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+.st-row[data-selected="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.st-row[data-problem="true"] {
+  border-color: var(--failed);
+}
+.st-row[data-suggested="true"] {
+  outline: 1px dashed var(--accent);
+  outline-offset: 2px;
+}
+.st-row[data-dragging="true"] {
+  opacity: 0.5;
+}
+.st-start {
+  grid-template-columns: 16px 28px 24px minmax(0, 1fr);
+  background: var(--surface-sunken);
+}
+.st-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 24px;
+  color: var(--text-subtle);
+  cursor: grab;
+  opacity: 0;
+  touch-action: none;
+}
+.st-row:hover .st-handle,
+.st-row:focus-within .st-handle,
+.st-row[data-selected="true"] .st-handle {
+  opacity: 1;
+}
+.st-num {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--text-muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.st-tile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  background: var(--tile-soft);
+  color: var(--tile);
+}
+.st-lines {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+.st-title {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.st-row[data-selected="true"] .st-title {
+  white-space: normal;
+}
+.st-detail {
+  display: block;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.st-detail > span {
+  white-space: nowrap;
+}
+.st-dot {
+  margin: 0 6px;
+  color: var(--text-subtle);
+}
+.st-mono {
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+.st-key {
+  color: var(--text-subtle);
+}
+.st-right {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  min-width: 0;
+  white-space: nowrap;
+}
+.st-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.st-status[data-tone="failed"] {
+  color: var(--failed);
+}
+.st-status[data-tone="waiting"] {
+  color: var(--waiting);
+}
+.st-uses,
+.st-chip {
+  font-size: 12px;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.st-plan {
+  color: var(--text);
+}
+.st-plan-stale {
+  color: var(--text-subtle);
+}
+
+/* Groups: children indented under a hairline tree guide. */
+.st-group {
+  position: relative;
+  margin-left: 58px;
+  padding-left: var(--space-4);
+  border-left: 1px solid var(--border);
+}
+.st-path {
+  display: block;
+  padding: var(--space-2) 0 0 var(--space-1);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Gaps: 4 px between rows, a "+" on hover or focus; the drop line while dragging. */
+.st-gap {
+  position: relative;
+  height: 8px;
+}
+.st-gap-add {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--text-muted);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.st-gap:hover .st-gap-add,
+.st-gap-add:focus-visible {
+  opacity: 1;
+}
+.st-gap:hover::before {
+  content: "";
+  position: absolute;
+  left: 40px;
+  right: 0;
+  top: 50%;
+  border-top: 1px solid var(--border);
+}
+.st-gap[data-drop="on"]::before {
+  content: "";
+  position: absolute;
+  left: 40px;
+  right: 0;
+  top: 50%;
+  height: 2px;
+  margin-top: -1px;
+  background: var(--accent);
+  border-radius: 2px;
+}
+.st-empty {
+  height: auto;
+  padding: var(--space-1) 0;
+}
+.st-empty-add,
+.st-empty > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 var(--space-3);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+.st-empty-add:hover {
+  background: var(--surface-hover);
+}
+.st-end {
+  display: flex;
+  padding-left: 40px;
+}
+.st-loose {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+/* ---------- v6 layout: Variables | Actions on the left, the list, the editor on the right ---------- */
+.sb-body {
+  grid-template-columns: 280px minmax(0, 1fr) 440px;
+}
+.sb-body:not([data-panel]) {
+  grid-template-columns: 280px minmax(0, 1fr);
+}
+@media (min-width: 1920px) {
+  .sb-body {
+    grid-template-columns: 320px minmax(0, 1fr) var(--panel);
+  }
+  .sb-body:not([data-panel]) {
+    grid-template-columns: 320px minmax(0, 1fr);
+  }
+}
+@media (max-width: 1599px) {
+  .sb-body {
+    grid-template-columns: 264px minmax(0, 1fr) 400px;
+  }
+  .sb-body:not([data-panel]) {
+    grid-template-columns: 264px minmax(0, 1fr);
+  }
+}
+.sb-body .sb-stage {
+  background-image: none;
+  background-color: var(--bg);
+}
+.sb-body .sb-stage .sb-hint {
+  position: static;
+  max-width: none;
+}
+
+.sb-left {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+}
+.sb-left > .ah-tabs {
+  padding: 0 var(--space-3);
+  flex: none;
+}
+.sb-left-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-3);
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* Variables */
+.sb-vars {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.sb-vars ul,
+.sb-actions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sb-vars-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 28px;
+}
+.sb-vars-head h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.sb-var {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  min-height: 40px;
+  padding: 6px var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+}
+.sb-var:hover {
+  background: var(--surface-hover);
+}
+.sb-var[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.sb-var-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.sb-var-name {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-var-value {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.sb-var-note {
+  font-size: 12px;
+  color: var(--text-subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-var-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-popover);
+}
+.sb-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.sb-link:hover {
+  text-decoration: underline;
+}
+
+/* Actions tab */
+.sb-action-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  text-align: left;
+  color: var(--text);
+  cursor: pointer;
+}
+.sb-action-entry:hover {
+  background: var(--surface-hover);
+  border-color: var(--border);
+}
+.sb-action-entry-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.sb-action-entry-desc {
+  font-size: 12px;
+  line-height: 17px;
+  color: var(--text-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.sb-action-entry-foot {
+  font-size: 11px;
+  color: var(--text-subtle);
+}
+
+/* Toolbar: the environment select */
+.sb-env {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: var(--space-3);
+}
+.sb-env select {
+  height: 32px;
+  min-width: 180px;
+}
+
+/* The row menu */
+.sb-menu-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+.sb-row-menu {
+  position: fixed;
+  z-index: 41;
+  min-width: 200px;
+}
+.sb-context {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: calc(var(--space-1) * -1);
+}
+.sb-context .sb-env {
+  margin-left: 0;
+}
+.sb-var-keep {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 0 4px var(--space-2);
+  font-size: 12px;
+}
+.sb-var-tip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ---------- The step editor (v6): Settings | Script ---------- */
+.sb-form-tabs {
+  position: sticky;
+  top: calc(var(--space-4) * -1);
+  z-index: 2;
+  margin: calc(var(--space-4) * -1) calc(var(--space-4) * -1) 0;
+  padding: 0 var(--space-4);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.sb-comes-from {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-muted);
+}
+.sb-comes-from b {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  color: var(--text);
+}
+.sb-comes-from .ah-icon {
+  vertical-align: -3px;
+}
+.sb-comes-from-set {
+  align-self: flex-start;
+  width: auto;
+  height: 28px;
+  font-size: 12px;
+  margin-top: 2px;
+}
+.sb-script {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+.sb-script-desc {
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+}
+.sb-script-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.sb-script-gives {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 13px;
+}
+.sb-script-value {
+  display: inline-block;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+.sb-script .sc-file pre {
+  max-height: 420px;
+  min-height: 240px;
+  overflow: auto;
+}
+.sb-script-dialog .sc-file pre {
+  max-height: 70vh;
+}
+
+/* v6 review: the toolbar keeps one row below 1600 (Describe and Chat show their icon only). Below
+ * 1920 the left column is a rail (builder.css), so the list keeps its width at every width. */
+@media (max-width: 1599px) {
+  .sb-compact .ah-btn {
+    font-size: 0;
+    gap: 0;
+    padding: 0 8px;
+  }
+}
+.sb-compact {
+  display: inline-flex;
+  gap: var(--space-2);
+}
+.sb-body {
+  position: relative;
+}
+@media (min-width: 1600px) and (max-width: 1919px) {
+  .sb-body {
+    grid-template-columns: 280px minmax(0, 1fr) var(--panel);
+  }
+}
+.sb-script table td {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Insert menu (v6): an action's description on its own line; the footer makes actions. */
+.bk-menu-row-2 .bk-menu-about {
+  grid-column: 2 / -1;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bk-menu-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sb-var-tip-accent {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.sb-var-tip b {
+  font-weight: 500;
+}
+
+/* Start editor (v6): each value the scenario uses as name, value and what it is; empty = asked. */
+.sb-inputs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.sb-input {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--border);
+}
+.sb-input:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.sb-input-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.sb-input-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.sb-input-about {
+  width: 100%;
+  padding: 2px 0;
+  border: 0;
+  border-bottom: 1px dashed transparent;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.sb-input-about:hover,
+.sb-input-about:focus {
+  border-bottom-color: var(--border-strong);
+  outline: none;
+}
+.sb-input-about:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.sb-new-input {
+  display: flex;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+}
+.sb-new-input .ah-input {
+  flex: 1;
+}
+.sb-input .ah-input::placeholder {
+  font-family: var(--font-sans);
+}
+
+/* Blocks tab (v6): the block language, by hand. Each block is a tile you drag or click. */
+.sb-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sb-blocks ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sb-blocks-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.sb-pal {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 44px;
+  padding: 6px var(--space-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--tile);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  cursor: grab;
+  touch-action: none;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+.sb-pal:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+  border-left-color: var(--tile);
+}
+.sb-pal:active {
+  cursor: grabbing;
+}
+.sb-pal[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.sb-pal-tile {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  background: var(--tile-soft);
+  color: var(--tile);
+}
+.sb-pal-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.sb-pal-label {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-pal-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-pal-grip {
+  color: var(--text-subtle);
+  opacity: 0;
+}
+.sb-pal:hover .sb-pal-grip {
+  opacity: 1;
+}
+.sb-pal-ghost {
+  position: fixed;
+  z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px var(--space-3) 6px var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--tile);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-popover);
+  font-size: 13px;
+  font-weight: 600;
+  pointer-events: none;
+  opacity: 0.85;
+}
+.sb-pal-ghost[data-over="list"] {
+  opacity: 1;
+  border-color: var(--accent);
+  border-left-color: var(--tile);
+}
+
+/* A scenario written as blocks: a stage is a header row, its steps indented under it. */
+.st-row.st-stage {
+  background: var(--surface-sunken);
+}
+.st-row.st-stage[data-selected="true"] {
+  background: var(--accent-soft);
+}
+
+/* ---------- Build and run on one screen ---------- */
+/* The page box: capped and centred on a wide screen, so the blocks stay near the palette. */
+.sb-page {
+  width: 100%;
+  max-width: 1920px;
+  margin: 0 auto;
+}
+.sb-description {
+  max-width: 640px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The run bar: environment, mode, plan, inputs, Start, then the verdict in one line. */
+.sb-runbar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.sb-runbar-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-5);
+}
+.sb-runbar-controls .sb-env {
+  margin-left: 0;
+  gap: var(--space-2);
+}
+.sb-runbar-controls .sb-env select {
+  height: var(--control);
+  min-width: 240px;
+}
+.sb-runbar-sep {
+  align-self: stretch;
+  width: 1px;
+  margin: 2px 0;
+  background: var(--border);
+}
+.sb-runbar-verdict {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+}
+.sb-runbar-verdict[data-tone="ok"] {
+  color: var(--text);
+}
+.sb-runbar-verdict[data-tone="ok"] svg {
+  color: var(--done);
+}
+.sb-runbar-verdict[data-tone="bad"] {
+  color: var(--failed);
+}
+.sb-runbar-verdict a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+/* The run strip: the scenario run shown on the blocks, in one line. */
+.sb-strip-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.sb-strip {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  font-size: 13px;
+}
+.sb-strip[data-status="running"] {
+  border-color: var(--live);
+}
+.sb-strip[data-status="running"] > svg {
+  color: var(--live);
+}
+.sb-strip[data-status="waiting"] {
+  border-color: var(--waiting);
+  background: var(--waiting-soft);
+}
+.sb-strip[data-status="waiting"] > svg {
+  color: var(--waiting);
+}
+.sb-strip[data-status="failed"] > svg {
+  color: var(--failed);
+}
+.sb-strip[data-status="done"] > svg {
+  color: var(--done);
+}
+.sb-strip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-follow {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+/* The run panel (right column while no block is open in the editor). */
+.sb-run-panel .ah-card {
+  box-shadow: none;
+}
+.sc-runs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.sc-runs-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+}
+.sc-runs-row[data-shown="true"] {
+  background: var(--accent-soft);
+}
+
+/* A block in the scenario run shown: its state at the right, the current one marked. */
+.st-run-state {
+  display: inline-flex;
+  align-items: center;
+}
+.st-row[data-current="true"] {
+  border-color: var(--live);
+  box-shadow: inset 3px 0 0 var(--live);
+}
+.st-row[data-current="true"]:has([data-status="waiting"]) {
+  border-color: var(--waiting);
+  box-shadow: inset 3px 0 0 var(--waiting);
+}
+
+/* Line 3: only when there is news (the plan, what the block kept). */
+.st-news {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--space-3);
+  font-size: 12px;
+  line-height: 18px;
+}
+.st-news svg {
+  vertical-align: -2px;
+}
+.st-kept {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+/* Quick actions: on hover and keyboard focus of the row; a set breakpoint always shows. */
+.st-quick {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.st-quick-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-subtle);
+  cursor: pointer;
+}
+.st-quick-btn:hover {
+  background: var(--surface-sunken);
+  color: var(--text);
+}
+.st-quick-btn.st-break-on {
+  color: var(--accent);
+}
+.st-quick > .st-quick-btn:not(.st-break-on) {
+  opacity: 0;
+}
+.st-row:hover .st-quick > .st-quick-btn,
+.st-row:focus-visible .st-quick > .st-quick-btn,
+.st-row:focus-within .st-quick > .st-quick-btn,
+.st-row[data-selected="true"] .st-quick > .st-quick-btn {
+  opacity: 1;
+}
+@media (hover: none) {
+  .st-quick > .st-quick-btn:not(.st-break-on) {
+    opacity: 1;
+  }
+}
+.st-chip-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+/* Editing on the row: the sentence and the values open in place. */
+.st-inline-input {
+  height: 26px;
+  padding: 0 6px;
+  font-size: 13px;
+  max-width: 100%;
+}
+.st-lines > .st-inline-input {
+  font-weight: 600;
+  font-size: 14px;
+}
+.st-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.st-detail-edit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  row-gap: 4px;
+  white-space: normal;
+}
+.st-row[data-selected="true"] .st-detail {
+  white-space: normal;
+}
+.st-chip-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+  height: var(--control-sm);
+  padding: 0 var(--space-2);
+  border: 1px dashed var(--border-control);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 20px;
+  white-space: nowrap;
+  cursor: text;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.st-chip-edit:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+@media (prefers-reduced-motion: reduce) {
+  .st-row {
+    transition: none;
+  }
+}
+
+/* Before you start: one quiet card, its commands folded. */
+.sc-before .ah-h3 {
+  font-size: 14px;
+}
+.sc-before-more summary {
+  cursor: pointer;
+  color: var(--text-muted);
+}
+.sc-before-list {
+  margin: var(--space-2) 0;
+  padding-left: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* The technical line under the sentence: the action and its short values. */
+.st-tech {
+  display: block;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.st-row[data-selected="true"] .st-tech {
+  white-space: normal;
+}
+
+/* The selected block, open in place: part of the row, under the title, as wide as the row. Open,
+ * it keeps the accent edge but a neutral ground, so its groups read calmly. */
+.st-row[data-selected="true"] {
+  align-items: start;
+}
+/* Open, the row keeps its accent edge on a neutral ground; its settings span the whole row. */
+.st-row[data-open="true"] {
+  background: var(--surface);
+}
+.st-open-group {
+  grid-column: 1 / -1;
+  /* The row pads its left by 4px only (its drag handle sits there): the open part takes the
+   * row's right padding on its left too, so its text and groups sit 12px in from both edges. */
+  padding-left: var(--space-2);
+}
+.st-row[data-selected="true"] > .st-num,
+.st-row[data-selected="true"] > .st-tile,
+.st-row[data-selected="true"] > .st-handle {
+  margin-top: 2px;
+}
+.st-open {
+  margin-top: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-3) 0 var(--space-1);
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--text);
+  cursor: default;
+}
+.st-open-about {
+  margin: 0;
+  max-width: 72ch;
+  color: var(--text-muted);
+}
+.st-open-mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.st-open-strong {
+  color: var(--text);
+  font-weight: 500;
+}
+.st-open-quiet {
+  color: var(--text-subtle);
+}
+
+/* Grouped lists, as system settings show them: a small title, then rows in one rounded group,
+ * the label at the left and the value at the right, hairlines between rows. */
+.st-g-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.st-g-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0 0 0 var(--space-3);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.st-g {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: hidden;
+}
+/* A row: the label in a fixed column, its value right after it, both left-aligned; a note
+ * under them across the row. */
+.st-g-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(120px, 28%) minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--space-4);
+  row-gap: var(--space-1);
+  min-height: 40px;
+  padding: var(--space-2) var(--space-3);
+}
+/* An inset hairline between rows, starting at the text, not at the group's edge. */
+.st-g-row + .st-g-row::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: var(--space-3);
+  right: 0;
+  border-top: 1px solid var(--border);
+}
+.st-g-label {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.st-g-note {
+  grid-column: 1 / -1;
+  max-width: 100%;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.st-g-value {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  min-width: 0;
+  text-align: left;
+}
+
+/* Body: the app's code well. */
+.st-open-json {
+  max-height: 320px;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  line-height: 20px;
+  white-space: pre;
+}
+
+/* An editable value (.st-chip-edit above): its text ellipsed inside. */
+.st-chip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* What it runs: the action's script and file, folded under Runs. */
+.st-g-more {
+  display: block;
+}
+.st-code > summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-sm);
+  gap: var(--space-2);
+  list-style: none;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+.st-code > summary::-webkit-details-marker {
+  display: none;
+}
+.st-code > summary > svg {
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.st-code[open] > summary > svg {
+  transform: rotate(90deg);
+}
+.st-code > summary:hover {
+  color: var(--text);
+}
+.st-code-files {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+.st-code-files .ah-json {
+  max-height: 360px;
+  white-space: pre;
+}
+@media (prefers-reduced-motion: reduce) {
+  .st-code > summary > svg {
+    transition: none;
+  }
+}
+
+/* A service input: a field that opens the list of the environment's services, never free text.
+ * Its look is the shared field's (`button.ah-input`); only its size and layout are set here. */
+.st-service {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  height: var(--control-sm);
+  padding: 0 var(--space-2);
+}
+.st-service-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.st-service-missing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 12px;
+  color: var(--failed);
+  white-space: nowrap;
+}
+.st-service > svg {
+  flex: none;
+  color: var(--text-subtle);
+}
+
+/* A service input: the kind (a filter) and the service itself, side by side. */
+.st-service-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  min-width: 0;
+}
+.st-service-kind {
+  flex: none;
+  height: var(--control-sm);
+  font-size: 12px;
+}
+.st-service-pair > .st-service {
+  min-width: 0;
+}
+
+/* What the step still needs, said with an icon and a word (not a colour alone). */
+.st-g-missing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--text);
+}
+.st-g-missing > svg {
+  color: var(--waiting);
+}
+/* A quiet link to where a value is changed. */
+.st-g-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--control-sm);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.st-g-link:hover {
+  text-decoration: underline;
+}
+.st-open-value-ref {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+}
+/* The body, a value of the step: its name and tools, then its code well across the row. */
+.st-g-body {
+  display: flex;
+  flex-direction: column;
+  /* The row's grid centres its cells; a body runs left to right, at the row's full width. */
+  align-items: stretch;
+  gap: var(--space-2);
+}
+.st-g-body > .st-g-note {
+  align-self: flex-start;
+}
+.st-g-body-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.st-open-draft {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  white-space: normal;
+}
+
+/* The open step's first line: what its action does, and the way to its full editor. */
+.st-open-top {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+.st-open-top > .st-open-about {
+  flex: 1;
+}
+.st-open-panel {
+  flex: none;
+  margin-left: auto;
+}
+
+/* Below 1920 px the left column is a rail of its three tabs; one opens the column over the list. */
+.sb-body[data-left="rail"],
+.sb-body[data-left="rail"][data-panel] {
+  grid-template-columns: var(--sidebar-collapsed) minmax(0, 1fr) 400px;
+}
+@media (min-width: 1600px) {
+  .sb-body[data-left="rail"],
+  .sb-body[data-left="rail"][data-panel] {
+    grid-template-columns: var(--sidebar-collapsed) minmax(0, 1fr) var(--panel);
+  }
+}
+.sb-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) 0;
+  border-right: 1px solid var(--border);
+}
+.sb-rail [aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.sb-rail-scrim {
+  /* Over the list only (its grid column): a click on the run panel still lands there. */
+  position: absolute;
+  grid-column: 2;
+  grid-row: 1;
+  inset: 0;
+  z-index: 19;
+}
+.sb-left.sb-left-over {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--sidebar-collapsed);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  width: 320px;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-overlay);
+}
+.sb-left-close {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  z-index: 1;
+}
+
+/* More details: the rest of an open step, folded under its essentials. */
+.st-more > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-sm);
+  margin-left: var(--space-3);
+  list-style: none;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.st-more > summary::-webkit-details-marker {
+  display: none;
+}
+.st-more > summary > svg {
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.st-more[open] > summary > svg {
+  transform: rotate(90deg);
+}
+.st-more > summary:hover {
+  color: var(--text);
+}
+.st-more-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin-top: var(--space-3);
+}
+@media (prefers-reduced-motion: reduce) {
+  .st-more > summary > svg {
+    transition: none;
+  }
+}
+
+.st-open-draft-badge {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  flex: none;
+}
+
+/* The action an open step runs, picked in place. */
+.st-open-action {
+  height: var(--control-sm);
+  min-width: 200px;
+  padding: 0 28px 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.st-open-json-edit {
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+/* A body that edits in place: the code well itself opens the editor. */
+.st-open-json[data-editable="true"] {
+  cursor: text;
+}
+.st-open-json[data-editable="true"]:hover {
+  border-color: var(--border-strong);
+}

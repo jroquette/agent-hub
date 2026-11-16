@@ -1,0 +1,26 @@
+# The round is green but the branch holds no commit: no PR, the delivery is no_changes.
+workflow: deliver
+inputs: {issue: DEM-1, repo: demo-api, issue_text: "```text\nid: DEM-1\n```"}
+stubs:
+  worktree:
+    output:
+      path: /ws/demo-api/.claude/worktrees/dem-1
+      branch: jdoe/dem-1
+      base: origin/trunk
+      hub: /ws/hub
+      hub_name: hub
+      check: make check
+      prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}
+      target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
+  rounds__implement: {text: Adds the change.}
+  rounds__verdict: {output: {status: done, summary: Changes the code., question: ""}}
+  rounds__check: {output: {passed: true, exit_code: 0, round: 1, tail: "ok\n"}}
+  rounds__spec: {output: {schema: agent-hub/review/1, reviewer: spec, ticket: DEM-1, task: DEM-1, round: 1, commit: 0a1b2c3d, verdict: PASS, findings: []}}
+  rounds__quality: {output: {schema: agent-hub/review/1, reviewer: quality, ticket: DEM-1, task: DEM-1, round: 1, commit: 0a1b2c3d, verdict: PASS, findings: []}}
+  rounds__review: {output: {verdict: PASS, lenses: {spec: PASS, quality: PASS}}}
+  rounds__notes: {output: {check: {passed: true, exit_code: 0, tail: "ok\n"}, findings: [], omitted: 0}}
+  rounds__feedback: {output: {check: {passed: true, exit_code: 0, tail: "ok\n"}, findings: [], omitted: 0}}
+  commits: {output: {count: 0, subjects: [], summary: "", dirty: false}}
+  report: {output: {delivery: no_changes, stage: implementing, reason: "no commit on the branch (the session reported done or gave no verdict)", question: "", pr: "", summary: ""}}
+expect: {status: done, outcome: no_changes}
+reached: [worktree, rounds, rounds__implement, rounds__verdict, rounds__check, rounds__spec, rounds__quality, rounds__review, rounds__notes, rounds__feedback, commits, report]

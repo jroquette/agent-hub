@@ -1,0 +1,730 @@
+import io
+import runpy
+import sqlite3
+import sys
+import uuid
+from pathlib import Path
+from typing import Any
+
+import pytest
+from alembic.command import check, downgrade, upgrade
+from alembic.runtime.migration import MigrationContext
+from sqlalchemy import JSON, create_engine, inspect
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.types import TypeEngine
+
+from agent_hub.storage.migration import alembic_config
+
+PHASE_ZERO_INSERT = (
+    "INSERT INTO events (project, session, type, source, source_id, timestamp, payload) "
+    "VALUES ('demo', 'session-1', 'tool.call', 'claude_code', ?, "
+    "'2026-09-27 08:00:00.000000', '{}')"
+)
+HEAD = "0012"
+AGENT_SESSION_TABLES = {"agent_sessions", "agent_session_records"}
+ITEM_VERSION_TABLES = {"item_versions"}
+KNOWLEDGE_TABLES = {
+    "knowledge_documents",
+    "knowledge_text",
+    "knowledge_text_data",
+    "knowledge_text_idx",
+    "knowledge_text_content",
+    "knowledge_text_docsize",
+    "knowledge_text_config",
+}
+LINK_TABLES = {"knowledge_links"}
+FTS5_DECLARATION = "fts5(title, body, tokenize='porter unicode61 remove_diacritics 2')"
+AGENT_SESSION_INDEXES = {
+    "ix_agent_sessions_project_claude_session_id": ["project", "claude_session_id"],
+    "ix_agent_sessions_status": ["status"],
+    "ix_agent_sessions_ended_at": ["ended_at"],
+}
+INDEXES = {
+    "ix_events_project_session_id": ["project", "session", "id"],
+    "ix_events_project_type_timestamp": ["project", "type", "timestamp"],
+    "ix_events_project_timestamp": ["project", "timestamp"],
+}
+
+
+def _table_names(db_path: Path) -> set[str]:
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        return set(inspect(engine).get_table_names())
+    finally:
+        engine.dispose()
+
+
+def _table_sql(db_path: Path, table: str) -> str:
+    """The ``CREATE`` statement SQLite keeps for ``table``."""
+    connection = sqlite3.connect(db_path)
+    try:
+        row = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+        ).fetchone()
+    finally:
+        connection.close()
+    return str(row[0])
+
+
+def _events_schema(db_path: Path) -> tuple[dict[str, TypeEngine[Any]], list[Any]]:
+    """The events table's column types by name, and its unique constraints."""
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        inspector = inspect(engine)
+        columns = {column["name"]: column["type"] for column in inspector.get_columns("events")}
+        return columns, list(inspector.get_unique_constraints("events"))
+    finally:
+        engine.dispose()
+
+
+def _current_revision(db_path: Path) -> str | None:
+    """The revision stamped in ``alembic_version``; the table also exists (empty) at base."""
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.connect() as connection:
+            return MigrationContext.configure(connection).get_current_revision()
+    finally:
+        engine.dispose()
+
+
+def test_creates_and_drops_events_table_when_upgraded_and_downgraded(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+
+    upgrade(config, "head")
+    assert _current_revision(db_path) == HEAD
+    assert _table_names(db_path) == {
+        "alembic_version",
+        "events",
+        *AGENT_SESSION_TABLES,
+        *ITEM_VERSION_TABLES,
+        *KNOWLEDGE_TABLES,
+        *LINK_TABLES,
+    }
+    columns, unique_constraints = _events_schema(db_path)
+    filtered = {"project", "session", "type", "timestamp", "source", "source_id"}
+    assert filtered <= set(columns)
+    assert isinstance(columns["payload"], JSON)
+    assert sorted(constraint["column_names"] for constraint in unique_constraints) == [
+        ["event_id"],
+        ["source", "source_id"],
+    ]
+
+    downgrade(config, "base")
+    assert _current_revision(db_path) is None
+    assert _table_names(db_path) == {"alembic_version"}
+
+
+def test_rejects_duplicate_key_when_inserted_with_raw_sql(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    upgrade(alembic_config(f"sqlite:///{db_path}"), "head")
+    insert = (
+        "INSERT INTO events "
+        "(project, session, type, source, source_id, timestamp, payload, event_id) "
+        "VALUES ('demo', 'session-1', 'tool.call', 'claude_code', 'evt-1', "
+        "'2026-09-27 08:00:00.000000', ?, ?)"
+    )
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(insert, ('{"version": 1}', str(uuid.uuid7())))
+        with pytest.raises(IntegrityError), engine.begin() as connection:
+            connection.exec_driver_sql(insert, ('{"version": 2}', str(uuid.uuid7())))
+    finally:
+        engine.dispose()
+
+
+def test_reports_no_pending_changes_when_database_at_head(tmp_path: Path) -> None:
+    config = alembic_config(f"sqlite:///{tmp_path / 'agent-hub.db'}")
+    upgrade(config, "head")
+
+    check(config)  # raises AutogenerateDiffsDetected when metadata and migrations drift
+
+
+def test_emits_sql_when_upgrade_runs_offline(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+    # Config binds its default stdout at import time, so capsys would not see the SQL.
+    config.output_buffer = io.StringIO()
+
+    upgrade(config, "head", sql=True)
+
+    assert "alembic_version" in config.output_buffer.getvalue()
+    assert not db_path.exists()
+
+
+def test_upgrades_to_head_when_run_as_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    argv = ["agent_hub.storage.migration", "-x", f"db_url=sqlite:///{db_path}", "upgrade", "head"]
+    monkeypatch.setattr(sys, "argv", argv)
+    # Run it the way `python -m` does: a fresh module, not the copy this test file imported.
+    monkeypatch.delitem(sys.modules, "agent_hub.storage.migration")
+
+    runpy.run_module("agent_hub.storage.migration", run_name="__main__")
+
+    assert _current_revision(db_path) == HEAD
+
+
+def _rows(db_path: Path) -> list[tuple[Any, ...]]:
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.connect() as connection:
+            query = "SELECT source_id, event_id, received_at FROM events ORDER BY id"
+            return [tuple(row) for row in connection.exec_driver_sql(query)]
+    finally:
+        engine.dispose()
+
+
+def _indexes(db_path: Path) -> dict[str, list[str]]:
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        return {
+            str(index["name"]): [str(column) for column in index["column_names"]]
+            for index in inspect(engine).get_indexes("events")
+        }
+    finally:
+        engine.dispose()
+
+
+def _insert_phase_zero_rows(db_path: Path, count: int) -> None:
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as connection:
+            for number in range(count):
+                connection.exec_driver_sql(PHASE_ZERO_INSERT, (f"evt-{number}",))
+    finally:
+        engine.dispose()
+
+
+def test_keeps_rows_when_phase_zero_database_upgrades(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+    upgrade(config, "0002")
+    _insert_phase_zero_rows(db_path, 3)
+
+    upgrade(config, "head")
+
+    rows = _rows(db_path)
+    assert [row[0] for row in rows] == ["evt-0", "evt-1", "evt-2"]
+    event_ids = [uuid.UUID(row[1]) for row in rows]
+    assert len(set(event_ids)) == 3
+    assert {event_id.version for event_id in event_ids} == {7}
+    assert [str(event_id) for event_id in event_ids] == [row[1] for row in rows]
+    assert [row[2] for row in rows] == [None, None, None]
+    assert _indexes(db_path) == INDEXES
+    columns, _ = _events_schema(db_path)
+    assert {"event_id", "received_at"} <= set(columns)
+
+
+def test_rejects_null_event_id_when_inserted_after_upgrade(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    upgrade(alembic_config(f"sqlite:///{db_path}"), "head")
+
+    with pytest.raises(IntegrityError):
+        _insert_phase_zero_rows(db_path, 1)
+
+
+def test_keeps_rows_when_downgraded_to_phase_zero(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+    upgrade(config, "0002")
+    _insert_phase_zero_rows(db_path, 2)
+    upgrade(config, "head")
+
+    downgrade(config, "0002")
+
+    assert _current_revision(db_path) == "0002"
+    columns, unique_constraints = _events_schema(db_path)
+    assert {"event_id", "received_at"}.isdisjoint(columns)
+    assert [constraint["column_names"] for constraint in unique_constraints] == [
+        ["source", "source_id"]
+    ]
+    assert _indexes(db_path) == {}
+    _insert_phase_zero_rows_after(db_path, ["evt-2"])
+
+
+def _insert_phase_zero_rows_after(db_path: Path, source_ids: list[str]) -> None:
+    """A Phase 0 insert (no event_id) works again after the downgrade, and old rows remain."""
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as connection:
+            for source_id in source_ids:
+                connection.exec_driver_sql(PHASE_ZERO_INSERT, (source_id,))
+            count = connection.exec_driver_sql("SELECT count(*) FROM events").scalar_one()
+    finally:
+        engine.dispose()
+    assert count == 3
+
+
+def _schema(db_path: Path, table: str) -> dict[str, object]:
+    """A table's columns (name, type, nullable), primary key, foreign keys and indexes."""
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        inspector = inspect(engine)
+        return {
+            "columns": [
+                (column["name"], str(column["type"]), column["nullable"])
+                for column in inspector.get_columns(table)
+            ],
+            "primary_key": inspector.get_pk_constraint(table)["constrained_columns"],
+            "foreign_keys": [
+                (key["constrained_columns"], key["referred_table"], key["options"])
+                for key in inspector.get_foreign_keys(table)
+            ],
+            "indexes": {
+                str(index["name"]): [str(column) for column in index["column_names"]]
+                for index in inspector.get_indexes(table)
+            },
+        }
+    finally:
+        engine.dispose()
+
+
+def test_creates_and_drops_agent_session_tables_when_upgraded_and_downgraded(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+    upgrade(config, "0003")
+
+    upgrade(config, "head")
+
+    assert _current_revision(db_path) == HEAD
+    assert _table_names(db_path) >= AGENT_SESSION_TABLES
+    sessions = _schema(db_path, "agent_sessions")
+    assert sessions["primary_key"] == ["id"]
+    assert sessions["indexes"] == AGENT_SESSION_INDEXES
+    nullable = {name for name, _, is_nullable in sessions["columns"] if is_nullable}
+    assert nullable == {
+        "claude_session_id",
+        "cloud_id",
+        "url",
+        "model",
+        "effort",
+        "title",
+        "ended_at",
+        "end_reason",
+        "cost_usd",
+        "usage",
+        "last_prompt",
+        "last_reply",
+    }
+    records = _schema(db_path, "agent_session_records")
+    assert [name for name, _, _ in records["columns"]] == [
+        "agent_session_id",
+        "seq",
+        "at",
+        "kind",
+        "by",
+        "body",
+        "text_bytes",
+    ]
+    assert records["primary_key"] == ["agent_session_id", "seq"]
+    assert records["foreign_keys"] == [
+        (["agent_session_id"], "agent_sessions", {"ondelete": "CASCADE"})
+    ]
+
+    downgrade(config, "0003")
+
+    assert _current_revision(db_path) == "0003"
+    assert _table_names(db_path) == {"alembic_version", "events"}
+
+
+def test_keeps_events_unchanged_when_agent_session_tables_added(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+    upgrade(config, "0002")
+    _insert_phase_zero_rows(db_path, 2)
+    upgrade(config, "0003")
+    events_before = _schema(db_path, "events")
+    rows_before = _rows(db_path)
+
+    upgrade(config, "head")
+    events_at_head = _schema(db_path, "events")
+    rows_at_head = _rows(db_path)
+    downgrade(config, "0003")
+
+    assert events_at_head == events_before
+    assert rows_at_head == rows_before
+    assert _schema(db_path, "events") == events_before
+    assert _rows(db_path) == rows_before
+
+
+def _unique_constraints(db_path: Path, table: str) -> list[tuple[str, list[str]]]:
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        return [
+            (str(item["name"]), [str(column) for column in item["column_names"]])
+            for item in inspect(engine).get_unique_constraints(table)
+        ]
+    finally:
+        engine.dispose()
+
+
+SESSION_INSERT = (
+    "INSERT INTO agent_sessions (id, kind, project, workdir_id, workdir_label, status, mode, "
+    "created_at, updated_at, last_seq, stored_bytes) VALUES ('s-1', 'local', 'demo', "
+    "'0123456789abcdef', 'demo-hub', 'ended', 'default', '2026-10-13 09:00:00.000000', "
+    "'2026-10-13 09:00:00.000000', 3, 42)"
+)
+
+
+def _session_rows(db_path: Path) -> list[tuple[Any, ...]]:
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.connect() as connection:
+            query = "SELECT id, project, last_seq FROM agent_sessions ORDER BY id"
+            return [tuple(row) for row in connection.exec_driver_sql(query)]
+    finally:
+        engine.dispose()
+
+
+def _insert_agent_session(db_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "INSERT INTO agent_sessions (id, kind, project, workdir_id, workdir_label, "
+                "status, mode, created_at, updated_at, last_seq, stored_bytes) VALUES "
+                "('01929a4e-7a11-7c00-8a00-00000000e001', 'local', 'demo', 'w1', 'main', "
+                "'running', 'default', '2026-10-13 09:00:00.000000', "
+                "'2026-10-13 09:00:00.000000', 0, 0)"
+            )
+    finally:
+        engine.dispose()
+
+
+def test_keeps_events_and_sessions_when_item_versions_added(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+    upgrade(config, "0002")
+    _insert_phase_zero_rows(db_path, 2)
+    upgrade(config, "0004")
+    _insert_agent_session(db_path)
+    tables = ("events", "agent_sessions", "agent_session_records")
+    before = {table: _schema(db_path, table) for table in tables}
+    rows_before = (_rows(db_path), _session_rows(db_path))
+
+    upgrade(config, "0005")
+
+    assert _current_revision(db_path) == "0005"
+    assert {table: _schema(db_path, table) for table in tables} == before
+    assert (_rows(db_path), _session_rows(db_path)) == rows_before
+    versions = _schema(db_path, "item_versions")
+    assert versions["primary_key"] == ["id"]
+    nullable = {name for name, _, is_nullable in versions["columns"] if is_nullable}
+    assert nullable == {"author_name", "author_email", "restored_from", "draft_id"}
+    assert "draft_id" in [name for name, _, _ in versions["columns"]]
+    assert _unique_constraints(db_path, "item_versions") == [
+        ("uq_item_versions_project_unit_path_seq", ["project", "unit_path", "seq"])
+    ]
+
+    downgrade(config, "0004")
+
+    assert _current_revision(db_path) == "0004"
+    assert _table_names(db_path) == {"alembic_version", "events", *AGENT_SESSION_TABLES}
+    assert {table: _schema(db_path, table) for table in tables} == before
+    assert (_rows(db_path), _session_rows(db_path)) == rows_before
+
+
+def _all_session_rows(db_path: Path) -> list[tuple[Any, ...]]:
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.connect() as connection:
+            return [
+                tuple(row) for row in connection.exec_driver_sql("SELECT * FROM agent_sessions")
+            ]
+    finally:
+        engine.dispose()
+
+
+def test_keeps_sessions_when_digest_columns_added_and_dropped(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+    upgrade(config, "0005")
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(SESSION_INSERT)
+    finally:
+        engine.dispose()
+    before = _all_session_rows(db_path)
+
+    upgrade(config, "0006")
+    at_head = _all_session_rows(db_path)
+    columns = [name for name, _, _ in _schema(db_path, "agent_sessions")["columns"]]
+    downgrade(config, "0005")
+
+    assert columns[-3:] == ["last_prompt", "last_reply", "changed_files"]
+    assert at_head == [(*before[0], None, None, "[]")]
+    assert _all_session_rows(db_path) == before
+
+
+def test_keeps_sessions_when_review_targets_added_and_dropped(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+    upgrade(config, "0005")
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(SESSION_INSERT)
+    finally:
+        engine.dispose()
+    upgrade(config, "0006")
+    before = _all_session_rows(db_path)
+
+    upgrade(config, "0007")
+    at_head = _all_session_rows(db_path)
+    columns = [name for name, _, _ in _schema(db_path, "agent_sessions")["columns"]]
+    downgrade(config, "0006")
+
+    assert columns[-1] == "review_targets"
+    assert at_head == [(*before[0], "[]")]
+    assert _all_session_rows(db_path) == before
+
+
+ITEM_VERSION_INSERT = (
+    "INSERT INTO item_versions (id, project, unit_path, kind, seq, origin, first, recorded_at, "
+    "content_hash, size, content) VALUES ('01929a4e-7a11-7c00-8a00-00000000f001', 'demo', "
+    "'skills/demo', 'skill', 1, 'save', 1, '2026-10-17 09:00:00.000000', 'abc', 3, x'616263')"
+)
+
+
+ALL_ROWS = {
+    "events": "SELECT * FROM events ORDER BY id",
+    "agent_sessions": "SELECT * FROM agent_sessions ORDER BY id",
+    "agent_session_records": "SELECT * FROM agent_session_records ORDER BY agent_session_id, seq",
+    "item_versions": "SELECT * FROM item_versions ORDER BY id",
+}
+
+
+def _all_rows(db_path: Path, table: str) -> list[tuple[Any, ...]]:
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.connect() as connection:
+            return [tuple(row) for row in connection.exec_driver_sql(ALL_ROWS[table])]
+    finally:
+        engine.dispose()
+
+
+def test_keeps_rows_when_upgraded_to_knowledge_index(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+    upgrade(config, "0007")
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "INSERT INTO events (project, session, type, source, source_id, timestamp, "
+                "payload, event_id) VALUES ('demo', 'session-1', 'tool.call', 'claude_code', "
+                "'evt-1', '2026-09-27 08:00:00.000000', '{}', ?)",
+                (str(uuid.uuid7()),),
+            )
+            connection.exec_driver_sql(SESSION_INSERT)
+            connection.exec_driver_sql(ITEM_VERSION_INSERT)
+    finally:
+        engine.dispose()
+    tables = ("events", "agent_sessions", "agent_session_records", "item_versions")
+    schema_before = {table: _schema(db_path, table) for table in tables}
+    rows_before = {table: _all_rows(db_path, table) for table in tables}
+    assert all(rows_before[table] for table in ("events", "agent_sessions", "item_versions"))
+
+    upgrade(config, "0008")
+
+    assert _current_revision(db_path) == "0008"
+    assert _table_names(db_path) >= KNOWLEDGE_TABLES
+    assert {table: _schema(db_path, table) for table in tables} == schema_before
+    assert {table: _all_rows(db_path, table) for table in tables} == rows_before
+    assert _unique_constraints(db_path, "knowledge_documents") == [
+        ("uq_knowledge_documents_hub_path", ["hub", "path"])
+    ]
+    assert FTS5_DECLARATION in _table_sql(db_path, "knowledge_text")
+
+    downgrade(config, "0007")
+
+    assert _current_revision(db_path) == "0007"
+    assert _table_names(db_path).isdisjoint(KNOWLEDGE_TABLES)
+    assert {table: _schema(db_path, table) for table in tables} == schema_before
+    assert {table: _all_rows(db_path, table) for table in tables} == rows_before
+
+
+KNOWLEDGE_DOCUMENT_INSERT = (
+    "INSERT INTO knowledge_documents (hub, path, kind, title, size, mtime_ns, sha256, "
+    "index_version) VALUES ('/hubs/demo', 'brain/now.md', 'doc', 'Now', 3, 1, ?, 1)"
+)
+
+
+def test_keeps_rows_when_upgraded_to_knowledge_links(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+    upgrade(config, "0009")
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "INSERT INTO events (project, session, type, source, source_id, timestamp, "
+                "payload, event_id) VALUES ('demo', 'session-1', 'tool.call', 'claude_code', "
+                "'evt-1', '2026-09-27 08:00:00.000000', '{}', ?)",
+                (str(uuid.uuid7()),),
+            )
+            connection.exec_driver_sql(ITEM_VERSION_INSERT)
+            connection.exec_driver_sql(KNOWLEDGE_DOCUMENT_INSERT, ("0" * 64,))
+    finally:
+        engine.dispose()
+    tables = ("events", "item_versions", "knowledge_documents")
+    rows = {**ALL_ROWS, "knowledge_documents": "SELECT * FROM knowledge_documents ORDER BY id"}
+
+    def all_rows() -> dict[str, list[tuple[Any, ...]]]:
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.connect() as connection:
+                return {
+                    table: [tuple(row) for row in connection.exec_driver_sql(rows[table])]
+                    for table in tables
+                }
+        finally:
+            engine.dispose()
+
+    schema_before = {table: _schema(db_path, table) for table in tables}
+    rows_before = all_rows()
+    assert all(rows_before.values())
+
+    upgrade(config, "0010")
+
+    assert _current_revision(db_path) == "0010"
+    assert _table_names(db_path) >= KNOWLEDGE_TABLES | LINK_TABLES
+    assert {table: _schema(db_path, table) for table in tables} == schema_before
+    assert all_rows() == rows_before
+    links = _schema(db_path, "knowledge_links")
+    assert links["columns"] == [
+        ("id", "INTEGER", False),
+        ("hub", "VARCHAR", False),
+        ("source", "VARCHAR", False),
+        ("target", "VARCHAR", False),
+    ]
+    assert links["primary_key"] == ["id"]
+    assert links["foreign_keys"] == []
+    assert links["indexes"] == {"ix_knowledge_links_hub_target": ["hub", "target", "source"]}
+    assert _unique_constraints(db_path, "knowledge_links") == [
+        ("uq_knowledge_links_hub_source_target", ["hub", "source", "target"])
+    ]
+
+    downgrade(config, "0009")
+
+    assert _current_revision(db_path) == "0009"
+    assert _table_names(db_path).isdisjoint(LINK_TABLES)
+    assert _table_names(db_path) >= KNOWLEDGE_TABLES
+    assert {table: _schema(db_path, table) for table in tables} == schema_before
+    assert all_rows() == rows_before
+
+
+# AC-418.1
+def test_keeps_sessions_as_all_tools_when_tool_access_added_and_dropped(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+    upgrade(config, "0005")
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(SESSION_INSERT)
+    finally:
+        engine.dispose()
+    upgrade(config, "0008")
+    before = _all_session_rows(db_path)
+
+    upgrade(config, "0009")
+    at_head = _all_session_rows(db_path)
+    columns = [name for name, _, _ in _schema(db_path, "agent_sessions")["columns"]]
+    downgrade(config, "0008")
+
+    assert columns[-1] == "tool_access"
+    assert at_head == [(*before[0], "all")]
+    assert _all_session_rows(db_path) == before
+
+
+def _session_columns(db_path: Path) -> list[str]:
+    return [str(name) for name, _, _ in _schema(db_path, "agent_sessions")["columns"]]
+
+
+def _add_playground_columns(db_path: Path, statements: list[str]) -> None:
+    """Add columns the way the playground's copies of 0011 and 0012 did, before the stamp."""
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as connection:
+            for statement in statements:
+                connection.exec_driver_sql(statement)
+    finally:
+        engine.dispose()
+
+
+PLAYGROUND_EFFORT = "ALTER TABLE agent_sessions ADD COLUMN effort VARCHAR"
+PLAYGROUND_ULTRACODE = "ALTER TABLE agent_sessions ADD COLUMN ultracode BOOLEAN DEFAULT 0 NOT NULL"
+
+
+# AC-681.8
+def test_adds_each_column_once_when_effort_already_exists(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+    upgrade(config, "0010")
+    _add_playground_columns(db_path, [PLAYGROUND_EFFORT])
+
+    upgrade(config, "head")
+
+    columns = _session_columns(db_path)
+    assert _current_revision(db_path) == HEAD
+    assert (columns.count("effort"), columns.count("ultracode")) == (1, 1)
+
+
+# AC-681.8
+def test_adds_each_column_once_when_effort_and_ultracode_already_exist(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+    upgrade(config, "0010")
+    _add_playground_columns(db_path, [PLAYGROUND_EFFORT, PLAYGROUND_ULTRACODE])
+
+    upgrade(config, "head")
+
+    columns = _session_columns(db_path)
+    assert _current_revision(db_path) == HEAD
+    assert (columns.count("effort"), columns.count("ultracode")) == (1, 1)
+    check(config)  # the skipped columns keep the metadata's types and nullability
+
+
+# AC-681.8
+def test_adds_each_column_once_when_ultracode_already_exists(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+    upgrade(config, "0010")
+    _add_playground_columns(db_path, [PLAYGROUND_ULTRACODE])
+
+    upgrade(config, "head")
+
+    columns = _session_columns(db_path)
+    assert _current_revision(db_path) == HEAD
+    assert (columns.count("effort"), columns.count("ultracode")) == (1, 1)
+
+
+# AC-681.3, AC-681.9
+def test_keeps_sessions_when_effort_and_ultracode_added_and_dropped(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+    upgrade(config, "0010")
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(SESSION_INSERT)
+    finally:
+        engine.dispose()
+    before = _all_session_rows(db_path)
+
+    upgrade(config, "0012")
+    at_head = _all_session_rows(db_path)
+    columns = _session_columns(db_path)
+    downgrade(config, "0010")
+
+    assert columns[-2:] == ["effort", "ultracode"]
+    assert at_head == [(*before[0], None, 0)]
+    assert _all_session_rows(db_path) == before
+    assert {"effort", "ultracode"}.isdisjoint(_session_columns(db_path))

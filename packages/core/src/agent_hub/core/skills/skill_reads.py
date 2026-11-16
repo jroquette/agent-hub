@@ -1,0 +1,336 @@
+"""The Skills tab's reads use case: catalog, detail and bundled file of one hub (AGH-164, C2).
+
+Each read lists the hub's skill roots (stat-only) and folds the files ``catalog_reads`` names,
+read within the catalog's 16 MiB byte budget: a file that does not fit, and every one after it,
+is left unread (``over_budget``); a file over its cap is never read. The fold is memoized per
+hub and project with the listing fingerprint it was built from (path, size, mtime and link target
+of every entry, ``hub.lock`` and the settings files included; a changed fingerprint replaces the
+entry), so a warm read is one listing walk plus the usage join. Items and bundled files are
+found by id only: an id the fold did not issue is ``EntityNotFoundError`` (entity ``skill`` or
+``skill file``); on a cold memo an item the listing alone rules out (``may_hold``) answers so
+before any file is read. ``item_names`` gives the fold's item kinds and names alone, with no
+capture and no usage. ``usage_rows`` gives the usage report's rows of the hub's own skills and
+agents (a real ``.claude/`` entry or one a ``.claude/`` link points at), also with no capture.
+
+With ``capture`` (AGH-295, D2), the catalog hands every unit its items are versioned in (each
+once: the hooks of one file share it) to ``CaptureItemVersions`` with the unit's stat mark, and
+the detail its one item's unit; ``marked_unit`` names an item's unit without capturing, with
+the mark the reads capture it under and how many items share it.
+"""
+
+import re
+import threading
+from collections import OrderedDict
+from collections.abc import Mapping
+from typing import Final, Protocol
+
+from agent_hub.core.hubs.hub_registry import HubFileReader, UnreadHubFile
+from agent_hub.core.item_versions.capture_item_versions import CaptureItemVersions, UnitMark
+from agent_hub.core.item_versions.item_units import (
+    ItemUnit,
+    SourceIndex,
+    unit_fingerprint,
+    unit_of_item,
+)
+from agent_hub.core.item_versions.item_version_ports import MarkedUnit
+from agent_hub.core.readmodels.read_ports import EntityNotFoundError
+from agent_hub.core.skills.skill_catalog import build_catalog, catalog_reads, may_hold
+from agent_hub.core.skills.skill_sources import (
+    CATALOG_BUDGET_BYTES,
+    CLAUDE_SOURCE,
+    MAX_SKILL_FILE_BYTES,
+    MAX_SKILL_JSON_BYTES,
+    CatalogInputs,
+    FoldedCatalog,
+    SkillSources,
+)
+from agent_hub.core.skills.skill_view import (
+    FILE_ID,
+    ITEM_NAME,
+    BundledFile,
+    BundledFileText,
+    CatalogItem,
+    HubToolCalls,
+    ItemKind,
+    SkillCatalog,
+    SkillDetail,
+    SkillFileTooLargeError,
+    SkillUsage,
+    Usage,
+    UsageRow,
+    item_id,
+    text_of,
+)
+from agent_hub.core.skills.usage_report import usage_rows
+
+MEMO_ENTRIES: Final = 16
+SKILL_ENTITY: Final = "skill"
+SKILL_FILE_ENTITY: Final = "skill file"
+_JSON_SUFFIX: Final = ".json"
+_NAME: Final = re.compile(ITEM_NAME)
+_FILE_ID: Final = re.compile(FILE_ID)
+_ZERO: Final = Usage(count=0, user_count=0, model_count=0, last_used_at=None)
+
+type _Fingerprint = tuple[bool, int, tuple[tuple[str, int, int, bool, str | None], ...]]
+
+
+class SkillUsageSource(Protocol):
+    """Where a project's skill and agent usage comes from (``EventReadModels.skill_usage``)."""
+
+    def skill_usage(self, project: str) -> SkillUsage:
+        """Usage by bare name over the window."""
+        ...
+
+
+def _fingerprint(sources: SkillSources) -> _Fingerprint:
+    return (
+        sources.truncated,
+        sources.skipped,
+        tuple(
+            (entry.path, entry.size, entry.mtime_ns, entry.regular, entry.link_target)
+            for entry in sources.files
+        ),
+    )
+
+
+def _cap(path: str) -> int:
+    return MAX_SKILL_JSON_BYTES if path.endswith(_JSON_SUFFIX) else MAX_SKILL_FILE_BYTES
+
+
+def _over_cap(cap: int) -> UnreadHubFile:
+    return UnreadHubFile(
+        message=f"cannot read: over {cap} bytes", is_missing=False, kind="too_large"
+    )
+
+
+def _usage_of(item: CatalogItem, usage: SkillUsage | None) -> Usage | None:
+    if item.kind is ItemKind.HOOK:
+        return None
+    if usage is None:
+        return _ZERO
+    found = usage.by_skill if item.kind is ItemKind.SKILL else usage.by_agent
+    return found.get(item.name, _ZERO)
+
+
+class SkillReads:
+    """Catalog, detail and bundled file reads of a hub's skills (``HubReadModels.skill_*``).
+
+    ``usage`` gives the 30-day counts joined by bare name; without it every count is zero.
+    ``capture`` records the units read (see the module doc); without it nothing is recorded.
+    """
+
+    def __init__(
+        self,
+        reader: HubFileReader,
+        usage: SkillUsageSource | None = None,
+        *,
+        memo_entries: int = MEMO_ENTRIES,
+        capture: CaptureItemVersions | None = None,
+    ) -> None:
+        self._reader = reader
+        self._usage = usage
+        self._capture = capture
+        self._entries = memo_entries
+        # One fold per (hub, project), with the fingerprint it was built from: a stale fold is
+        # replaced, never kept beside the fresh one.
+        self._memo: OrderedDict[tuple[str, str], tuple[_Fingerprint, FoldedCatalog]] = OrderedDict()
+        self._guard = threading.Lock()
+
+    def catalog(self, *, project: str, hub_path: str) -> SkillCatalog:
+        """The hub's catalog with usage joined, and the hub tool calls."""
+        sources, folded = self._folded(project, hub_path)
+        self._capture_items(project, hub_path, sources, *folded.catalog.items)
+        usage = self._project_usage(project)
+        items = tuple(
+            item.model_copy(update={"usage": _usage_of(item, usage)})
+            for item in folded.catalog.items
+        )
+        hub_tools = {} if usage is None else dict(usage.hub_tools)
+        return folded.catalog.model_copy(update={"items": items, "hub_tools": hub_tools})
+
+    def item_names(self, *, project: str, hub_path: str) -> frozenset[tuple[ItemKind, str]]:
+        """The kind and name of each catalog item, from the (memoized) fold alone: no unit is
+        captured and no usage is asked (a Publish's name check, AGH-295)."""
+        _, folded = self._folded(project, hub_path)
+        return frozenset((item.kind, item.name) for item in folded.catalog.items)
+
+    def usage_rows(self, *, project: str, hub_path: str) -> tuple[tuple[UsageRow, ...], bool]:
+        """The usage report's rows of the skills and agents in the hub's ``.claude/skills`` and
+        ``.claude/agents`` (a real entry, or a plugin item a link there points at), 0 runs when
+        unused, from the (memoized) fold: no unit is captured. The flag is true when the catalog
+        or the usage was cut or a file was not read (AGH-482)."""
+        _, folded = self._folded(project, hub_path)
+        names: dict[tuple[ItemKind, str], None] = {}
+        for item in folded.catalog.items:
+            in_claude = item.source == CLAUDE_SOURCE or bool(item.linked_from)
+            if item.kind is not ItemKind.HOOK and in_claude:
+                names[(item.kind, item.name)] = None
+        usage = self._project_usage(project)
+        truncated = folded.catalog.truncated or folded.left_unread
+        return usage_rows(project, names, usage), truncated or (
+            usage is not None and usage.windows_truncated
+        )
+
+    def detail(
+        self, *, project: str, hub_path: str, kind: ItemKind, source: str, name: str
+    ) -> SkillDetail:
+        """One item by its id, with usage joined."""
+        sources, _, detail = self._detail(project, hub_path, kind=kind, source=source, name=name)
+        self._capture_items(project, hub_path, sources, detail)
+        usage = _usage_of(detail, self._project_usage(project))
+        return detail.model_copy(update={"usage": usage})
+
+    def file(  # noqa: PLR0913 - the item's id and the file's id, all keyword-only
+        self,
+        *,
+        project: str,
+        hub_path: str,
+        kind: ItemKind,
+        source: str,
+        name: str,
+        file_id: str,
+    ) -> BundledFileText:
+        """One bundled file's text by its issued id; ``binary`` (NUL or not UTF-8) gives no
+        text; over the per-file cap ``SkillFileTooLargeError``."""
+        missing = EntityNotFoundError(
+            entity=SKILL_FILE_ENTITY, entity_id=f"{item_id(kind, source, name)}/{file_id}"
+        )
+        if not _FILE_ID.fullmatch(file_id):
+            raise missing
+        _, folded, detail = self._detail(project, hub_path, kind=kind, source=source, name=name)
+        path = folded.files.get(detail.id, {}).get(file_id)
+        bundled = next((found for found in detail.files if found.id == file_id), None)
+        if path is None or bundled is None or bundled.link:
+            raise missing
+        if bundled.too_large:
+            raise SkillFileTooLargeError(limit=MAX_SKILL_FILE_BYTES, size=bundled.size)
+        read = self._reader.read_skill_file(hub_path, path, max_bytes=MAX_SKILL_FILE_BYTES)
+        if isinstance(read, UnreadHubFile):
+            if read.kind == "too_large":
+                size = max(bundled.size, MAX_SKILL_FILE_BYTES + 1)
+                raise SkillFileTooLargeError(limit=MAX_SKILL_FILE_BYTES, size=size)
+            raise missing
+        return _bundled_text(bundled, read)
+
+    def marked_unit(
+        self, project: str, hub_path: str, *, kind: ItemKind, source: str, name: str
+    ) -> MarkedUnit | None:
+        """The unit the item is versioned in, with its capture mark (the one ``detail`` uses) and
+        the number of catalog items it holds, or None (a link, local settings); an unknown item
+        is ``EntityNotFoundError``. Reads no unit."""
+        sources, folded, detail = self._detail(
+            project, hub_path, kind=kind, source=source, name=name
+        )
+        index = SourceIndex(sources)
+        unit = unit_of_item(detail, index, project=project)
+        if unit is None:
+            return None
+        shared_by = sum(
+            1 for item in folded.catalog.items if unit_of_item(item, index, project=project) == unit
+        )
+        return MarkedUnit(
+            hub_path=hub_path, unit=unit, mark=unit_fingerprint(index, unit), shared_by=shared_by
+        )
+
+    def _capture_items(
+        self, project: str, hub_path: str, sources: SkillSources, *items: CatalogItem
+    ) -> None:
+        if self._capture is None:
+            return
+        index = SourceIndex(sources)
+        units: dict[str, tuple[ItemUnit, UnitMark]] = {}
+        for item in items:
+            unit = unit_of_item(item, index, project=project)
+            if unit is not None and unit.unit_path not in units:
+                units[unit.unit_path] = (unit, unit_fingerprint(index, unit))
+        self._capture.capture(project, hub_path, units.values())
+
+    def hub_tool_calls(self, project: str) -> dict[str, HubToolCalls]:
+        """How often ``project``'s main sessions and subagents called each hub knowledge tool,
+        from the (memoized) fold; empty with no event source (``hub_tools_text`` reads zeros)."""
+        usage = self._project_usage(project)
+        return {} if usage is None else dict(usage.hub_tools)
+
+    def _project_usage(self, project: str) -> SkillUsage | None:
+        return None if self._usage is None else self._usage.skill_usage(project)
+
+    def _detail(
+        self, project: str, hub_path: str, *, kind: ItemKind, source: str, name: str
+    ) -> tuple[SkillSources, FoldedCatalog, SkillDetail]:
+        wanted = item_id(kind, source, name)
+        if not (_NAME.fullmatch(source) and _NAME.fullmatch(name)):
+            raise EntityNotFoundError(entity=SKILL_ENTITY, entity_id=wanted)
+        sources = self._reader.skill_sources(hub_path)
+        folded = self._memoized(project, hub_path, sources)
+        if folded is None:
+            if not may_hold(sources, kind=kind, source=source, name=name):
+                raise EntityNotFoundError(entity=SKILL_ENTITY, entity_id=wanted)
+            folded = self._fold(project, hub_path, sources)
+        detail = folded.details.get(wanted)
+        if detail is None:
+            raise EntityNotFoundError(entity=SKILL_ENTITY, entity_id=wanted)
+        return sources, folded, detail
+
+    def _folded(self, project: str, hub_path: str) -> tuple[SkillSources, FoldedCatalog]:
+        sources = self._reader.skill_sources(hub_path)
+        found = self._memoized(project, hub_path, sources)
+        return sources, self._fold(project, hub_path, sources) if found is None else found
+
+    def _memoized(self, project: str, hub_path: str, sources: SkillSources) -> FoldedCatalog | None:
+        key = (hub_path, project)
+        with self._guard:
+            found = self._memo.get(key)
+            if found is None or found[0] != _fingerprint(sources):
+                return None
+            self._memo.move_to_end(key)
+            return found[1]
+
+    def _fold(self, project: str, hub_path: str, sources: SkillSources) -> FoldedCatalog:
+        key = (hub_path, project)
+        folded = build_catalog(self._inputs(project, hub_path, sources))
+        with self._guard:
+            self._memo[key] = (_fingerprint(sources), folded)
+            self._memo.move_to_end(key)
+            while len(self._memo) > self._entries:
+                self._memo.popitem(last=False)
+        return folded
+
+    def _inputs(self, project: str, hub_path: str, sources: SkillSources) -> CatalogInputs:
+        entries = {entry.path: entry for entry in sources.files}
+        texts: dict[str, bytes | UnreadHubFile] = {}
+        over_budget: set[str] = set()
+        spent = 0
+        for path in catalog_reads(sources):
+            size, cap = entries[path].size, _cap(path)
+            if size > cap:
+                texts[path] = _over_cap(cap)
+            elif over_budget or spent + size > CATALOG_BUDGET_BYTES:
+                over_budget.add(path)
+            else:
+                read = self._reader.read_skill_file(hub_path, path, max_bytes=cap)
+                spent += len(read) if isinstance(read, bytes) else 0
+                texts[path] = read
+        return CatalogInputs(
+            project=project,
+            project_plugin=project,
+            sources=sources,
+            texts=_frozen(texts),
+            lock=self._reader.read_lock(hub_path),
+            over_budget=frozenset(over_budget),
+        )
+
+
+def _frozen(texts: dict[str, bytes | UnreadHubFile]) -> Mapping[str, bytes | UnreadHubFile]:
+    return dict(sorted(texts.items()))
+
+
+def _bundled_text(bundled: BundledFile, content: bytes) -> BundledFileText:
+    text = text_of(content)
+    return BundledFileText(
+        id=bundled.id,
+        path=bundled.path,
+        role=bundled.role,
+        size=len(content),
+        text=text,
+        binary=text is None,
+    )

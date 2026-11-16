@@ -1,0 +1,287 @@
+/* The ticket panel (ux-change-ticket-panel.md): head, facts, one callout, the steps across with
+   one step card, then ACs, dependencies and sessions as rows. Tokens only. */
+
+/* Head: the id line over the full title, inside the panel's h2. */
+.ah-ticket-panel-id {
+  display: block;
+  font: 500 12px/16px var(--font-mono);
+  color: var(--text-muted);
+}
+.ah-ticket-panel-id[data-alone] {
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+  color: var(--text);
+}
+.ah-ticket-panel-title {
+  display: block;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* The body: a container, so the steps fall back to a column in a narrow panel. */
+.ah-ticket-panel {
+  container: ticket-panel / inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.ah-ticket-panel-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.ah-ticket-panel-facts > * {
+  min-height: var(--control-sm);
+}
+.ah-ticket-panel-fact {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ah-ticket-callout-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-sm);
+}
+
+/* Sections: told apart by a hairline, never a colour. */
+.ah-ticket-panel-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ah-ticket-panel-section + .ah-ticket-panel-section {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-5);
+  margin-top: var(--space-1);
+}
+.ah-ticket-panel-section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-sm);
+}
+.ah-ticket-panel-section-head h3 {
+  margin: 0;
+  font-weight: 600;
+  color: var(--text);
+}
+.ah-ticket-panel-section-aside {
+  margin-left: auto;
+}
+.ah-ticket-panel-sub {
+  margin: 0;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+/* Rows (ACs, dependencies, sessions). */
+.ah-ticket-panel-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.ah-ticket-panel-rows > li {
+  min-height: var(--control-sm);
+  min-width: 0;
+}
+.ah-ticket-panel-clamp {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ah-ticket-panel-more summary {
+  cursor: pointer;
+  min-height: var(--control-sm);
+  line-height: var(--control-sm);
+  color: var(--text-muted);
+}
+.ah-ticket-panel-more[open] summary {
+  margin-bottom: var(--space-1);
+}
+
+.ah-ticket-ac-row {
+  display: grid;
+  grid-template-columns: 96px auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2);
+}
+.ah-ticket-ac-row[data-pass="unknown"] {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+.ah-ticket-ac-pass {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.ah-ticket-dep-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2);
+}
+.ah-ticket-dep-badge:empty {
+  display: none;
+}
+.ah-ticket-dep-link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.ah-ticket-dep-link .ah-mono {
+  flex: none;
+  font-size: 13px;
+}
+a.ah-ticket-dep-link .ah-ticket-panel-clamp {
+  color: var(--text);
+}
+a.ah-ticket-dep-link:hover .ah-ticket-panel-clamp {
+  text-decoration: underline;
+}
+
+.ah-ticket-session[data-variant="row"] {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-sm);
+  min-width: 0;
+  color: var(--text-muted);
+}
+.ah-ticket-session-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.ah-ticket-session-facts {
+  flex: none;
+  white-space: nowrap;
+}
+.ah-ticket-session[data-variant="row"]:hover .ah-ticket-session-title {
+  text-decoration: underline;
+}
+
+/* Readiness with its icon (the step card's last line). */
+.ah-readiness-line {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.ah-readiness-line > .ah-icon {
+  margin-top: 2px;
+  flex: none;
+}
+
+/* The step card under the stepper. */
+.ah-golden-detail.ah-golden-below {
+  font-size: inherit;
+  color: inherit;
+}
+.ah-golden-detail.ah-golden-below:empty {
+  display: none;
+}
+.ah-ticket-step-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.ah-ticket-step-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.ah-ticket-step-outcome {
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--text);
+}
+.ah-ticket-step-detail {
+  color: var(--text);
+}
+.ah-ticket-step-detail:empty {
+  display: none;
+}
+.ah-ticket-step-ready {
+  border-top: 1px dashed var(--border-strong);
+  padding-top: var(--space-2);
+}
+
+/* The steps across, the open step's detail below (the ticket panel). */
+.ah-golden[data-orientation="horizontal"][data-detail="below"] .ah-golden-select {
+  font-size: 12px;
+  line-height: 16px;
+  min-height: var(--control-sm);
+  display: inline-flex;
+  align-items: center;
+  margin-right: 4px;
+  white-space: nowrap;
+}
+.ah-golden[data-detail="below"] .ah-golden-select[aria-expanded="true"] {
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+/* A narrow panel: the steps fall back to one row each, the card still under the list. */
+@container ticket-panel (max-width: 399px) {
+  .ah-golden[data-orientation="horizontal"][data-detail="below"] {
+    flex-direction: column;
+  }
+  .ah-golden[data-orientation="horizontal"][data-detail="below"] .ah-golden-step {
+    flex: none;
+    flex-direction: row;
+    align-items: center;
+    padding: 2px 0 2px 26px;
+  }
+  .ah-golden[data-orientation="horizontal"][data-detail="below"] .ah-golden-step::before,
+  .ah-golden[data-orientation="horizontal"][data-detail="below"]
+    .ah-golden-step:last-child::before {
+    display: block;
+    top: 0;
+    bottom: 0;
+    left: 7px;
+    right: auto;
+    width: 2px;
+    height: auto;
+  }
+  .ah-golden[data-orientation="horizontal"][data-detail="below"] .ah-golden-dot {
+    top: 6px;
+  }
+}
+
+@media (forced-colors: active) {
+  .ah-ticket-step-card,
+  .ah-ticket-panel-section + .ah-ticket-panel-section {
+    border-color: CanvasText;
+  }
+  .ah-golden[data-detail="below"] .ah-golden-select[aria-expanded="true"] {
+    box-shadow: none;
+    text-decoration: underline 2px;
+    text-underline-offset: 4px;
+  }
+}

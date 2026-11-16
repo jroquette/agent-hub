@@ -1,0 +1,487 @@
+import json
+from typing import Any
+
+from agent_hub.api.composition import COMPOSED_PROBLEMS
+from agent_hub.api.dependencies import ApiPorts
+from agent_hub.api.rfc9457 import (
+    PROBLEM_MEDIA_TYPE,
+    PROBLEMS,
+    NotImplementedInBuildError,
+    busy_problem,
+    fts5_unavailable_problem,
+    hub_conflict_problem,
+    hub_invalid_problem,
+    hub_registry_problem,
+    invalid_cursor_problem,
+    not_found_problem,
+    problem,
+)
+from agent_hub.core.agent_sessions.errors import InvalidScreenshotError, ScreenshotTooLargeError
+from agent_hub.core.brain.brain_note import BrainNoteNotFoundError, BrainNoteTooLargeError
+from agent_hub.core.brain.brain_path import BrainPathError
+from agent_hub.core.item_versions.hub_item_writer import (
+    DRAFT_LIMIT,
+    DraftTooLargeError,
+    HubItemWriteError,
+    ItemWriteRefusedError,
+    draft_unreadable,
+    rollback_failed,
+)
+from agent_hub.core.item_versions.item_version_ports import ItemWriteResult
+from agent_hub.core.item_versions.publish_draft import DraftNotRemovedError
+from agent_hub.core.item_versions.publish_rules import DraftInvalidError
+from agent_hub.core.item_versions.record_and_write import (
+    ItemWrittenRaceLostError,
+    ItemWrittenUnrecordedError,
+    OldNotRemovedError,
+)
+from agent_hub.core.item_versions.unit_content import CorruptVersionError
+from agent_hub.core.item_versions.version_store import ItemVersionSequenceError
+from agent_hub.core.knowledge.sync_knowledge import KnowledgeCheckoutError
+from agent_hub.core.learnings.brain_change_requests import (
+    ChangeRequestConflictError,
+    ChangeRequestError,
+    ChangeRequestFailedError,
+    ChangeRequestTimeoutError,
+    RefspecRefusedError,
+)
+from agent_hub.core.learnings.learning_ports import HubReadOnlyError, LearningConflictError
+from agent_hub.core.readmodels.read_ports import EntityNotFoundError
+from agent_hub.core.skills.skill_view import SkillFileTooLargeError
+from agent_hub.storage.errors import Fts5UnavailableError
+from agent_hub.storage.knowledge_index import FTS5_MISSING
+
+
+def test_writes_problem_document_when_problem_built() -> None:
+    response = problem(404, title="Session not found", detail="No session 'abc'.", instance="/x")
+
+    assert response.status_code == 404
+    assert response.media_type == PROBLEM_MEDIA_TYPE == "application/problem+json"
+    assert json.loads(bytes(response.body)) == {
+        "type": "about:blank",
+        "title": "Session not found",
+        "status": 404,
+        "detail": "No session 'abc'.",
+        "instance": "/x",
+    }
+
+
+def test_leaves_out_optional_members_when_not_given() -> None:
+    response = problem(500, title="Internal error")
+
+    assert json.loads(bytes(response.body)) == {
+        "type": "about:blank",
+        "title": "Internal error",
+        "status": 500,
+    }
+
+
+def test_names_route_when_not_implemented_raised() -> None:
+    error = NotImplementedInBuildError("GET /api/v1/sessions")
+
+    assert str(error) == "GET /api/v1/sessions is not implemented in this build"
+
+
+def test_names_entity_and_id_when_not_found_mapped() -> None:
+    found = not_found_problem(EntityNotFoundError(entity="session", entity_id="abc"))
+
+    assert (found.status, found.title, found.detail) == (
+        404,
+        "Session not found",
+        "No session with id 'abc'.",
+    )
+
+
+def test_says_busy_without_cause_when_busy_mapped() -> None:
+    found = busy_problem(RuntimeError("database is locked at /home/demo/a.db"))
+
+    assert (found.status, found.title) == (503, "Collector database busy")
+    assert found.detail is not None
+    assert "/home/demo" not in found.detail
+
+
+def test_adds_extension_members_when_given() -> None:
+    response = problem(400, title="Invalid", members={"errors": [{"parameter": "limit"}]})
+
+    assert json.loads(bytes(response.body))["errors"] == [{"parameter": "limit"}]
+
+
+def test_maps_every_table_entry_to_its_own_status_when_table_read() -> None:
+    assert {error_type.__name__ for error_type in PROBLEMS} >= {
+        "EntityNotFoundError",
+        "EventConflictError",
+        "DatabaseAccessError",
+        "InvalidParameterError",
+        "BodyTooLargeError",
+        "NotImplementedInBuildError",
+    }
+
+
+class _Problem:
+    def __init__(self, pointer: str, message: str) -> None:
+        self.pointer = pointer
+        self.message = message
+
+
+class HubInvalidError(Exception):
+    """Stands in for core/hubs' error (stream F) until the composition registers the real one."""
+
+    def __init__(self, title: str, problems: tuple[object, ...]) -> None:
+        self.title = title
+        self.problems = problems
+        super().__init__(f"{title} in /home/demo/demo-hub")
+
+
+def test_lists_pointers_when_hub_invalid_mapped() -> None:
+    error = HubInvalidError(
+        "Invalid hub.json",
+        (_Problem("/repos/0/check_fast", "required"), ("/project/name", "too short")),
+    )
+
+    found = hub_invalid_problem(error)
+
+    assert (found.status, found.title) == (422, "Invalid hub.json")
+    assert found.members == {
+        "errors": [
+            {"pointer": "/repos/0/check_fast", "message": "required"},
+            {"pointer": "/project/name", "message": "too short"},
+        ]
+    }
+
+
+def test_answers_conflict_when_hub_conflict_mapped() -> None:
+    found = hub_conflict_problem(RuntimeError("project demo is registered from /home/demo/hub"))
+
+    assert (found.status, found.title) == (409, "Hub already registered")
+
+
+def test_hides_cause_when_hub_registry_unreadable() -> None:
+    found = hub_registry_problem(RuntimeError("/home/demo/.config/agent-hub/hubs.json: EACCES"))
+
+    assert (found.status, found.title) == (503, "Hub registry unreadable")
+    assert found.detail is not None
+    assert "hubs.json" not in found.detail
+
+
+def test_answers_registered_problem_when_extra_error_raised(open_client: Any, fakes: Any) -> None:
+    hubs = fakes.HubReadModels(failure=HubInvalidError("No hub.json", ()))
+
+    with open_client(
+        ports=ApiPorts(hub_read_models=hubs), problems={HubInvalidError: hub_invalid_problem}
+    ) as client:
+        response = client.post(
+            "/api/v1/hubs",
+            json={"path": "/home/demo/nothing"},
+            headers={"Origin": "http://127.0.0.1:7420"},
+        )
+
+    assert response.status_code == 422
+    assert response.json()["title"] == "No hub.json"
+    assert response.json()["errors"] == []
+
+
+class InvalidCursorError(Exception):
+    """Stands in for core/readmodels/cursor's error until the composition registers it."""
+
+
+def test_names_cursor_parameter_when_invalid_cursor_raised(open_client: Any, fakes: Any) -> None:
+    events = fakes.EventReadModels(failure=InvalidCursorError("bad base64"))
+
+    with open_client(
+        ports=ApiPorts(event_read_models=events),
+        problems={InvalidCursorError: invalid_cursor_problem},
+    ) as client:
+        response = client.get("/api/v1/sessions", params={"cursor": "garbage"})
+
+    assert response.status_code == 400
+    assert response.json()["errors"] == [
+        {"parameter": "cursor", "message": "not a cursor this server issued"}
+    ]
+    assert "bad base64" not in response.text
+
+
+def _mapped(error: Exception) -> Any:
+    return PROBLEMS[type(error)](error)
+
+
+def test_answers_bad_request_with_reason_when_brain_path_refused() -> None:
+    found = _mapped(BrainPathError("Path has an empty, hidden or parent segment"))
+
+    assert (found.status, found.title) == (400, "Invalid brain path")
+    assert found.detail == "Path has an empty, hidden or parent segment"
+    assert found.members["errors"] == [
+        {"parameter": "path", "message": "Path has an empty, hidden or parent segment"}
+    ]
+
+
+def test_hides_path_when_brain_note_not_found() -> None:
+    found = _mapped(BrainNoteNotFoundError(project="demo", path="auto/secret-name.md"))
+
+    assert (found.status, found.title) == (404, "Brain note not found")
+    assert "secret-name" not in str(found.detail)
+
+
+def test_names_limit_when_brain_note_too_large() -> None:
+    error = BrainNoteTooLargeError(project="demo", path="a.md", size=300_000, limit=262_144)
+
+    found = _mapped(error)
+
+    assert (found.status, found.title) == (413, "Brain note too large")
+    assert found.detail == "Brain notes are served up to 262144 bytes; this one has 300000."
+
+
+def test_maps_too_large_when_skill_file_over_cap() -> None:
+    found = _mapped(SkillFileTooLargeError(limit=262_144, size=300_000))
+
+    assert (found.status, found.title) == (413, "Skill file too large")
+    assert found.detail == "Skill files are served up to 262144 bytes; this one has 300000."
+
+
+def test_names_reason_and_pull_request_when_learning_conflict_mapped() -> None:
+    error = LearningConflictError(
+        "Learning already accepted, PR open", pr_url="https://github.com/acme/demo-hub/pull/7"
+    )
+
+    found = _mapped(error)
+
+    assert (found.status, found.title) == (409, "Learning cannot be decided")
+    assert found.detail == "Learning already accepted, PR open"
+    assert found.members == {
+        "code": "learning_conflict",
+        "reason": "Learning already accepted, PR open",
+        "pr_url": "https://github.com/acme/demo-hub/pull/7",
+    }
+
+
+def test_leaves_out_pull_request_when_learning_conflict_has_none() -> None:
+    found = _mapped(LearningConflictError("Another learning action is running for this hub"))
+
+    assert "pr_url" not in found.members
+
+
+def test_says_hub_read_only_when_hub_read_only_mapped() -> None:
+    found = _mapped(HubReadOnlyError("Hub is read-only here"))
+
+    assert (found.status, found.title) == (409, "Learning actions unavailable")
+    assert found.members == {"code": "hub_read_only", "reason": "Hub is read-only here"}
+
+
+def test_names_reason_when_change_request_conflict_mapped() -> None:
+    found = _mapped(ChangeRequestConflictError("Destination exists: brain/learnings/x.md"))
+
+    assert (found.status, found.detail) == (409, "Destination exists: brain/learnings/x.md")
+    assert found.members == {
+        "code": "change_request_conflict",
+        "reason": "Destination exists: brain/learnings/x.md",
+    }
+
+
+def test_answers_conflict_when_change_request_push_refused() -> None:
+    found = _mapped(RefspecRefusedError("Push refused: a forced refspec"))
+
+    assert (found.status, found.members["code"]) == (409, "push_refused")
+
+
+def test_keeps_git_output_out_when_change_request_failed() -> None:
+    error = ChangeRequestFailedError(step="push")
+    error.add_note("remote: ghp_secrettoken rejected")
+
+    found = _mapped(error)
+
+    assert (found.status, found.title) == (502, "Could not open the pull request")
+    assert found.members == {"step": "push"}
+    assert "ghp_" not in json.dumps([found.detail, found.members])
+
+
+def test_answers_gateway_timeout_when_change_request_timed_out() -> None:
+    found = _mapped(ChangeRequestTimeoutError())
+
+    assert (found.status, found.title) == (504, "Could not open the pull request in time")
+
+
+def test_answers_bad_gateway_when_other_change_request_error_raised() -> None:
+    found = _mapped(ChangeRequestError("clone exited 128: fatal: secret-host"))
+
+    assert (found.status, found.title) == (502, "Could not open the pull request")
+    assert "secret-host" not in str(found.detail)
+
+
+def test_maps_screenshot_errors_when_raised() -> None:
+    too_large = _mapped(ScreenshotTooLargeError(size=4_000_000, limit=3_932_160))
+    invalid = _mapped(InvalidScreenshotError("not a PNG"))
+
+    assert (too_large.status, too_large.title) == (413, "Screenshot too large")
+    assert too_large.detail == (
+        "Screenshots are limited to 3932160 bytes (decoded); this one has 4000000."
+    )
+    assert dict(too_large.members) == {
+        "type": "urn:agent-hub:problem:agent-session-screenshot-too-large",
+        "limit": 3_932_160,
+        "size": 4_000_000,
+    }
+    assert (invalid.status, invalid.title) == (422, "Invalid screenshot")
+    assert invalid.detail == "The screenshot must be a base64-encoded PNG."
+    assert dict(invalid.members) == {
+        "type": "urn:agent-hub:problem:agent-session-invalid-screenshot",
+        "errors": [
+            {
+                "pointer": "/screenshot/data",
+                "message": "The screenshot must be a base64-encoded PNG.",
+            }
+        ],
+    }
+
+
+def test_points_at_the_refused_image_when_message_screenshot_invalid() -> None:
+    found = _mapped(InvalidScreenshotError("not a PNG", pointer="/screenshots/2/data"))
+
+    assert (found.status, found.title) == (422, "Invalid screenshot")
+    assert dict(found.members)["errors"] == [
+        {
+            "pointer": "/screenshots/2/data",
+            "message": "The screenshot must be a base64-encoded PNG.",
+        }
+    ]
+
+
+UNIT_PATH = "plugin/demo/agents/scout.md"
+
+
+def test_maps_item_write_refusal_when_raised() -> None:
+    found = _mapped(ItemWriteRefusedError("managed_confirmation_required"))
+    no_author = _mapped(ItemWriteRefusedError("no_author", "No commit author for this hub"))
+
+    assert (found.status, found.title) == (409, "Item write refused")
+    assert found.members == {
+        "code": "managed_confirmation_required",
+        "reason": "The item is managed: the next hub sync rewrites it",
+    }
+    assert found.detail == found.members["reason"]
+    assert no_author.members == {"code": "no_author", "reason": "No commit author for this hub"}
+
+
+def test_answers_conflict_when_draft_already_published() -> None:
+    found = _mapped(ItemWriteRefusedError("draft_already_published"))
+
+    assert (found.status, found.title) == (409, "Item write refused")
+    assert found.members == {
+        "code": "draft_already_published",
+        "reason": "This draft was already published; discard it",
+    }
+    assert found.detail == "This draft was already published; discard it"
+
+
+def test_answers_write_failed_without_path_when_item_write_fails() -> None:
+    failed = _mapped(HubItemWriteError(f"rename failed in /home/demo/{UNIT_PATH}"))
+    rolled = _mapped(rollback_failed())
+
+    assert (failed.status, failed.members) == (500, {"code": "write_failed", "kind": "failed"})
+    assert rolled.members == {"code": "write_failed", "kind": "rollback_failed"}
+    for found in (failed, rolled):
+        assert "/" not in str(found.detail)
+        assert "scout" not in str(found.detail)
+
+
+def test_answers_write_failed_when_old_item_not_removed() -> None:
+    result = ItemWriteResult(changed=True, versioned=True, reason=None, version=None)
+    found = _mapped(OldNotRemovedError(result))
+
+    assert (found.status, found.title) == (500, "Item write failed")
+    assert found.members == {
+        "code": "write_failed",
+        "kind": "old_not_removed",
+        "published": True,
+        "changed": True,
+        "versioned": True,
+        "reason": None,
+    }
+    assert found.detail == (
+        "Published; the old item could not be removed and stays. The draft is still there: "
+        "discard it."
+    )
+    assert "/" not in str(found.detail)
+
+
+def test_answers_draft_read_failed_when_draft_unreadable() -> None:
+    found = _mapped(draft_unreadable())
+
+    assert (found.status, found.title) == (500, "Draft read failed")
+    assert found.members == {"code": "write_failed", "kind": "draft_unreadable"}
+    assert found.detail == "The draft could not be read; nothing was written or recorded."
+
+
+def test_answers_unprocessable_when_draft_invalid() -> None:
+    found = _mapped(DraftInvalidError("The draft's kind differs from the item's"))
+
+    assert (found.status, found.title) == (422, "Draft invalid")
+    assert found.members == {
+        "code": "draft_invalid",
+        "reason": "The draft's kind differs from the item's",
+    }
+    assert found.detail == "The draft's kind differs from the item's"
+
+
+def test_answers_too_large_with_limit_when_draft_past_bounds() -> None:
+    found = _mapped(DraftTooLargeError())
+
+    assert (found.status, found.title) == (413, "Draft too large")
+    assert found.members == {"code": "draft_too_large", "limit": DRAFT_LIMIT}
+    assert found.detail == f"The draft is past the bounds: {DRAFT_LIMIT}."
+
+
+def test_answers_published_when_draft_not_removed() -> None:
+    result = ItemWriteResult(changed=True, versioned=False, reason="secret", version=None)
+    found = _mapped(DraftNotRemovedError(result))
+
+    assert (found.status, found.title) == (500, "Draft not removed")
+    assert found.members == {
+        "code": "draft_not_removed",
+        "published": True,
+        "changed": True,
+        "versioned": False,
+        "reason": "secret",
+    }
+    assert found.detail == "Published; the draft is still there. Discard it."
+    assert "/" not in str(found.detail)
+
+
+def test_answers_server_error_without_content_when_version_corrupt() -> None:
+    found = _mapped(CorruptVersionError(f"frame of {UNIT_PATH} past its length"))
+
+    assert (found.status, found.members) == (500, {"code": "corrupt_version"})
+    assert "scout" not in str(found.detail)
+
+
+def test_says_whether_written_when_version_race_lost() -> None:
+    lost = ItemVersionSequenceError("demo", UNIT_PATH, expected=3, got=2)
+    before = _mapped(lost)
+    after = _mapped(ItemWrittenRaceLostError(lost))
+    busy = _mapped(ItemWrittenUnrecordedError())
+
+    assert (before.status, before.members) == (503, {"code": "version_race", "written": False})
+    for written in (after, busy):
+        assert (written.status, written.members) == (
+            503,
+            {"code": "written_not_recorded", "written": True},
+        )
+    for found in (before, after, busy):
+        assert found.headers == {"Retry-After": "1"}
+        assert "scout" not in str(found.detail)
+
+
+def test_words_version_problems_neutrally_when_read_or_written() -> None:
+    corrupt = _mapped(CorruptVersionError("frame past its length"))
+    race = _mapped(ItemVersionSequenceError("demo", UNIT_PATH, expected=3, got=2))
+
+    for found in (corrupt, race):
+        assert "written" not in str(found.detail)
+
+
+def test_maps_knowledge_errors_when_raised() -> None:
+    checkout = _mapped(KnowledgeCheckoutError("brain: git exited with 128: fatal: x"))
+    fts5 = fts5_unavailable_problem(Fts5UnavailableError(FTS5_MISSING))
+
+    assert (checkout.status, checkout.title) == (502, "Could not read the hub's files")
+    assert checkout.detail == "brain: git exited with 128: fatal: x"
+    assert (fts5.status, fts5.title, fts5.detail) == (503, "Search unavailable", FTS5_MISSING)
+    assert COMPOSED_PROBLEMS[Fts5UnavailableError] is fts5_unavailable_problem

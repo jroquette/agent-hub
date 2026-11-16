@@ -1,0 +1,77 @@
+import { screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+
+import {
+  aSession,
+  aSessionLabel,
+  anActor,
+  anId,
+  at,
+  renderWithApi,
+  type Session,
+} from "../../testing/builders";
+import { Header } from "./Header";
+
+const NOW = Date.parse(at(900));
+
+function renderHeader(session: Session) {
+  return renderWithApi(<Header session={session} now={NOW} staleSince={null} />);
+}
+
+describe("Header", () => {
+  it("titles the session by its label and shows repo · branch, never the agent (label)", () => {
+    const { container } = renderHeader(
+      aSession({
+        agent: "main",
+        issue: null,
+        label: aSessionLabel({ issue: "ACME-1511", repo: "storefront", branch: "main" }),
+      }),
+    );
+
+    expect(
+      screen.getByRole("heading", { level: 1, name: "ACME-1511 · /feature" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("storefront · main")).toBeInTheDocument();
+    const texts = [...container.querySelectorAll("*")]
+      .flatMap((element) => [...element.childNodes])
+      .filter((node) => node.nodeType === Node.TEXT_NODE)
+      .map((node) => node.textContent ?? "");
+    expect(texts.filter((text) => /\bmain\b/.test(text))).toEqual(["storefront · main"]);
+  });
+
+  it("falls back to the short id when the label is missing (label)", () => {
+    renderHeader(aSession({ id: anId(1, "5091b986"), repo: null, label: null, issue: null }));
+
+    expect(screen.getByRole("heading", { level: 1, name: "5091b986" })).toBeInTheDocument();
+  });
+
+  it("names the subagents that acted when the session has some (label)", () => {
+    renderHeader(
+      aSession({
+        actors: [
+          anActor(),
+          anActor({ kind: "subagent", type: "Explore", agent_id: "a1" }),
+          anActor({ kind: "subagent", type: "Explore", agent_id: "a2" }),
+          anActor({ kind: "subagent", type: "reviewer", agent_id: "a3" }),
+        ],
+      }),
+    );
+
+    expect(screen.getByText("Main agent · 3 subagents: Explore ×2, reviewer")).toBeInTheDocument();
+  });
+
+  it("links to the chat when hub web drives the session (agent_session_link)", () => {
+    renderHeader(aSession({ agent_session_id: anId(1, "0192a5e5") }));
+
+    expect(screen.getByRole("link", { name: /Open chat/ })).toHaveAttribute(
+      "href",
+      `/agent-sessions/${anId(1, "0192a5e5")}`,
+    );
+  });
+
+  it("offers no chat link for a session hub web does not drive (agent_session_link)", () => {
+    renderHeader(aSession({ agent_session_id: null }));
+
+    expect(screen.queryByRole("link", { name: /Open chat/ })).toBeNull();
+  });
+});

@@ -1,0 +1,627 @@
+"""The ticket records an ``implement`` run writes (two-level-flows S2, P7): their bytes, pure.
+
+``hub step`` writes them into the hub's feature folder and never commits. Each text is checked
+the way its reader will read it, so a record this module returns is never a record problem:
+
+- ``tickets/<ticket>/brief.md``, the context brief: one ``## Brief v<n> (<time>)`` section per
+  run, appended, every earlier byte kept (NFR Idempotency). A section opens with its fields as a
+  JSON block (``plan_version``, ``blockers`` ``{id, outcome_path, recorded_at}``, ``adrs``), then
+  the ticket's ACs, its plan section (quoted), its blockers, main's commits since the plan on
+  the files the section names, and the ADRs it cites.
+- ``tickets/<ticket>/preflight.json``: one run appended to the ``PreflightRecord``; earlier runs
+  are copied as parsed JSON, never through the model, so each stays equal in canonical form.
+- ``change-requests/<n>.md`` and ``change-requests/<n>.decision.md``: what ``ticket_records``
+  reads; a decision needs a person (A5) and a decline a note (AC-2.12).
+- ``plan.md``: one ``A<k> (<date>, <who>): …`` entry appended at the end, under an
+  ``## Amendments`` heading (added when the last section is another), only while the plan is
+  still the version the approved request was opened against.
+- ``tickets/<ticket>/outcome.md``, a merged ticket's outcome (S3, AC-3.1): frontmatter
+  ``type: ticket-outcome``, ``ticket``, ``merged_at``, ``pr`` and ``dependents``, then what was
+  built, what changed against the plan and the final interfaces; created once.
+
+``preflight_run`` builds the run ``hub step preflight`` appends from the agent's findings.
+``pending_request`` and ``pending_decision`` read, for the next run of a ticket, the owner's
+decision on the request its last preflight opened while no run waited for it (AC-2.14); an
+approval whose plan moved on since is not followed (``PlanMovedError``).
+"""
+
+import json
+import re
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Final, cast
+
+from pydantic import ValidationError
+
+from agent_hub.core.brain.frontmatter import scalar, split_frontmatter
+from agent_hub.core.errors import AgentHubError
+from agent_hub.core.features.feature_evals import RecordFieldError, record_fields, text_field
+from agent_hub.core.features.feature_record import KEY_PATTERN, RecordAc
+from agent_hub.core.features.feature_status import RecordHead
+from agent_hub.core.features.output_models import (
+    OutputProblem,
+    PreflightRecord,
+    PreflightRecordV2,
+    PreflightRun,
+    PreflightRunV2,
+)
+from agent_hub.core.features.output_shape import parse_document, shape_problems
+from agent_hub.core.features.plan_version import last_section, opens_amendments, plan_version
+from agent_hub.core.features.ticket_records import (
+    CHANGE_REQUEST_HEAD_BYTES,
+    MAX_OUTCOME_BYTES,
+    MAX_PREFLIGHT_BYTES,
+    OUTCOME_TYPE,
+    change_requests,
+    outcome_record,
+    preflight_record,
+)
+from agent_hub.core.hub_config.problems import one_line
+
+BRIEF_TYPE: Final = "ticket-brief"
+PREFLIGHT_SCHEMA: Final = "agent-hub/preflight/1"
+PREFLIGHT_V2_SCHEMA: Final = "agent-hub/preflight/2"
+# A decision's note on its frontmatter line; the whole note is the file's body.
+NOTE_LINE_CHARS: Final = 1000
+MAX_NAMED_PATHS: Final = 50
+# What ``decide`` and ``amend-plan`` read of a request or a decision; a larger one is refused.
+MAX_REQUEST_BYTES: Final = 262_144
+
+_TICKET: Final = re.compile(KEY_PATTERN)
+_RUN_ID: Final = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
+_BRIEF_HEADING: Final = re.compile(r"^## Brief v[1-9][0-9]* \(", re.MULTILINE)
+_HEADING: Final = re.compile(r" {0,3}(#{1,6})[ \t]+(.*)")
+_CODE_SPAN: Final = re.compile(r"`([^`\s]+)`")
+_PATH: Final = re.compile(r"[A-Za-z0-9_.@-]+(?:/[A-Za-z0-9_.@-]+)+/?")
+_LINE_SUFFIX: Final = re.compile(r":[0-9]+(?:[-,][0-9]+)*$")
+_ADR: Final = re.compile(r"\bADR[ -]?([0-9]{4})\b|docs/adr/([0-9]{4})-")
+_REQUEST_NAME: Final = re.compile(r"([1-9][0-9]{0,5})(?:\.decision)?\.md")
+_AMENDMENT_ID: Final = re.compile(r"A([1-9][0-9]*)")
+# A key joining plan ids, ``S2-T3-T4``: the prefix, then each ``-T<n>``.
+_JOINED_KEY: Final = re.compile(r"([A-Za-z0-9]+)((?:-T[0-9]+){2,})")
+
+
+class TicketRecordError(AgentHubError):
+    """A record refused, nothing written; the message says why in one line."""
+
+
+def superseded(n: int, version: int | None) -> str:
+    """What the run says of approved request ``n`` the plan moved past (A23)."""
+    return f"change request {n} approved but superseded by plan v{version}: not applied"
+
+
+class PlanMovedError(TicketRecordError):
+    """An approved request's plan version is no longer the plan's: the ticket is checked again
+    against the current plan instead (its amendment would not read as the next version)."""
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Blocker:
+    """A blocker of the ticket and its outcome: the path under the feature folder and its
+    ``merged_at``, both None when no outcome is recorded."""
+
+    id: str
+    outcome_path: str | None
+    recorded_at: str | None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class RepoMain:
+    """One repo of a ticket that owns several: main's commit there, and the commits since the plan
+    on the files its plan section names (``commits``), or why none were read (``note``)."""
+
+    repo: str
+    commit: str
+    commits: tuple[str, ...]
+    note: str | None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class TicketBrief:
+    """What one context run read: ``commits`` as lines, or ``commits_note`` saying why none were
+    read; for a ticket that owns several repos, ``repos`` holds each repo's instead."""
+
+    ticket: str
+    at: datetime
+    plan_version: int
+    acs: tuple[RecordAc, ...]
+    plan_section: str
+    blockers: tuple[Blocker, ...]
+    adrs: tuple[str, ...]
+    commits: tuple[str, ...]
+    commits_note: str | None
+    repos: tuple[RepoMain, ...] = ()
+
+
+def appended_brief(existing: bytes | None, brief: TicketBrief) -> tuple[bytes, int]:
+    """``brief.md`` with ``brief`` appended as its next version, and that version."""
+    if existing is None:
+        front = f"---\ntype: {BRIEF_TYPE}\nticket: {brief.ticket}\n---\n"
+        start = f"{front}\n# Context brief: {brief.ticket}\n".encode()
+    else:
+        fields = split_frontmatter(existing.decode("utf-8", "replace")).fields
+        if fields.get("type") != BRIEF_TYPE or str(fields.get("ticket", "")).upper() != (
+            brief.ticket.upper()
+        ):
+            raise TicketRecordError(f"brief.md is not a ticket brief of {brief.ticket}")
+        start = existing if existing.endswith(b"\n") else existing + b"\n"
+    version = len(_BRIEF_HEADING.findall(start.decode("utf-8", "replace"))) + 1
+    return start + _brief_section(brief, version).encode(), version
+
+
+def _brief_section(brief: TicketBrief, version: int) -> str:
+    fields: dict[str, object] = {
+        "plan_version": brief.plan_version,
+        "blockers": [
+            {"id": b.id, "outcome_path": b.outcome_path, "recorded_at": b.recorded_at}
+            for b in brief.blockers
+        ],
+        "adrs": list(brief.adrs),
+    }
+    if brief.repos:
+        fields["repos"] = [{"repo": repo.repo, "commit": repo.commit} for repo in brief.repos]
+    acs = [f"- **{ac.id}** {one_line(ac.description)}" for ac in brief.acs]
+    quoted = [f"> {line}".rstrip() for line in brief.plan_section.splitlines()]
+    blockers = [
+        f"- {b.id}: `{b.outcome_path}`, recorded {b.recorded_at or 'at an unknown time'}"
+        if b.outcome_path
+        else f"- {b.id}: none recorded"
+        for b in brief.blockers
+    ]
+    commits = _commit_lines(brief.commits, brief.commits_note)
+    if brief.repos:
+        commits = "\n\n".join(
+            f"#### {repo.repo}\n\n" + _commit_lines(repo.commits, repo.note) for repo in brief.repos
+        )
+    parts = [
+        f"## Brief v{version} ({brief.at.isoformat()})",
+        f"```json\n{json.dumps(fields, ensure_ascii=False)}\n```",
+        "### Acceptance criteria\n\n" + ("\n".join(acs) or "None listed in features.json."),
+        "### Plan section\n\n"
+        + ("\n".join(quoted) or f"No heading of plan.md names {brief.ticket}."),
+        "### Blockers\n\n" + ("\n".join(blockers) or "None."),
+        "### Main commits since the plan\n\n" + commits,
+        "### ADRs cited\n\n" + ("\n".join(f"- {adr}" for adr in brief.adrs) or "None."),
+    ]
+    return "\n" + "\n\n".join(parts) + "\n"
+
+
+def _commit_lines(commits: tuple[str, ...], note: str | None) -> str:
+    lines = list(commits) or [f"None read: {note or 'none found'}."]
+    return "\n".join(f"- {line}" for line in lines)
+
+
+def plan_ids(key: str) -> tuple[str, ...]:
+    """``key`` and, for a key joining plan ids (``S2-T3-T4``), each of them (``S2-T3``,
+    ``S2-T4``)."""
+    joined = _JOINED_KEY.fullmatch(key)
+    if joined is None:
+        return (key,)
+    return (key, *(f"{joined[1]}-T{n}" for n in re.findall(r"-T([0-9]+)", joined[2])))
+
+
+def plan_section(plan: str, names: Iterable[str]) -> str:
+    """Every section of ``plan`` whose heading names one of ``names`` (a whole word, any case),
+    each up to the next heading of its level or higher, and every table row whose first cell
+    lists one of them (comma-separated); empty when none does."""
+    wanted = [re.compile(rf"(?<![\w-]){re.escape(name)}(?![\w-])", re.IGNORECASE) for name in names]
+    upper = {name.upper() for name in names}
+    taken: list[str] = []
+    level: int | None = None
+    for line in plan.splitlines():
+        heading = _HEADING.fullmatch(line)
+        if heading is not None:
+            depth = len(heading.group(1))
+            if level is not None and depth <= level:
+                level = None
+            if level is None and any(name.search(heading.group(2)) for name in wanted):
+                level = depth
+        if level is not None or _row_names(line) & upper:
+            taken.append(line)
+    return "\n".join(taken) + "\n" if taken else ""
+
+
+def _row_names(line: str) -> set[str]:
+    cells = line.strip().split("|")
+    if len(cells) < 3 or cells[0]:  # noqa: PLR2004 -- a row is "| first | … |"
+        return set()
+    return {name.strip().upper() for name in cells[1].split(",")}
+
+
+def ticket_acs(acs: Iterable[RecordAc], names: Iterable[str], section: str) -> tuple[RecordAc, ...]:
+    """The live ACs keyed to one of ``names`` or named in the ticket's plan ``section``."""
+    upper = {name.upper() for name in names}
+    return tuple(
+        ac
+        for ac in acs
+        if not ac.withdrawn
+        and (
+            (ac.ticket or "").upper() in upper
+            or re.search(rf"(?<![\w.-]){re.escape(ac.id)}(?![\w-]|\.[0-9])", section)
+        )
+    )
+
+
+def named_paths(text: str) -> tuple[str, ...]:
+    """The file paths ``text`` names in code spans (a ``:<line>`` suffix dropped), in order."""
+    found: dict[str, None] = {}
+    for span in _CODE_SPAN.findall(text):
+        path = _LINE_SUFFIX.sub("", span)
+        if _PATH.fullmatch(path) and ".." not in path.split("/"):
+            found[path] = None
+    return tuple(found)[:MAX_NAMED_PATHS]
+
+
+def cited_adrs(text: str) -> tuple[str, ...]:
+    """The ADRs ``text`` cites (``ADR 0040``, ``ADR-0040``, ``docs/adr/0040-…``), sorted."""
+    return tuple(sorted({f"ADR {a or b}" for a, b in _ADR.findall(text)}))
+
+
+# What a preflight is given: a gate's decision reads as the input it gives the re-check.
+PREFLIGHT_INPUTS: Final = {
+    "none": "none",
+    "discovery": "discovery",
+    "declined_change": "declined_change",
+    "approve": "none",
+    "decline": "declined_change",
+}
+MAX_INPUT_TEXT: Final = 1000
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class PreflightFacts:
+    """What the writer knows of a preflight run: when, the plan's version, main's commit (one per
+    repo for a ticket that owns several), the run's id, the input it was given and the change
+    request named (None when none was)."""
+
+    ran_at: datetime
+    plan_version: int
+    commit: str
+    run_id: str
+    input: str
+    input_text: str
+    request: int | None
+    # The declined request a declined change's first check re-checks (the pending one).
+    declined_request: int | None = None
+    # Main's commit in each repo of a ticket that owns several, in contract order (AGH-591);
+    # ``commit`` is then the first repo's. None for a ticket of one repo.
+    commits: tuple[tuple[str, str], ...] | None = None
+
+
+def preflight_run(findings: bytes, facts: PreflightFacts) -> bytes:
+    """The run ``hub step preflight`` appends: the agent's ``drift``, ``local_notes`` and
+    ``blockers_read``, and the writer's facts. The input text is one line of at most
+    ``MAX_INPUT_TEXT`` characters: a plain check (``none``) keeps its note (A23), an approval's
+    text is dropped. ``change_request`` is kept for ``plan`` drift only; a declined change
+    re-checked with none named takes ``declined_request``.
+    ``appended_preflight`` checks the result."""
+    found = parse_document(findings)
+    if not isinstance(found, dict):
+        raise TicketRecordError("the findings are not a JSON object")
+    kind = PREFLIGHT_INPUTS.get(facts.input)
+    if kind is None:
+        raise TicketRecordError(f"no preflight input {one_line(facts.input)[:64]}")
+    drift, request = found.get("drift"), facts.request
+    if request is None and kind == "declined_change":
+        request = facts.declined_request
+    kept = "".join(c for c in facts.input_text if c.isprintable() or c.isspace())
+    # A gate's approval text is no input; a plain check may carry a note (A23).
+    text = "" if facts.input == "approve" else " ".join(kept.split())[:MAX_INPUT_TEXT]
+    run = {
+        "ran_at": facts.ran_at.isoformat(),
+        "plan_version": facts.plan_version,
+        "commit": facts.commit,
+        "blockers_read": found.get("blockers_read"),
+        "input": kind,
+        "input_text": text or None,
+        "drift": drift,
+        "local_notes": found.get("local_notes"),
+        "change_request": request if drift == "plan" else None,
+        "run_id": facts.run_id,
+    }
+    if facts.commits is not None:
+        run["commits"] = [{"repo": repo, "commit": commit} for repo, commit in facts.commits]
+    return json.dumps(run, ensure_ascii=False).encode()
+
+
+def with_blocker_read(findings: bytes, blocker: str, *, names: Iterable[str]) -> bytes:
+    """The preflight's ``findings`` with ``blocker`` in ``blockers_read`` unless one of its
+    ``names`` (key or id, any case) is there already: an automatic preflight after a blocker's
+    merge records it read whatever the agent listed (AC-3.3). Findings of another shape are
+    left for ``preflight_run`` to refuse."""
+    found = parse_document(findings)
+    listed = found.get("blockers_read") if isinstance(found, dict) else None
+    if not isinstance(found, dict) or not isinstance(listed, list):
+        return findings
+    wanted = {name.upper() for name in names}
+    if any(isinstance(item, str) and item.upper() in wanted for item in listed):
+        return findings
+    return json.dumps(found | {"blockers_read": [*listed, blocker]}, ensure_ascii=False).encode()
+
+
+def appended_preflight(existing: bytes | None, run: bytes, *, folder: str) -> tuple[bytes, int]:
+    """``preflight.json`` of ``tickets/<folder>/`` with ``run`` appended, and its run count.
+
+    Refused when ``run`` is no ``PreflightRun``, when the record there is malformed or names
+    another ticket, and when the result would be over ``MAX_PREFLIGHT_BYTES``.
+    """
+    entry = parse_document(run)
+    if isinstance(entry, OutputProblem):
+        raise TicketRecordError(f"the run is unusable: {entry.message}")
+    _valid(PreflightRunV2 if "commits" in entry else PreflightRun, entry, "the run")
+    runs: list[object] = []
+    ticket: object = folder
+    v2 = entry.get("commits") is not None
+    if existing is not None:
+        record = preflight_record(existing, folder=folder)
+        if isinstance(record, str):
+            raise TicketRecordError(record)
+        # Parsed as JSON, not dumped from the model: each earlier run is copied as it was.
+        parsed = cast("dict[str, list[object]]", parse_document(existing))
+        runs, ticket = parsed["runs"], parsed["ticket"]
+        v2 = v2 or isinstance(record, PreflightRecordV2)
+    if v2:
+        # A ticket that owns several repos (AGH-591): every run names its commit per repo, an
+        # earlier run of one repo none, and every other fact of it stays as it was.
+        runs = [{"commits": None} | item if isinstance(item, dict) else item for item in runs]
+        entry = {"commits": None} | entry
+    schema = PREFLIGHT_V2_SCHEMA if v2 else PREFLIGHT_SCHEMA
+    document = {"schema": schema, "ticket": ticket, "runs": [*runs, entry]}
+    _valid(PreflightRecordV2 if v2 else PreflightRecord, document, "the record")
+    written = (json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode()
+    if len(written) > MAX_PREFLIGHT_BYTES:
+        why = f"preflight.json would be larger than {MAX_PREFLIGHT_BYTES} bytes, its read cap"
+        raise TicketRecordError(why)
+    return written, len(runs) + 1
+
+
+def _valid(
+    model: type[PreflightRun] | type[PreflightRecord] | type[PreflightRecordV2],
+    value: object,
+    what: str,
+) -> None:
+    try:
+        model.model_validate(value)
+    except ValidationError as error:
+        first = shape_problems(error)[0]
+        raise TicketRecordError(f"{what} is refused: {first.path}: {first.message}") from None
+
+
+def next_request(names: Iterable[str]) -> int:
+    """The number after the highest request or decision among the folder's ``names``."""
+    numbers = [int(found[1]) for name in names if (found := _REQUEST_NAME.fullmatch(name))]
+    return max(numbers, default=0) + 1
+
+
+def change_request_text(
+    *,
+    n: int,
+    ticket: str,
+    plan_from: int,
+    affected: Sequence[str],
+    opened_at: datetime,
+    run_id: str,
+    evidence: str,
+    proposal: str,
+) -> bytes:
+    """``change-requests/<n>.md``, opened against plan ``v<plan_from>`` for the next version."""
+    if _TICKET.fullmatch(ticket) is None:
+        raise TicketRecordError(f"the ticket is not a key or id: {one_line(ticket)[:64]}")
+    if bad := [name for name in affected if _TICKET.fullmatch(name) is None]:
+        raise TicketRecordError(f"affected has an invalid ticket: {one_line(bad[0])[:64]}")
+    if _RUN_ID.fullmatch(run_id) is None:
+        raise TicketRecordError(f"not a run id: {one_line(run_id)[:64]}")
+    for name, value in (("evidence", evidence), ("proposal", proposal)):
+        if not value.strip():
+            raise TicketRecordError(f"the {name} is empty")
+    text = (
+        f"---\ntype: change-request\nticket: {ticket}\nstatus: open\n"
+        f"plan_from: {plan_from}\nplan_to: {plan_from + 1}\naffected: [{', '.join(affected)}]\n"
+        f"opened_at: {opened_at.isoformat()}\nrun_id: {run_id}\n---\n\n"
+        f"# Change request {n}: plan v{plan_from} to v{plan_from + 1}, from {ticket}\n\n"
+        f"## Evidence\n\n{evidence.strip()}\n\n## Proposal\n\n{proposal.strip()}\n"
+    ).encode()
+    if len(text) > MAX_REQUEST_BYTES:
+        raise TicketRecordError(f"the request would be larger than {MAX_REQUEST_BYTES} bytes")
+    _read_back(n, text)
+    return text
+
+
+def decision_text(
+    *,
+    n: int,
+    request: bytes,
+    decision: str,
+    decided_by: str,
+    decided_at: datetime,
+    note: str | None,
+) -> bytes:
+    """``change-requests/<n>.decision.md`` for ``request`` (the bytes of ``<n>.md``)."""
+    if decision not in ("approved", "declined"):
+        raise TicketRecordError("the decision must be approved or declined")
+    note = (note or "").strip()
+    if decision == "declined" and not note:
+        raise TicketRecordError("a declined change needs a note")
+    who = " ".join(decided_by.split())
+    probe = b"## Amendments\n" + _entry("A1", date="2000-01-01", who=who, summary="x", n=n).encode()
+    if decision == "approved" and who and plan_version(probe).version != 2:  # noqa: PLR2004
+        raise TicketRecordError(f"decided_by could not be written in an amendment: {who[:64]}")
+    line = scalar(note[:NOTE_LINE_CHARS])
+    text = (
+        f"---\ntype: change-request-decision\ndecision: {decision}\n"
+        f"decided_by: {scalar(decided_by.strip())}\ndecided_at: {decided_at.isoformat()}\n"
+        f"note: {line}\n---\n\n# Change request {n}: {decision}\n" + (f"\n{note}\n" if note else "")
+    ).encode()
+    if len(text) > MAX_REQUEST_BYTES:
+        raise TicketRecordError(f"the decision would be larger than {MAX_REQUEST_BYTES} bytes")
+    _read_back(n, request, text)
+    return text
+
+
+def amended_plan(
+    plan: bytes, *, n: int, request: bytes, decision: bytes, summary: str
+) -> tuple[bytes, str]:
+    """``plan.md`` with the amendment of approved request ``n`` appended, and its id."""
+    status = _read_back(n, request, decision)
+    if status != "approved":
+        raise TicketRecordError(f"change request {n} is {status}, not approved")
+    link = re.escape(f"([change request {n}](change-requests/{n}.md))")
+    done = re.search(rf"^- (A[1-9][0-9]*) \(.*{link}$", plan.decode("utf-8", "replace"), re.M)
+    if done is not None:
+        return plan, done[1]
+    plan_from = int(_field(request, "plan_from"))
+    view = plan_version(plan)
+    if view.version != plan_from:
+        raise PlanMovedError(superseded(n, view.version))
+    if not summary.strip():
+        raise TicketRecordError("the amendment's summary is empty")
+    numbers = [int(found[1]) for a in view.amendments if (found := _AMENDMENT_ID.fullmatch(a.id))]
+    ident = f"A{max(numbers, default=0) + 1}"
+    who, date = _field(decision, "decided_by"), _field(decision, "decided_at")[:10]
+    entry = _entry(ident, date=date, who=who, summary=summary, n=n)
+    start = plan if plan.endswith(b"\n") or not plan else plan + b"\n"
+    section = last_section(plan)
+    if section is None or not opens_amendments(section):
+        start += b"\n## Amendments\n\n"
+    written = start + entry.encode()
+    if plan_version(written).version != plan_from + 1:
+        raise TicketRecordError(f"the entry would not read as {ident}: {one_line(entry.strip())}")
+    return written, ident
+
+
+def _entry(ident: str, *, date: str, who: str, summary: str, n: int) -> str:
+    title = one_line(" ".join(summary.split()))
+    return f"- {ident} ({date}, {who}): {title} ([change request {n}](change-requests/{n}.md))\n"
+
+
+def _read_back(n: int, request: bytes, decision: bytes | None = None) -> str | None:
+    """The status ``ticket_records`` reads for request ``n``; refused on any problem."""
+    files = [RecordHead(name=f"{n}.md", head=request[:CHANGE_REQUEST_HEAD_BYTES], problem=None)]
+    if decision is not None:
+        head = decision[:CHANGE_REQUEST_HEAD_BYTES]
+        files.append(RecordHead(name=f"{n}.decision.md", head=head, problem=None))
+    [read] = change_requests(files, skipped=0).requests
+    if read.problem is not None:
+        raise TicketRecordError(read.problem)
+    return read.status
+
+
+def _field(record: bytes, name: str) -> str:
+    try:
+        value = text_field(record_fields(record[:CHANGE_REQUEST_HEAD_BYTES]), name)
+    except RecordFieldError as error:
+        raise TicketRecordError(str(error)) from None
+    if value is None:
+        raise TicketRecordError(f"{name} is missing")
+    return value
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class PendingDecision:
+    """The owner's decision a new run of the ticket follows: the request, ``approved`` or
+    ``declined``, the note, and the proposal's first line (the amendment's summary); empty when
+    there is none."""
+
+    request: int | None = None
+    decision: str = ""
+    note: str = ""
+    summary: str = ""
+    # An approval the plan moved past: not amended, said to the run and its report (A23).
+    superseded: str = ""
+
+    @property
+    def input(self) -> str:
+        """What the run's first preflight is given: a declined change's note, else nothing."""
+        return "declined_change" if self.decision == "declined" else "none"
+
+
+NO_PENDING: Final = PendingDecision()
+MAX_SUMMARY_CHARS: Final = 300
+_PROPOSAL: Final = re.compile(r"^## Proposal\n\n(.+)$", re.MULTILINE)
+
+
+def pending_request(record: PreflightRecord | PreflightRecordV2 | None) -> int | None:
+    """The change request the ticket's last preflight run opened, waiting for a decision a run
+    then follows: None when the last run found no plan drift, or re-checked a declined change
+    (a still-plan re-check ends blocked; the next run opens a new request, A2)."""
+    last = record.runs[-1] if record is not None and record.runs else None
+    if last is None or last.drift != "plan" or last.input == "declined_change":
+        return None
+    return last.change_request
+
+
+def pending_decision(n: int, *, request: bytes, decision: bytes, plan: bytes) -> PendingDecision:
+    """Request ``n``'s decision as a run follows it; refused when either file is a problem. An
+    approval whose plan has moved on (``PlanMovedError``) is nothing to follow: the run checks the
+    ticket against the current plan, which opens a new request on plan drift."""
+    status = _read_back(n, request, decision)
+    if status not in ("approved", "declined"):
+        return NO_PENDING
+    if status == "approved":
+        try:
+            amended_plan(plan, n=n, request=request, decision=decision, summary="x")
+        except PlanMovedError as moved:
+            why = str(moved)
+            return PendingDecision(
+                request=n, note=why, summary=_summary(n, request), superseded=why
+            )
+    try:
+        note = text_field(record_fields(decision[:CHANGE_REQUEST_HEAD_BYTES]), "note") or ""
+    except RecordFieldError as error:
+        raise TicketRecordError(str(error)) from None
+    return PendingDecision(request=n, decision=status, note=note, summary=_summary(n, request))
+
+
+def _summary(n: int, request: bytes) -> str:
+    proposal = _PROPOSAL.search(request.decode("utf-8", "replace"))
+    return one_line(proposal[1])[:MAX_SUMMARY_CHARS] if proposal else f"change request {n}"
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class TicketOutcomeText:
+    """What ``hub step outcome`` records of a merged ticket (AC-3.1)."""
+
+    ticket: str
+    merged_at: datetime
+    # One pull request, or one per repo in merge order for a ticket that owns several.
+    prs: tuple[str, ...]
+    dependents: tuple[str, ...]
+    built: str
+    changes: str
+    interfaces: str
+
+
+def _prs_line(prs: tuple[str, ...]) -> str:
+    if len(prs) == 1:
+        return f"pr: {scalar(prs[0])}\n"
+    return f"prs: [{', '.join(prs)}]\n"
+
+
+def outcome_text(outcome: TicketOutcomeText) -> bytes:
+    """``tickets/<ticket>/outcome.md`` for ``outcome``; refused when a section is empty, when
+    the result would be over ``MAX_OUTCOME_BYTES`` and when its reader would refuse it."""
+    for what, value in (
+        ("what was built is empty", outcome.built),
+        ("what changed against the plan is empty", outcome.changes),
+        ("the final interfaces are empty", outcome.interfaces),
+    ):
+        if not value.strip():
+            raise TicketRecordError(what)
+    front = (
+        f"---\ntype: {OUTCOME_TYPE}\nticket: {outcome.ticket}\n"
+        f"merged_at: {outcome.merged_at.isoformat()}\n{_prs_line(outcome.prs)}"
+        f"dependents: [{', '.join(outcome.dependents)}]\n---\n"
+    )
+    text = (
+        f"{front}\n# Outcome: {outcome.ticket}\n\n"
+        f"## What was built\n\n{outcome.built.strip()}\n\n"
+        f"## What changed against the plan\n\n{outcome.changes.strip()}\n\n"
+        f"## Final interfaces\n\n{outcome.interfaces.strip()}\n"
+    ).encode()
+    if len(text) > MAX_OUTCOME_BYTES:
+        raise TicketRecordError(f"the outcome would be larger than {MAX_OUTCOME_BYTES} bytes")
+    read = outcome_record(text, folder=outcome.ticket)
+    if isinstance(read, str):
+        raise TicketRecordError(read)
+    return text

@@ -1,0 +1,561 @@
+"""Shared helpers for the hub-workflow hooks (Python 3.9+, stdlib only).
+
+The config is the hub that holds these files (spec Q-4): when the folder three levels above
+this file holds hub.json, that hub wins, whatever the event's cwd, $CLAUDE_PROJECT_DIR or the
+process cwd say; only $HUB_CONFIG (a hub.json path) comes first. $HUB_CONFIG can only tighten the
+guard: its lists (ask_before_edit, deny_hosts, deny_paths, secret_env_files) are added to the hook
+root's, never put in their place, since a settings `env` entry can set it; readable_env_files is the
+hook root's only. Hooks in a hub worktree read the
+worktree's hub.json, but the hub (and so the workspace of repos) is the main checkout. When the
+hooks run from Claude Code's plugin cache, no hub holds them, and the hub is found by walking up
+from the session cwd (then $CLAUDE_PROJECT_DIR, then the process cwd) to the first directory
+holding hub.json, or to a workspace directory whose child holds hub.json + brain/ and covers the
+start: the start is inside that hub, or inside a repo its hub.json lists (or one of that repo's
+worktrees). Another project's hub beside the start is never taken.
+$HUB_CONFIG cannot turn on or widen guard.infra: mode and allow are the hook root's; its
+prod_markers are added.
+hub.json is read only by stdlib_reader.py, which never raises and gives every key a default.
+One developer's identity (branch prefix, author) and tracker transport come from hub.local.json,
+else hub.json, else git config (docs/design/developer-identity.md), all in the identity home:
+the main checkout of the hub that holds these files, or the walked hub in plugin-cache mode.
+With $HUB_CONFIG and no such hub there is none, so neither hub.local.json nor git is read: a
+local file beside a $HUB_CONFIG file never counts. Git runs only when a value is asked for (the
+guard's deny hint), once per key, with a short timeout.
+The guard's blocked words, file globs and variable names (docs/design/environments.md) are the
+union of three layers, each entry once with the first layer listing it: the hook root's hub.json,
+the identity home's hub.local.json, then a hub.json named by $HUB_CONFIG; no layer removes an
+entry. An unusable list in any layer, or a hub.local.json that exists but cannot be used, sets
+blocked_problem, on which the guard asks. The environments are the config's, with a stricter
+access from hub.local.json, then hub.local.json's own. The env files and endpoints the guard's
+env_file and environment_endpoint rules check are every layer's (the hook root's hub.json, the
+config, hub.local.json): each layer only adds to them, so a layer can only tighten the guard.
+A hook never errors the session: run_hook turns any exception into exit 0 and one stderr line
+(the guard: one ask). The guard alone reads the unreadable flag (read_event).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import stat
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from collections.abc import Callable
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from stdlib_reader import (  # noqa: E402
+    LOCAL_FILE,
+    EffectiveValues,
+    EndpointEntry,
+    EnvFileEntry,
+    EnvironmentTargets,
+    GuardSection,
+    HubFile,
+    InfraSection,
+    LazyPattern,
+    LocalFile,
+    LocalLayer,
+    RepoEntry,
+    load_hub_file,
+    load_local_file,
+    load_local_layer,
+    load_local_targets,
+)
+
+HUB_FILE = "hub.json"
+# A git config read for the identity: well inside the guard's own 10 s timeout (hooks.json).
+IDENTITY_GIT_TIMEOUT = 2
+# Variables that point git at another repo than its cwd: the identity read drops them, as the CLI.
+GIT_LOCATION_VARIABLES = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR")
+# The layer a hub.json named by $HUB_CONFIG is, beside the hook root's (blocked words).
+HUB_CONFIG_LAYER = "$HUB_CONFIG"
+# Higher is stricter: hub.local.json may only raise an environment's access.
+ACCESS_STRICTNESS = {"write": 0, "ask": 1, "read": 2}
+# The session id shape `hub claim` accepts (core's SAFE_SEGMENT and the claim's MAX_TEXT), copied
+# so the hooks stay stdlib-only. A session id of this shape is also a safe file name.
+SESSION_ID_SHAPE = LazyPattern(r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*")
+SESSION_ID_MAX = 512
+# The per-session record (`<hub>/.agent-runs/sessions/<session id>.json`) and its size cap.
+SESSIONS_FOLDER = (".agent-runs", "sessions")
+SESSION_RECORD_MAX = 4096
+
+
+def read_event() -> tuple[dict, bool]:
+    """The event on stdin, and whether stdin was not empty but not a JSON object either.
+
+    A read error (OSError or ValueError), bad UTF-8, invalid or truncated JSON, a RecursionError,
+    a list or a string give ({}, True); empty or blank stdin gives ({}, False). With no stdin at
+    all (fd 0 closed when the hook started, so sys.stdin is None) it raises."""
+    try:
+        raw = sys.stdin.buffer.read()
+    except (OSError, ValueError):
+        return {}, True
+    if not raw.strip():
+        return {}, False
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (ValueError, RecursionError):
+        return {}, True
+    if not isinstance(data, dict):
+        return {}, True
+    return data, False
+
+
+def read_input() -> dict:
+    """The event on stdin; {} for anything that is not a JSON object (empty, bad UTF-8, a list)."""
+    return read_event()[0]
+
+
+def emit(obj: dict) -> None:
+    print(json.dumps(obj))
+
+
+def run_hook(main: Callable[[], None], on_error: Callable[[str], None] | None = None) -> None:
+    """Run a hook's main and exit 0. An exception becomes on_error(<type name>) when given (the
+    guard asks), else one stderr line `[hub <name>] skipped: <type>`; never a traceback."""
+    try:
+        main()
+    except Exception as error:  # a hook never errors the session (fail open)
+        if on_error is not None:
+            on_error(type(error).__name__)
+        else:
+            name = os.path.splitext(os.path.basename(sys.argv[0] or "hook"))[0]
+            print(f"[hub {name}] skipped: {type(error).__name__}", file=sys.stderr)
+    sys.exit(0)
+
+
+def _in_worktree(d: Path) -> bool:
+    return d.parent.name == "worktrees" and d.parent.parent.name == ".claude"
+
+
+def _main_checkout(d: Path) -> Path:
+    """The main hub checkout of a hub worktree (<hub>/.claude/worktrees/<t>); d itself otherwise."""
+    if _in_worktree(d) and (d.parents[2] / HUB_FILE).is_file():
+        return d.parents[2]
+    return d
+
+
+def hook_root() -> Path | None:
+    """The hub (or hub worktree) that holds these hook files, or None (plugin-cache mode)."""
+    parents = Path(__file__).resolve().parents
+    if len(parents) < 4:
+        return None
+    return parents[3] if (parents[3] / HUB_FILE).is_file() else None
+
+
+def _serves(hub: Path, start: Path) -> bool:
+    """Whether a hub found beside the start covers it: start is inside the hub, or inside a repo
+    its hub.json lists (main checkout or worktree), so another project's hub is never taken."""
+    dirs = [r.dir for r in load_hub_file(hub / HUB_FILE).repos]
+    # only a plain folder name is a sibling repo: ".", ".." or "a/b" would cover unrelated folders
+    homes = [hub.resolve()] + [(hub.parent / d).resolve() for d in dirs if "/" not in d and d not in (".", "..")]
+    return any(start == home or home in start.parents for home in homes)
+
+
+def _walk(start: object) -> Path | None:
+    for s in (start, os.environ.get("CLAUDE_PROJECT_DIR"), os.getcwd()):
+        if not s or not isinstance(s, (str, os.PathLike)):
+            continue
+        p = Path(s).resolve()
+        for d in (p, *p.parents):
+            if (d / HUB_FILE).is_file() and not _in_worktree(d):
+                return d / HUB_FILE
+            try:
+                kids = sorted(k for k in d.iterdir() if k.is_dir() and (k / HUB_FILE).is_file() and (k / "brain").is_dir())
+            except OSError:
+                kids = []
+            for kid in kids:
+                if _serves(kid, p):
+                    return kid / HUB_FILE
+    return None
+
+
+def _locate(start: object) -> tuple[Path, Path] | None:
+    """(the hub.json to read, the hub directory): $HUB_CONFIG, else the hook root's, else the walk.
+
+    Hooks in a hub worktree read its hub.json, but the hub is the main checkout, whose parent is
+    the workspace that holds the repos."""
+    env = os.environ.get("HUB_CONFIG")
+    if env and os.path.isfile(env):
+        found = Path(env).resolve()
+        return found, found.parent
+    root = hook_root()
+    if root:
+        return root / HUB_FILE, _main_checkout(root)
+    walked = _walk(start)
+    return (walked, walked.parent) if walked else None
+
+
+def find_hub_file(start: object = None) -> Path | None:
+    """The hub.json the hooks read (see _locate)."""
+    located = _locate(start)
+    return located[0] if located else None
+
+
+def find_hub(start: object = None) -> Path | None:
+    """The hub directory (the main checkout); see _locate.
+
+    A hub worktree (<hub>/.claude/worktrees/<t>) carries its own hub.json; the walk skips it so it
+    reaches the main hub checkout, whose parent is the workspace."""
+    located = _locate(start)
+    return located[1] if located else None
+
+
+def _union(first: tuple[str, ...], then: tuple[str, ...]) -> tuple[str, ...]:
+    """first, then the entries of then that first lacks; each once, in order."""
+    return tuple(dict.fromkeys((*first, *then)))
+
+
+def _infra_of(hub_file: HubFile, root_file: HubFile | None) -> InfraSection | None:
+    """guard.infra: the config's as is without a root file (also in plugin-cache mode); else the
+    root's mode and allow, with the config's prod_markers and problem added."""
+    if root_file is None:
+        return hub_file.guard.infra
+    root = root_file.guard.infra
+    if root is None:
+        return None
+    other = hub_file.guard.infra
+    return InfraSection(
+        allow=root.allow,
+        prod_markers=_union(root.prod_markers, other.prod_markers if other is not None else ()),
+        problem=root.problem or (other.problem if other is not None else ""),
+    )
+
+
+@dataclass(frozen=True)
+class Environment:
+    """An effective environment; source is the file its access comes from."""
+
+    name: str
+    access: str
+    production: bool
+    source: str
+
+
+def _layered(layers: list, key: str) -> tuple[tuple[str, str], ...]:
+    """(entry, first layer listing it) for each entry of the layers' key, by exact text."""
+    first: dict[str, str] = {}
+    for label, section in layers:
+        for entry in getattr(section, key):
+            first.setdefault(entry, label)
+    return tuple(first.items())
+
+
+def _environments(hub_file: HubFile, local: LocalLayer) -> tuple[Environment, ...]:
+    """The config's environments, a stricter local access applied, then the local file's own
+    (new names, ignoring case, with an access)."""
+    own = {entry.name: entry for entry in local.environments}
+    merged = []
+    for entry in hub_file.environments:
+        access, source = entry.access, HUB_FILE
+        tighter = own.get(entry.name)
+        if tighter and tighter.access and ACCESS_STRICTNESS[tighter.access] > ACCESS_STRICTNESS[access]:
+            access, source = tighter.access, LOCAL_FILE
+        merged.append(Environment(entry.name, access, entry.production, source))
+    taken = {entry.name.lower() for entry in hub_file.environments}
+    for entry in local.environments:
+        if entry.access and entry.name.lower() not in taken:
+            taken.add(entry.name.lower())
+            merged.append(Environment(entry.name, entry.access, entry.production, LOCAL_FILE))
+    return tuple(merged)
+
+
+def _branches(hub_file: HubFile) -> tuple[str, ...]:
+    """The project's default branch, then each repo's effective one."""
+    return (hub_file.project.default_branch, *(r.default_branch for r in hub_file.repos))
+
+
+class Config:
+    """hub.json as the reader loads it, with the hub's folders; every field has a default.
+
+    root is the hub (or hub worktree) holding the hook files, root_hub its main checkout, and
+    root_project its own project name. root_file is the root's hub.json when the config is another
+    file ($HUB_CONFIG): the guard's lists are then the union of both, so that file only tightens.
+    $HUB_CONFIG cannot turn on or widen guard.infra: mode and allow are the hook root's; its
+    prod_markers are added (infra is None when guard.infra is off). Likewise readable_env_files is
+    the root's only, and secret_env_files the union.
+    protected_branches (sorted, each once) is main, master and every default branch of the config,
+    plus the root file's when there is one. identity gives the developer's values from local_file
+    (hub.local.json), else the config, else git config run in identity_home (none without it);
+    branch_prefix, author_name and author_email read it lazily, so building a Config runs no git.
+    blocked_words, blocked_files and blocked_env are (entry, layer) pairs from the root's file
+    (or the config, labelled config_label, without one), local_layer (hub.local.json), then the
+    config when it is another file ($HUB_CONFIG). blocked_problem is local_layer's file_problem,
+    else the first layer's unusable location as "<layer> <location>", else "";
+    local_file_problem is local_layer's file_problem alone. environments merge
+    the config's with local_layer's; credential_env names every credentials.env variable of the
+    files, each once. env_files (each path once, with the first environment naming it) and
+    endpoints are the root file's, the config's, then local_targets' (hub.local.json).
+    """
+
+    def __init__(
+        self,
+        hub: Path | None = None,
+        hub_file: HubFile | None = None,
+        root: Path | None = None,
+        root_file: HubFile | None = None,
+        *,
+        identity_home: Path | None = None,
+        local_file: LocalFile | None = None,
+        local_layer: LocalLayer | None = None,
+        config_label: str = HUB_FILE,
+        local_targets: EnvironmentTargets | None = None,
+    ):
+        hub_file = hub_file if hub_file is not None else HubFile()
+        local_layer = local_layer if local_layer is not None else LocalLayer()
+        root_guard = root_file.guard if root_file is not None else GuardSection()
+        self.hub = hub
+        self.workspace = hub.parent if hub else None
+        self.root = root
+        self.root_hub = _main_checkout(root) if root else None
+        self.root_project = (root_file if root_file is not None else hub_file).project.name
+        self.hub_file = hub_file
+        self.project_name = hub_file.project.name
+        self.identity_home = identity_home
+        self.identity = EffectiveValues(
+            hub_file, local_file if local_file is not None else LocalFile(), self._git_value
+        )
+        self.transport = self.identity.transport
+        self.default_branch = hub_file.project.default_branch
+        self.tracker_teams = hub_file.tracker.team_keys
+        self.tracker_team = self.tracker_teams[0] if self.tracker_teams else ""
+        self.repos = hub_file.repos
+        self.ask_before_edit = _union(root_guard.ask_before_edit, hub_file.guard.ask_before_edit)
+        self.deny_hosts = _union(root_guard.deny_hosts, hub_file.guard.deny_hosts)
+        self.deny_paths = _union(root_guard.deny_paths, hub_file.guard.deny_paths)
+        self.secret_env_files = _union(root_guard.secret_env_files, hub_file.guard.secret_env_files)
+        # A release, so the hook root's only: another file can never widen the guard.
+        self.readable_env_files = (root_file if root_file is not None else hub_file).guard.readable_env_files
+        self.infra = _infra_of(hub_file, root_file)
+        root_branches = _branches(root_file) if root_file is not None else ()
+        self.protected_branches = tuple(sorted({"main", "master", *_branches(hub_file), *root_branches}))
+        if root_file is not None:
+            layers = [(HUB_FILE, root_file.guard), (LOCAL_FILE, local_layer), (HUB_CONFIG_LAYER, hub_file.guard)]
+        elif config_label == HUB_FILE:
+            layers = [(HUB_FILE, hub_file.guard), (LOCAL_FILE, local_layer)]
+        else:
+            layers = [(LOCAL_FILE, local_layer), (config_label, hub_file.guard)]
+        self.blocked_words = _layered(layers, "blocked_words")
+        self.blocked_files = _layered(layers, "blocked_words_files")
+        self.blocked_env = _layered(layers, "blocked_words_env")
+        problems = [f"{label} {section.problem}" for label, section in layers if section.problem]
+        self.blocked_problem = local_layer.file_problem or (problems[0] if problems else "")
+        self.local_file_problem = local_layer.file_problem
+        self.environments = _environments(hub_file, local_layer)
+        files = (*(root_file.environments if root_file is not None else ()), *hub_file.environments, *local_layer.environments)
+        self.credential_env = _union((), tuple(name for entry in files for name in entry.credential_env))
+        local_targets = local_targets if local_targets is not None else EnvironmentTargets()
+        targets = (*((root_file,) if root_file is not None else ()), hub_file, local_targets)
+        first: dict[str, EnvFileEntry] = {}
+        for entry in (entry for layer in targets for entry in layer.env_files):
+            first.setdefault(entry.path, entry)
+        self.env_files: tuple[EnvFileEntry, ...] = tuple(first.values())
+        self.endpoints: tuple[EndpointEntry, ...] = tuple(dict.fromkeys(e for layer in targets for e in layer.endpoints))
+
+    @property
+    def branch_prefix(self) -> str:
+        return self.identity.branch_prefix()
+
+    @property
+    def author_name(self) -> str:
+        return self.identity.author_name()
+
+    @property
+    def author_email(self) -> str:
+        return self.identity.author_email()
+
+    def _git_value(self, key: str) -> str:
+        """git config --get <key> in the identity home, as raw text; "" when unset or unreadable.
+
+        Not git(): the reader drops git's one newline and checks the shape itself, so nothing is
+        stripped, and bytes that are not UTF-8 are no value rather than an error. GIT_DIR and the
+        like are dropped, so an exported one cannot answer with another repo's identity."""
+        if self.identity_home is None:
+            return ""
+        import subprocess  # here, not at the top: a hook that runs no git skips loading it
+
+        env = {name: value for name, value in os.environ.items() if name not in GIT_LOCATION_VARIABLES}
+        try:
+            completed = subprocess.run(
+                ["git", "config", "--get", key],
+                cwd=self.identity_home,
+                capture_output=True,
+                timeout=IDENTITY_GIT_TIMEOUT,
+                env=env,
+            )
+            if completed.returncode != 0:
+                return ""
+            return completed.stdout.decode("utf-8", "strict")
+        except (OSError, subprocess.TimeoutExpired, UnicodeDecodeError):
+            return ""
+
+    @property
+    def repo_dirs(self) -> tuple[str, ...]:
+        return tuple(r.dir for r in self.repos)
+
+    def repo(self, name: str) -> RepoEntry | None:
+        for r in self.repos:
+            if r.dir == name:
+                return r
+        return None
+
+
+def _identity_home(root: Path | None, hub: Path | None) -> Path | None:
+    """Where hub.local.json and git config are read: the hook root's main checkout, else (plugin
+    cache) the walked hub; None when $HUB_CONFIG named the file, so nothing beside it counts."""
+    if root:
+        return _main_checkout(root)
+    env = os.environ.get("HUB_CONFIG")
+    if env and os.path.isfile(env):
+        return None
+    return hub
+
+
+def load_config(start: object = None) -> Config:
+    located = _locate(start)
+    if not located:
+        return Config(root=hook_root())
+    found, hub = located
+    root = hook_root()
+    own = root / HUB_FILE if root else None
+    root_file = load_hub_file(own) if own and found.resolve() != own.resolve() else None
+    home = _identity_home(root, hub)
+    local_file = load_local_file(home / LOCAL_FILE) if home else LocalFile()
+    local_layer = load_local_layer(home / LOCAL_FILE) if home else LocalLayer()
+    local_targets = load_local_targets(home / LOCAL_FILE) if home else EnvironmentTargets()
+    env = os.environ.get("HUB_CONFIG")
+    named = bool(env) and os.path.isfile(env) and found == Path(env).resolve()
+    return Config(
+        hub,
+        load_hub_file(found),
+        root,
+        root_file,
+        identity_home=home,
+        local_file=local_file,
+        local_layer=local_layer,
+        # Without a hook root, the found file is the only hub.json: $HUB_CONFIG's when it named it.
+        config_label=HUB_CONFIG_LAYER if root is None and named else HUB_FILE,
+        local_targets=local_targets,
+    )
+
+
+def checkouts(cfg: Config, names: list[str] | None = None) -> list[tuple[str, Path]]:
+    """(name, dir) for each main checkout and its .claude/worktrees/* (default: every repo plus the hub)."""
+    if not cfg.workspace:
+        return []
+    if names is None:
+        names = list(cfg.repo_dirs) + ([cfg.hub.name] if cfg.hub else [])
+    res = []
+    for name in names:
+        main = cfg.workspace / name
+        if not main.is_dir():
+            continue
+        for t in [main] + sorted((main / ".claude" / "worktrees").glob("*")):
+            if t.is_dir() and (t / ".git").exists():
+                res.append((name, t))
+    return res
+
+
+def git(args: list[str], cwd: str | os.PathLike, timeout: int = 10) -> str:
+    """git's stdout without its trailing newlines ("" on an error or timeout). Leading blanks stay: a
+    porcelain status line is `XY path`, and an unstaged edit's X is a blank."""
+    import subprocess  # here, not at the top: a hook that runs no git skips loading it
+
+    try:
+        return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=timeout).stdout.rstrip("\n")
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def repo_of(path: str | os.PathLike, known: list[str]) -> tuple[str | None, Path | None]:
+    """(repo name, worktree root) for a path inside one of the known repos (main checkout or worktree)."""
+    top = git(["rev-parse", "--show-toplevel"], cwd=path if os.path.isdir(path) else os.path.dirname(path) or ".")
+    if not top:
+        return None, None
+    common = git(["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=top)
+    main = Path(common).parent.name if common else Path(top).name
+    return (main if main in known else None), Path(top)
+
+
+def _session_record_path(hub: Path, session_id: object) -> Path | None:
+    """The record's path, or None when the session id does not have SESSION_ID_SHAPE."""
+    if (
+        not isinstance(session_id, str)
+        or len(session_id) > SESSION_ID_MAX
+        or SESSION_ID_SHAPE.fullmatch(session_id) is None
+    ):
+        return None
+    return hub.joinpath(*SESSIONS_FOLDER, session_id + ".json")
+
+
+def _read_session_record(path: Path) -> dict | None:
+    """The record at `path` when it is a regular file (never through a link) of at most
+    SESSION_RECORD_MAX bytes holding a well-formed record; None else."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            return None
+        raw = os.read(descriptor, SESSION_RECORD_MAX + 1)
+    except OSError:
+        return None
+    finally:
+        os.close(descriptor)
+    if len(raw) > SESSION_RECORD_MAX:
+        return None
+    try:
+        record = json.loads(raw.decode("utf-8"))
+    except (ValueError, RecursionError):  # not UTF-8, not JSON, or nested too deep
+        return None
+    if not isinstance(record, dict):
+        return None
+    started, compactions, reminded = record.get("started"), record.get("compactions"), record.get("reminded")
+    if (
+        type(started) is not int
+        or type(compactions) is not int
+        or compactions < 0
+        or not isinstance(reminded, bool)
+    ):
+        return None
+    return {"started": started, "compactions": compactions, "reminded": reminded}
+
+
+def session_record(hub: Path, session_id: object) -> dict | None:
+    """The session's record `{"started", "compactions", "reminded"}`; a missing, unreadable or
+    malformed one is a fresh record (`started` now, 0, False). None when the session id does not
+    have the safe shape, so no record can be kept for it. Never raises."""
+    path = _session_record_path(hub, session_id)
+    if path is None:
+        return None
+    return _read_session_record(path) or {"started": int(time.time()), "compactions": 0, "reminded": False}
+
+
+def save_session_record(hub: Path, session_id: object, record: dict) -> None:
+    """Publish the record whole with os.replace (a link in its place is replaced, never followed).
+    Does nothing for an unsafe session id; raises OSError when it cannot be written."""
+    path = _session_record_path(hub, session_id)
+    if path is None:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    partial = path.with_name(f"{path.name}.partial-{os.getpid()}")
+    try:
+        os.unlink(partial)
+    except FileNotFoundError:
+        pass
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(partial, flags, 0o600)
+    try:
+        with open(descriptor, "w", encoding="utf-8") as file:
+            json.dump(record, file)
+        os.replace(partial, path)
+    except BaseException:
+        try:
+            os.unlink(partial)
+        except OSError:
+            pass
+        raise

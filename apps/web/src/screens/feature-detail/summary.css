@@ -1,0 +1,27 @@
+/* A record's human summary (RecordSummary): prose for reading, larger and airier than a note. */
+.ah-summary-meta {
+  margin: 0;
+}
+.ah-md.ah-md-readable {
+  font-size: 15px;
+  line-height: 1.7;
+  max-width: 720px;
+}
+.ah-md-readable h1 {
+  font-size: 24px;
+  line-height: 32px;
+  margin-bottom: var(--space-4);
+}
+.ah-md-readable h2 {
+  font-size: 18px;
+  line-height: 26px;
+  margin-top: var(--space-6);
+}
+.ah-md-readable p,
+.ah-md-readable ul,
+.ah-md-readable ol {
+  margin-bottom: var(--space-4);
+}
+.ah-md-readable li + li {
+  margin-top: var(--space-2);
+}

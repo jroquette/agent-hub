@@ -1,0 +1,431 @@
+"""``hub doctor``: check a hub against the rules of this release, read-only.
+
+The pipeline of the AGH-11 spec, in the current folder (its real path, taken once, no walk-up):
+an ``--only`` id that is no rule at all is a usage error (exit 2) before anything is read; no
+``hub.json`` entry in the folder (a dangling link counts as one) exits 2 saying it is not a hub.
+Then ``hub.json`` is read once into its config, or why it cannot be used, and the developer's
+``hub.local.json`` from the hub's main checkout (``local_home``): on a failed config only
+``config.schema`` and ``platform.version`` run, and no other hub file is read. Otherwise the
+selection (``doctor.rules``, ``modules`` and ``--only``; a refusal exits 2, a note goes to
+stderr), then ``hub.lock`` when a selected rule reads it, and the hub's files the selected
+rules need (the lock's managed paths among them), read without following links (git runs only
+when a rule reads the listing), the release's base hooks block when a rule reads it (built
+from the installed generator, never by a render), each repo checkout at ``../<dir>`` when a
+rule reads the repos (its real path, taken once; inside it nothing is followed), and the
+developer's branch prefix when a rule reads it and the local file is valid (``git config`` runs
+in the main checkout only when no file sets the prefix), and, from a Claude Code session only
+(``CLAUDECODE=1``), each repo checkout's ``git ls-remote origin`` when a rule reads the remotes
+(AGH-134: run inside the session's sandbox, it shows whether a sandboxed fetch can work), and
+the pinned release's tag (one ``git ls-remote``, ``DOCTOR_PROBE_TIMEOUT`` seconds) when
+``lock.drift`` runs and the lock records a commit for the pin (ADR 0054); a remote that cannot be
+read is one note on stderr, never a finding. The findings go to stdout as lines and totals, or
+as one JSON object with ``--json``; the exit is 1 when one is an error, else 0. ``check_hub`` is
+the same check on a given root, for ``hub setup``, which probes no release tag.
+
+``--staged`` is the commit's check, run by the hub's ``.githooks/pre-commit`` (ADR 0061): it
+reads git's index, never the working tree, and checks only what the commit stages: the hygiene of
+each staged file, ``features.tracker`` on each feature folder with a staged path, and the config
+rules when ``hub.json`` is staged (``core.doctor.staged_check``). It takes no ``--only`` or
+``--fix``, reads no lock, repo or remote, and probes nothing. CI runs the whole ``hub doctor``.
+
+``--fix`` first rewrites what can be fixed without a person, all at once: today every
+``brain.leak`` (the brain note gets a pointer to the repo line in place of the copied text,
+``brain_leak_fix``). It lists each file it wrote on stderr, then checks the hub again and
+reports what is left, so the exit says whether anything still needs a person.
+"""
+
+import contextlib
+import os
+import secrets
+import stat
+from collections.abc import Sequence
+from importlib.metadata import version
+from pathlib import Path
+from typing import Annotated, Final, NamedTuple
+
+import typer
+
+from agent_hub.cli.child_process import git_env, run_child
+from agent_hub.cli.command_exits import root_or_exit
+from agent_hub.cli.doctor_report import report_json, report_lines
+from agent_hub.cli.effective_config import git_identity_reader
+from agent_hub.cli.errors import ChildTimedOutError
+from agent_hub.cli.hub_config_reader import (
+    DISTRIBUTION,
+    FILE_LABEL,
+    read_hub_bytes,
+    read_local_json,
+)
+from agent_hub.cli.hub_root import local_home
+from agent_hub.cli.init_report import shown_path
+from agent_hub.cli.release_lookup import DOCTOR_PROBE_TIMEOUT, tag_commit
+from agent_hub.cli.run_children import SESSION_HIDDEN, without
+from agent_hub.cli.staged_index import IndexReadError, read_staged_index
+from agent_hub.core.doctor.brain_leak_fix import BrainEdit, brain_leak_edits
+from agent_hub.core.doctor.config_rules import config_state
+from agent_hub.core.doctor.finding import Finding
+from agent_hub.core.doctor.registry import REGISTRY
+from agent_hub.core.doctor.run_rules import (
+    UsageProblem,
+    count_findings,
+    run_rules,
+    select_rules,
+)
+from agent_hub.core.doctor.snapshot import (
+    ConfigFailure,
+    DoctorSnapshot,
+    HubFiles,
+    ReleaseFound,
+    ReleaseProbe,
+    ReleaseProbeFailed,
+    ReleaseTagMissing,
+    RemoteProbe,
+)
+from agent_hub.core.doctor.staged_check import check_staged
+from agent_hub.core.hub_config.doctor_rules import BRAIN_LEAK_RULE, RULE_IDS
+from agent_hub.core.hub_config.effective_identity import (
+    IdentityValues,
+    Sourced,
+    resolve_branch_prefix,
+)
+from agent_hub.core.hub_config.local_config import LOCAL_FILE, LocalConfig
+from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_config.problems import ROOT_PATH, ConfigProblem
+from agent_hub.core.hub_files.release_commit import LookupFailure
+from agent_hub.core.hub_files.tree_snapshot import FileEntry
+from agent_hub.generator.doctor_snapshot import (
+    BranchPrefixReader,
+    ReleaseProber,
+    RemoteProber,
+    build_doctor_snapshot,
+)
+from agent_hub.generator.staged_yaml import yaml_problem
+
+# A usage error, an unknown or unrunnable ``--only`` id, or a folder that is not a hub.
+NOT_A_HUB_EXIT: Final = 2
+NOT_A_HUB: Final = (
+    "not a hub: no hub.json in this folder (hub doctor runs in the hub folder, never a parent)"
+)
+# At least one finding is an error.
+FINDINGS_FAILED: Final = 1
+# A failed config reads no file: only the config rules run, and they read hub.json alone.
+_NO_FILES: Final = HubFiles(entries={}, listed=(), problem=None, paths_read=True)
+# Claude Code sets it in its Bash tool's environment; the probe is about that session's sandbox.
+CLAUDE_CODE_VARIABLE: Final = "CLAUDECODE"
+PROBE_TIMEOUT: Final = 20
+
+
+def doctor(
+    context: typer.Context,
+    *,
+    only: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--only", metavar="RULE", help="Run only this rule (and config.schema); repeatable."
+        ),
+    ] = None,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Print one JSON object instead of lines.")
+    ] = False,
+    fix: Annotated[
+        bool,
+        typer.Option(
+            "--fix", help="Fix every finding that needs no person (brain.leak), then check again."
+        ),
+    ] = False,
+    staged: Annotated[
+        bool,
+        typer.Option(
+            "--staged",
+            help="Check only what the commit stages, read from git's index (the pre-commit hook).",
+        ),
+    ] = False,
+) -> None:
+    """Check the hub's rules, links, dead references and instruction size."""
+    if staged:
+        if only or fix:
+            context.fail("--staged takes no --only or --fix")
+        _staged_or_exit(as_json=as_json)
+        return
+    wanted = tuple(only or ())
+    unknown = [rule_id for rule_id in wanted if rule_id not in RULE_IDS]
+    if unknown:
+        context.fail(f"unknown rule in --only: {shown_path(unknown[0])}")
+    root = root_or_exit(None)
+    _hub_or_exit(root)
+    # One probe per run: the check after --fix reuses its answer (a fix never touches the lock).
+    prober = _probed_once(_release_prober(root))
+    run = check_hub(root, only=wanted, release_prober=prober)
+    if fix and isinstance(run, DoctorRun) and _fix_all(root, run):
+        run = check_hub(root, only=wanted, release_prober=prober)
+    if isinstance(run, UsageProblem):
+        context.fail(run.message)
+    _report(run.findings, notes=run.notes, as_json=as_json)
+
+
+def _report(findings: Sequence[Finding], *, notes: Sequence[str], as_json: bool) -> None:
+    """The notes on stderr, the findings on stdout; exit 1 when one is an error."""
+    for note in notes:
+        typer.echo(note, err=True)
+    if as_json:
+        typer.echo(report_json(findings), nl=False)
+    else:
+        for line in report_lines(findings):
+            typer.echo(line)
+    if count_findings(findings).has_errors:
+        raise typer.Exit(FINDINGS_FAILED)
+
+
+class DoctorRun(NamedTuple):
+    """The findings of one check, and the selection's notes (for stderr)."""
+
+    findings: tuple[Finding, ...]
+    notes: tuple[str, ...]
+    snapshot: DoctorSnapshot | None = None
+
+
+def check_hub(
+    root: str, *, only: Sequence[str] = (), release_prober: ReleaseProber | None = None
+) -> DoctorRun | UsageProblem:
+    """The check of ``hub doctor`` on the hub at ``root``: same reads, same order, no output.
+
+    ``root`` must be the hub's real absolute path, taken once (as ``root_or_exit`` gives it):
+    the repo checkouts are found at ``root/../<dir>`` and the findings name paths relative to
+    it. ``only`` holds known rule ids; a selection the config refuses is the ``UsageProblem``.
+    ``release_prober`` lets ``lock.drift`` read the pinned release's tag over the network (ADR
+    0054): ``hub doctor`` passes one, ``hub setup`` does not.
+    """
+    running = version(DISTRIBUTION)
+    config = config_state(read_hub_bytes(Path(root, FILE_LABEL)), running_version=running)
+    # No token reaches git, which only looks for the main checkout.
+    home = local_home(Path(root), environ=without(os.environ, SESSION_HIDDEN))
+    local = read_local_json(home / LOCAL_FILE)
+    selection = select_rules(REGISTRY, config=config, only=only)
+    if isinstance(selection, UsageProblem):
+        return selection
+    snapshot = DoctorSnapshot(
+        config=config,
+        running_version=running,
+        hub=_NO_FILES,
+        lock=None,
+        base_hooks=None,
+        repos=(),
+        local=local,
+    )
+    if not isinstance(config, ConfigFailure):
+        snapshot = build_doctor_snapshot(
+            root,
+            config=config,
+            running=running,
+            selection=selection,
+            local=local,
+            branch_prefix=_prefix_reader(config, local=local, home=home),
+            remote_probes=_remote_prober(root, config),
+            release_probe=release_prober,
+        )
+    return DoctorRun(
+        findings=run_rules(selection, snapshot),
+        notes=(*selection.notes, *_release_notes(snapshot.release_probe)),
+        snapshot=snapshot,
+    )
+
+
+def _release_prober(root: str) -> ReleaseProber:
+    """The pinned release's tag, read in ``root`` within ``DOCTOR_PROBE_TIMEOUT`` seconds."""
+
+    def probe(repository: str, version: str) -> ReleaseProbe:
+        found = tag_commit(repository, version, cwd=root, timeout=DOCTOR_PROBE_TIMEOUT)
+        if isinstance(found, LookupFailure):
+            return ReleaseProbeFailed(reason=found.reason)
+        return ReleaseTagMissing() if found is None else ReleaseFound(commit=found)
+
+    return probe
+
+
+def _probed_once(probe: ReleaseProber) -> ReleaseProber:
+    """``probe``, asked at most once per repository and version; later calls get its answer."""
+    answers: dict[tuple[str, str], ReleaseProbe] = {}
+
+    def once(repository: str, version: str) -> ReleaseProbe:
+        key = (repository, version)
+        if key not in answers:
+            answers[key] = probe(repository, version)
+        return answers[key]
+
+    return once
+
+
+def _release_notes(probe: ReleaseProbe | None) -> tuple[str, ...]:
+    """An unreadable remote leaves the lock's commit unchecked, said once on stderr (ADR 0054)."""
+    if not isinstance(probe, ReleaseProbeFailed):
+        return ()
+    return (f"lock.drift: hub.lock's release commit not checked: {probe.reason}",)
+
+
+def _fix_all(root: str, run: DoctorRun) -> bool:
+    """Rewrite every brain note a ``brain.leak`` finding points at; True when one was written.
+
+    Only when the run found a leak (so the rule was selected and the repos were read). Each
+    file is written in place, never through a link; one that cannot be written is named on
+    stderr and left as it was. A summary line goes to stderr.
+    """
+    if run.snapshot is None or not any(f.rule == BRAIN_LEAK_RULE for f in run.findings):
+        typer.echo("fix: nothing to fix", err=True)
+        return False
+    written = [edit for edit in brain_leak_edits(run.snapshot) if _write(root, edit)]
+    for edit in written:
+        done = (
+            f"{edit.replaced} lines now point at the repo"
+            if edit.promoted_to is None
+            else f"promoted draft, now a stub pointing at {shown_path(edit.promoted_to)}"
+        )
+        typer.echo(f"fixed {shown_path(edit.path)}: {done}", err=True)
+    lines = sum(edit.replaced for edit in written)
+    typer.echo(
+        f"fix: {lines} brain lines in {len(written)} files; review with git diff brain/", err=True
+    )
+    return bool(written)
+
+
+def _write(root: str, edit: BrainEdit) -> bool:
+    """Replace the note whole: its new text goes to a file beside it, which then takes its place.
+
+    The note is opened for writing first, never truncated and without following a link, so a
+    link, a missing note or one this user may not write is refused as before, and the new file
+    gets its mode; a failure leaves the note as it was.
+    """
+    path = os.path.join(root, edit.path)
+    try:
+        note = os.open(path, os.O_WRONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            mode = stat.S_IMODE(os.fstat(note).st_mode)
+        finally:
+            os.close(note)
+        _replace_with(path, edit.text.encode(), mode=mode)
+    except OSError as error:
+        typer.echo(f"could not fix {shown_path(edit.path)}: {error.strerror or error}", err=True)
+        return False
+    return True
+
+
+def _replace_with(path: str, data: bytes, *, mode: int) -> None:
+    """Write ``data`` to a new file beside ``path`` (mode ``mode``), then move it over ``path``."""
+    temporary = os.path.join(
+        os.path.dirname(path), f".{os.path.basename(path)}.{secrets.token_hex(8)}.tmp"
+    )
+    descriptor = os.open(
+        temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600
+    )
+    try:
+        with os.fdopen(descriptor, "wb") as file:
+            os.fchmod(file.fileno(), mode)
+            file.write(data)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(temporary)
+        raise
+
+
+def _staged_or_exit(*, as_json: bool) -> None:
+    """``hub doctor --staged``: the commit's checks on git's index; exit 1 on an error."""
+    root = root_or_exit(None)
+    _hub_or_exit(root)
+    try:
+        index = read_staged_index(Path(root), environ=os.environ)
+    except IndexReadError as error:
+        typer.echo(f"hub doctor --staged: cannot read git's index: {error}", err=True)
+        raise typer.Exit(FINDINGS_FAILED) from None
+    running = version(DISTRIBUTION)
+    hub_json = index.entries.get(FILE_LABEL)
+    read = (
+        hub_json.content
+        if isinstance(hub_json, FileEntry) and hub_json.content is not None
+        else (ConfigProblem(ROOT_PATH, "hub.json is not a regular file in git's index"),)
+    )
+    run = check_staged(
+        index,
+        config=config_state(read, running_version=running),
+        running_version=running,
+        yaml_problem=yaml_problem,
+    )
+    _report(run.findings, notes=run.notes, as_json=as_json)
+
+
+def _hub_or_exit(root: str) -> None:
+    """Exit 2 unless the root holds a ``hub.json`` entry; any other look is left to the reader.
+
+    Only an absent entry means "not a hub" (spec Q-25): a dangling link, a folder or an entry
+    that cannot be looked at is a ``config.schema`` finding the reader names.
+    """
+    try:
+        os.lstat(os.path.join(root, FILE_LABEL))
+    except FileNotFoundError:
+        typer.echo(f"{shown_path(root)}: {NOT_A_HUB}", err=True)
+        raise typer.Exit(NOT_A_HUB_EXIT) from None
+    except OSError:
+        return
+
+
+def _prefix_reader(
+    config: HubConfig, *, local: LocalConfig | tuple[ConfigProblem, ...], home: Path
+) -> BranchPrefixReader | None:
+    """The developer's effective branch prefix, read only when the snapshot asks for it.
+
+    Git runs in ``home`` only when no file sets it. ``hub.json``'s own values, never the merged
+    ones, so each value keeps its file as source. None when the local file is invalid.
+    """
+    if not isinstance(local, LocalConfig):
+        return None
+    values = IdentityValues.of(local.project)
+
+    def read() -> Sourced | None:
+        read_git, _ = git_identity_reader(home)
+        return resolve_branch_prefix(
+            local=values, hub=IdentityValues.of(config.project), read_git=read_git
+        )
+
+    return read
+
+
+def _remote_prober(root: str, config: HubConfig) -> RemoteProber | None:
+    """Each repo checkout's ``git ls-remote origin``, only from a Claude Code session.
+
+    A ``../<dir>`` that is no git checkout is left out (``repos.agents`` names it). Git gets no
+    terminal prompt and ``PROBE_TIMEOUT`` seconds; a git that cannot run is a probe problem.
+    """
+    if os.environ.get(CLAUDE_CODE_VARIABLE) != "1":
+        return None
+
+    def probe() -> tuple[RemoteProbe, ...]:
+        env = git_env(os.environ, optional_locks=False) | {"GIT_TERMINAL_PROMPT": "0"}
+        found = []
+        for repo in config.repos:
+            checkout = os.path.join(root, os.pardir, repo.dir)
+            if not os.path.lexists(os.path.join(checkout, ".git")):
+                continue
+            found.append(RemoteProbe(dir=repo.dir, problem=_ls_remote(checkout, env=env)))
+        return tuple(found)
+
+    return probe
+
+
+def _ls_remote(checkout: str, *, env: dict[str, str]) -> str | None:
+    """Why ``git ls-remote origin HEAD`` failed in ``checkout``, or ``None`` when it answered."""
+    try:
+        result = run_child(
+            ["git", "ls-remote", "-q", "origin", "HEAD"],
+            cwd=checkout,
+            env=env,
+            timeout=PROBE_TIMEOUT,
+        )
+    except ChildTimedOutError:
+        return f"timed out after {PROBE_TIMEOUT} s"
+    except OSError as error:
+        return f"git could not run: {error.strerror or error}"
+    if result.returncode == 0:
+        return None
+    lines = [line.strip() for line in result.stderr.decode(errors="replace").splitlines()]
+    return next((line for line in lines if line), f"git exited {result.returncode}")

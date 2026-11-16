@@ -1,0 +1,743 @@
+/* Features list: In progress (rows that need you carry a warning), Evaluated, Shipped (spec 17, grouped). */
+.ft-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+}
+/* The page title with its action at the right (New feature; the Tickets list's Start ticket). */
+.ft-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.ft-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.ft-summary b {
+  font-weight: 600;
+  color: var(--text);
+}
+.ft-summary [data-group="needs"] b {
+  color: var(--waiting);
+}
+.ft-toolbar {
+  margin-bottom: var(--space-4);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.ft-search {
+  width: 360px;
+  max-width: 100%;
+}
+.ft-search .ah-input {
+  height: 30px;
+  padding-right: 28px;
+}
+.ft-search-kbd {
+  position: absolute;
+  right: 8px;
+  pointer-events: none;
+}
+.ft-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6, 24px);
+}
+.ft-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-2);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.ft-group-toggle {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 24px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.ft-group-toggle:hover {
+  color: var(--text);
+}
+.ft-group-toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.ft-group-title {
+  margin: 0;
+  font: inherit;
+}
+.ft-group-hint {
+  font-weight: 400;
+  color: var(--text-subtle);
+}
+.ft-empty {
+  padding: var(--space-3) var(--space-4);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-lg);
+  font-size: 13px;
+  color: var(--text-subtle);
+}
+.ft-cols {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-3);
+  min-height: 32px;
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-sunken);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-subtle);
+}
+.ft-card {
+  --ft-meta: 112px 132px 120px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: hidden;
+}
+.ft-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ft-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-3);
+  min-height: 56px;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.ft-row:last-child {
+  border-bottom: 0;
+}
+.ft-row:hover {
+  background: var(--surface-hover);
+}
+.ft-row:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+/* The edge repeats what the line already says in words (E11): a row that needs you is flagged inside its group. */
+.ft-row[data-tone="failed"],
+.ft-row[data-tone="blocked"] {
+  box-shadow: inset 3px 0 0 var(--failed);
+}
+.ft-row[data-tone="waiting"] {
+  box-shadow: inset 3px 0 0 var(--waiting);
+}
+.ft-row-lead {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  align-self: start;
+  margin-top: 2px;
+}
+.ft-row-live {
+  color: var(--live);
+}
+.ft-row-lead .ft-row-live {
+  margin-top: 5px;
+}
+.ft-summary [data-group="working"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ft-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ft-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.ft-row-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  text-decoration: none;
+}
+.ft-row-title:hover {
+  text-decoration: underline;
+}
+/* A nickname reads as a name, in the UI font; the fixed label (the slug) follows it. */
+.ft-row-title[data-named] {
+  font-family: var(--font-sans);
+  font-weight: 600;
+}
+.ft-row[data-muted] .ft-row-title {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.ft-row-tag {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-subtle);
+  white-space: nowrap;
+}
+.ft-row-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-muted);
+}
+.ft-row-meta,
+.ft-cols-meta {
+  display: grid;
+  grid-template-columns: var(--ft-meta);
+  align-items: center;
+  column-gap: var(--space-4);
+  font-size: 13px;
+}
+/* The card clips what overflows it, so the tips at its top (the column heads, the first rows)
+   open downwards, into the rows. */
+.ft-cols .ah-tip,
+.ft-rows > li:nth-child(-n + 2) .ah-tip {
+  bottom: auto;
+  top: calc(100% + 6px);
+}
+/* The Stage column: the step's name with a state dot, its position under it. */
+.ft-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: fit-content;
+}
+.ft-stage-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.ft-stage-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.ft-stage-of {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.ft-more-link {
+  all: unset;
+  margin-top: var(--space-2);
+  padding: 2px var(--space-4);
+  min-height: 24px;
+  font-size: 13px;
+  color: var(--accent);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.ft-more-link:hover {
+  text-decoration: underline;
+}
+.ft-more-link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+}
+@media (max-width: 1100px) {
+  .ft-card {
+    --ft-meta: 132px 120px;
+  }
+  .ft-col-issues {
+    display: none;
+  }
+}
+
+/* The Features list's own card: a checkbox column before the lead icon, both centred in the row,
+   and its meta columns (Project when several projects, Stage, Criteria met, Last activity). The
+   other lists that share the row classes (Tickets, Scenarios, Skills, Overview) keep the base. */
+.ft-card[data-select] {
+  --ft-meta: 112px 120px 96px;
+}
+.ft-card[data-select][data-project] {
+  --ft-meta: 112px 112px 120px 96px;
+}
+.ft-card[data-select] .ft-cols,
+.ft-card[data-select] .ft-row {
+  grid-template-columns: 16px 16px minmax(0, 1fr) auto;
+}
+.ft-card[data-select] .ft-row-lead {
+  align-self: center;
+  margin-top: 0;
+}
+.ft-card[data-select] .ft-row-lead .ft-row-live {
+  margin-top: 0;
+}
+@media (max-width: 1100px) {
+  .ft-card[data-select],
+  .ft-card[data-select][data-project] {
+    --ft-meta: 112px 120px 96px;
+  }
+  .ft-card[data-select][data-project] .ft-col-project,
+  .ft-card[data-select][data-project] .ft-cols-meta > :first-child {
+    display: none;
+  }
+}
+
+/* Selection: a checkbox per row, faint until hovered, focused or checked. */
+.ft-row-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.ft-row-check input {
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+.ft-row .ft-row-check input:not(:checked) {
+  opacity: 0.35;
+}
+.ft-row:hover .ft-row-check input,
+.ft-row:focus-visible .ft-row-check input {
+  opacity: 1;
+}
+.ft-row[data-selected] {
+  background: var(--surface-hover);
+}
+.ft-col-project {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+.ft-col-activity {
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+.ft-col-activity[data-quiet] {
+  color: var(--text-subtle);
+}
+/* The actions on the selected features, kept in view at the bottom of the page. */
+.ft-bulk {
+  position: sticky;
+  bottom: var(--space-3);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-overlay);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 18%);
+  font-size: 13px;
+}
+
+/* Said once for the page: the ticket status the rows cannot show. */
+.ft-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 6px);
+  background: var(--surface-sunken);
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* New feature: the brief box (text and attachments) and its action on the left, the options and
+ * what happens next on the right; one column below 1100 px. */
+.ft-new {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  max-width: 1200px;
+  padding: var(--space-4) var(--space-8) var(--space-12);
+  container: ft-new / inline-size;
+}
+/* Title and project select share the first row, centred on the title; the lead runs under both. */
+.ft-new-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "title project";
+  align-items: center;
+  gap: var(--space-1) var(--space-6);
+}
+.ft-new-head > div:first-child {
+  display: contents;
+}
+.ft-new-head .ah-h1 {
+  grid-area: title;
+  margin: 0;
+}
+.ft-new-lead {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--text-muted);
+}
+/* The project pill of New session, at the roomier size of a page control. */
+.as-pill.ft-new-project {
+  height: 32px;
+  padding: 0 var(--space-3);
+  font-size: 13px;
+}
+.ft-new-head > .ft-new-project,
+.ft-new-head > .ah-skel {
+  grid-area: project;
+  justify-self: end;
+}
+.ft-new-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-areas:
+    "main side"
+    "next side";
+  align-items: start;
+  gap: var(--space-6);
+}
+.ft-new-main {
+  grid-area: main;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.ft-new-label {
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+/* The brief box is the chat composer's box (its frame, focus and drop highlight): attachments,
+ * then the text, then one row at the bottom: Attach and the drop note on the left, the keys and
+ * Start on the right; errors last. The grid is the box's own, whatever the chat's bar does. */
+.as-composer.ft-new-brief {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    "files files files files files"
+    "text text text text text"
+    "plus set note stop send"
+    "err err err err err";
+  align-items: center;
+  column-gap: var(--space-1);
+  padding: var(--space-2);
+  cursor: text;
+  container: ft-new-brief / inline-size;
+}
+.ft-new-brief > .as-composer-bar {
+  display: contents;
+}
+.ft-new-brief > .as-composer-images {
+  grid-area: files;
+  margin: var(--space-1) var(--space-2) var(--space-2);
+}
+.as-composer.ft-new-brief .ft-new-idea {
+  grid-area: text;
+  width: 100%;
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  min-height: 200px;
+  font-size: 14px;
+}
+.ft-new-brief .ft-new-attach {
+  grid-area: plus;
+}
+.ft-new-drop-note {
+  grid-area: note;
+  padding-left: var(--space-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ft-new-brief .ft-new-kbd {
+  grid-area: stop;
+  justify-self: end;
+  margin-right: var(--space-2);
+}
+.ft-new-brief .ft-new-start {
+  grid-area: send;
+}
+.ft-new-brief > .ft-new-error {
+  grid-area: err;
+  margin: var(--space-1) var(--space-3) 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  color: var(--failed);
+}
+.ft-new-error p {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0;
+}
+.ft-new-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-subtle);
+}
+.ft-new-hint[data-error] {
+  color: var(--failed);
+}
+/* Why Start is unavailable, or what it will do: under the button it is about. */
+.ft-new-reason {
+  justify-content: flex-end;
+  text-align: right;
+}
+.ft-new-kbd {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--text-subtle);
+  font-size: 12px;
+}
+.ft-new-side {
+  grid-area: side;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  position: sticky;
+  top: var(--space-4);
+}
+.ft-new-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  container-type: inline-size;
+}
+.ft-new-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.ft-new-card-head h2 {
+  margin: 0;
+}
+.ft-new-card-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  align-items: start;
+  gap: var(--space-4) var(--space-6);
+}
+.ft-new-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.ft-new-card .ah-input {
+  width: 100%;
+}
+.ft-new-card .ah-input::placeholder {
+  font-family: var(--font-sans);
+}
+.ft-new-main > .ah-banner {
+  margin-bottom: var(--space-3);
+}
+.ft-new-next {
+  grid-area: next;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+.ft-new-next ol {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-4);
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.ft-new-next li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+.ft-new-step {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+@media (max-width: 1279px) {
+  .ft-new {
+    padding: var(--space-4) var(--space-6) var(--space-8);
+  }
+}
+/* On a narrow window, or with the Discuss panel docked, the options go under the brief. */
+@media (max-width: 1100px) {
+  .ft-new-form {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "main" "side" "next";
+  }
+  .ft-new-side {
+    position: static;
+  }
+}
+@container ft-new (max-width: 900px) {
+  .ft-new-form {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "main" "side" "next";
+  }
+  .ft-new-side {
+    position: static;
+  }
+}
+@container ft-new (max-width: 560px) {
+  .ft-new-head {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "title" "project";
+  }
+  .ft-new-head > .ft-new-project {
+    justify-self: start;
+  }
+}
+@container ft-new (max-width: 760px) {
+  .ft-new-next ol {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+/* The box's bar keeps Attach and Start; the notes go first when the box narrows. */
+@container ft-new-brief (max-width: 860px) {
+  .ft-new-drop-note {
+    display: none;
+  }
+}
+@container ft-new-brief (max-width: 800px) {
+  .ft-new-brief .ft-new-kbd {
+    display: none;
+  }
+}
+/* No room for the pickers and Start on one row: Start goes under them. */
+@container ft-new-brief (max-width: 640px) {
+  .ft-new-brief .as-composer-settings {
+    grid-column: 2 / -1;
+  }
+  .ft-new-brief .ft-new-start {
+    grid-area: auto;
+    grid-column: 1 / -1;
+    grid-row: 5;
+    justify-self: end;
+    margin-top: var(--space-1);
+  }
+}
+
+/* Tickets list: the sessions of one ticket, opened from its row's "N sessions" toggle. */
+.tk-row-meta {
+  grid-template-columns: auto 72px;
+}
+.tk-sessions-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.tk-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-left: 2px solid var(--border);
+  cursor: default;
+}
+.tk-session {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.tk-session-what {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The owner's status decision: the banner on a feature's page and the list in its dialog. */
+.fs-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 6px);
+  background: var(--surface-sunken);
+  font-size: 13px;
+}
+.fs-banner[data-status="shipped"] > .ah-icon {
+  color: var(--done);
+}
+.fs-banner[data-status="closed"] > .ah-icon,
+.fs-banner[data-status="paused"] > .ah-icon {
+  color: var(--text-muted);
+}
+.fs-dialog-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 240px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+.fs-dialog-list > li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}

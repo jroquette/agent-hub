@@ -1,0 +1,936 @@
+import { FeatureLabel, featureHref } from "./FeatureChip";
+import "./features.css";
+
+import { useEffect, useRef, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router";
+
+import type { components } from "../../api/schema";
+import {
+  AsOfStamp,
+  Button,
+  DerivedLabel,
+  GOLDEN_STEP_LABEL,
+  EmptyState,
+  FacetMenu,
+  FilterChip,
+  GOLDEN_STATE_TEXT,
+  Icon,
+  ProblemError,
+  SearchField,
+  Skeleton,
+  Tooltip,
+  goldenStepSummary,
+  shownGoldenSteps,
+} from "../../components";
+import { fmtClock } from "../../lib/format";
+import { usePreferences } from "../../lib/preferences";
+import { useScope } from "../../lib/scope";
+import { readStored, writeStored } from "../../lib/storage";
+import { useRowKeys } from "../../lib/useRowKeys";
+import { useCollectorState } from "../../shell/GlobalStream";
+import {
+  GROUPS,
+  QUIET_DAYS,
+  agoWords,
+  byGroupOrder,
+  daysAgo,
+  issueId,
+  lastActivityOf,
+  matchesQuery,
+  missesLinear,
+  reasonOf,
+  sessionWaitOf,
+  sessionsWorkingOn,
+  type GroupId,
+  type Reason,
+} from "./groups";
+import { FeatureNameField, RenameButton, useFeatureNames } from "./names";
+import { DECISIONS, OwnerStatusDialog, type StatusDecision } from "./ownerStatus";
+import { AcBar, PHASES } from "./parts";
+import { useFeatures, useLiveSessions } from "./queries";
+
+export { issueId } from "./groups";
+
+type Feature = components["schemas"]["FeatureView"];
+type GoldenStep = components["schemas"]["GoldenStep"];
+
+const FILTERS = ["project", "phase", "repo", "size", "verdict"] as const;
+type FilterKey = (typeof FILTERS)[number];
+const NO_VERDICT = "none";
+const SIZES = ["spike", "bounded", "architectural"] as const;
+
+/** Shipped shows this many rows until the owner asks for more. */
+export const SHIPPED_PREVIEW = 5;
+
+const TONE_COLOR: Record<NonNullable<Reason["tone"]>, string> = {
+  blocked: "var(--blocked)",
+  failed: "var(--failed)",
+  waiting: "var(--waiting)",
+  done: "var(--done)",
+};
+
+const listOf = (raw: string | null): string[] => (raw ? raw.split(",").filter(Boolean) : []);
+
+/** A step of an old link, before the eight feature steps: Implement and Review are Build, Evaluate is Acceptance. */
+const renamedPhase = (id: string) =>
+  id === "implement" || id === "review" ? "build" : id === "evaluate" ? "acceptance" : id;
+
+/** A `?phase=` as feature steps: an old link's ids renamed, ids that are not a step dropped. */
+const stepsOf = (raw: string | null): string[] =>
+  [...new Set(listOf(raw).map(renamedPhase))].filter((id) => PHASES.some((p) => p.id === id));
+
+function matches(f: Feature, key: FilterKey, values: string[]): boolean {
+  switch (key) {
+    case "project":
+      return values.includes(f.project);
+    case "phase":
+      return values.includes(f.phase);
+    case "verdict":
+      return values.some((v) => (v === NO_VERDICT ? f.verdict === null : f.verdict === v));
+    case "repo":
+      return f.repos.some((r) => values.includes(r));
+    case "size":
+      return f.size !== null && values.includes(f.size);
+  }
+}
+
+export { featureHref } from "./FeatureChip";
+
+const COLLAPSED_KEY = "ah.features.collapsed.v2";
+const FOLDED = JSON.stringify(GROUPS.filter((g) => g.folded).map((g) => g.id));
+
+function readCollapsed(): Set<GroupId> {
+  try {
+    const value: unknown = JSON.parse(readStored(COLLAPSED_KEY) ?? FOLDED);
+    const stored: unknown[] = Array.isArray(value) ? value : [];
+    return new Set(GROUPS.map((g) => g.id).filter((id) => stored.includes(id)));
+  } catch {
+    return new Set();
+  }
+}
+
+function useCollapsed(): [Set<GroupId>, (id: GroupId) => void] {
+  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const toggle = (id: GroupId) => {
+    const next = new Set(collapsed);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    writeStored(COLLAPSED_KEY, JSON.stringify([...next]));
+    setCollapsed(next);
+  };
+  return [collapsed, toggle];
+}
+
+function AcCell({ f }: { f: Feature }) {
+  if (f.problem || !f.acs) return <span className="ah-subtle">—</span>;
+  return <AcBar acs={f.acs} width={96} />;
+}
+
+/**
+ * Everything the row's cells show, for keyboard and screen-reader users: the bars are not tab
+ * stops, so the golden path reads its position and the current step's summary.
+ */
+function rowLabel(
+  f: Feature,
+  reason: Reason,
+  name: string | null,
+  steps: readonly GoldenStep[],
+): string {
+  const acs =
+    f.acs && !f.problem
+      ? `ACs ${String(f.acs.passing + f.acs.owner_steps)} of ${String(f.acs.total)}`
+      : null;
+  const issues = f.issues.length ? `issues ${f.issues.map(issueId).join(", ")}` : null;
+  const more =
+    reason.working > 0 && reason.line === reason.plainLine
+      ? `${String(reason.working)} more session${reason.working === 1 ? "" : "s"} working`
+      : null;
+  return [
+    name ? `${name} (${f.slug})` : f.slug,
+    reason.line,
+    reason.line === reason.plainLine ? null : reason.plainLine,
+    more,
+    goldenPathLabel(f.phase, steps),
+    acs,
+    `verdict ${f.verdict ?? "none"}`,
+    issues,
+  ]
+    .filter(Boolean)
+    .join(". ");
+}
+
+/** "golden path at Build, step 6 of 8, Build: in progress · 1 of 3 merged". */
+function goldenPathLabel(phase: Feature["phase"], steps: readonly GoldenStep[]): string {
+  const at = steps.findIndex((s) => s.name === phase);
+  const step = steps[at];
+  const where = `golden path at ${GOLDEN_STEP_LABEL[phase]}`;
+  return step
+    ? `${where}, step ${String(at + 1)} of ${String(steps.length)}, ${goldenStepSummary(step)}`
+    : where;
+}
+
+/** The colour of the dot before the stage's name; the state is also said in words. */
+const STAGE_DOT: Partial<Record<GoldenStep["state"], string>> = {
+  done: "var(--done)",
+  partial: "var(--done)",
+  current: "var(--live)",
+  waiting: "var(--waiting)",
+  blocked: "var(--blocked)",
+  stale: "var(--idle)",
+};
+
+/**
+ * The step the feature is at, in words ("Build", "step 6 of 8"), with its state when it is not
+ * simply in progress or unknown (the notice above the list says why ticket status is unknown).
+ * Every step is on the feature's page.
+ */
+function StageCell({ phase, steps }: { phase: Feature["phase"]; steps: readonly GoldenStep[] }) {
+  const at = steps.findIndex((s) => s.name === phase);
+  const step = steps[at];
+  const shipped = phase === "shipped" && step?.state === "done";
+  const state =
+    step && !shipped && step.state !== "current" && step.state !== "unknown"
+      ? GOLDEN_STATE_TEXT[step.state]
+      : null;
+  return (
+    <span className="ft-stage" aria-hidden="true">
+      <span className="ft-stage-name">
+        <span
+          className="ft-stage-dot"
+          style={{ background: (step && STAGE_DOT[step.state]) ?? "var(--text-subtle)" }}
+        />
+        {GOLDEN_STEP_LABEL[phase]}
+      </span>
+      {!shipped && state && <span className="ft-stage-of">{state.toLowerCase()}</span>}
+    </span>
+  );
+}
+
+function FeatureRow({
+  f,
+  name,
+  reason,
+  showProject,
+  onOpen,
+  selected,
+  onSelect,
+  activity,
+  now,
+}: {
+  f: Feature;
+  name: string | null;
+  reason: Reason;
+  showProject: boolean;
+  onOpen: (href: string) => void;
+  selected: boolean;
+  onSelect: () => void;
+  activity: string | null;
+  now: number;
+}) {
+  const [editing, setEditing] = useState(false);
+  const href = featureHref(f) + (reason.doc ? `?doc=${reason.doc}` : "");
+  const lineId = `ft-line-${f.project}-${f.slug}`;
+  const steps = shownGoldenSteps(f.golden_path.steps);
+  const [firstIssue] = f.issues;
+  const days = daysAgo(activity, now);
+  // The project has its own column; the chips name the other repos the feature touches.
+  const tags = f.repos.filter((r) => r !== f.project);
+  return (
+    // The row is one keyboard stop (Enter opens), as the Sessions inbox rows are.
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
+    <li
+      className="ft-row"
+      data-tone={reason.tone ?? undefined}
+      data-muted={reason.group === "done" || reason.group === "paused" || undefined}
+      data-selected={selected || undefined}
+      // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+      tabIndex={0}
+      data-nav-row=""
+      aria-label={rowLabel(f, reason, name, steps)}
+      onClick={() => {
+        onOpen(href);
+      }}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+        if (event.key === "Enter") onOpen(href);
+        if (event.key === "x") {
+          event.preventDefault();
+          onSelect();
+        }
+      }}
+    >
+      {/* The checkbox selects the row for an action on several (x does the same from the keyboard). */}
+      {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions */}
+      <label
+        className="ft-row-check"
+        onClick={(event) => {
+          event.stopPropagation();
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={selected}
+          aria-label={`Select ${name ?? f.slug}`}
+          tabIndex={-1}
+          onChange={onSelect}
+        />
+      </label>
+      <span
+        className="ft-row-lead"
+        aria-hidden="true"
+        style={reason.tone ? { color: TONE_COLOR[reason.tone] } : undefined}
+      >
+        {reason.icon ? (
+          <Icon name={reason.icon} size="sm" />
+        ) : (
+          reason.working > 0 && <span className="ah-dot ah-pulse ft-row-live" />
+        )}
+      </span>
+      <div className="ft-row-main">
+        <div className="ft-row-head">
+          {editing ? (
+            <FeatureNameField
+              feature={f}
+              name={name}
+              onDone={() => {
+                setEditing(false);
+              }}
+            />
+          ) : (
+            <>
+              <Link
+                to={href}
+                className="ft-row-title"
+                data-named={name ? "" : undefined}
+                title={name ? `${name} · ${f.slug}` : f.slug}
+                aria-describedby={lineId}
+                tabIndex={-1}
+                onClick={(event) => {
+                  event.stopPropagation();
+                }}
+              >
+                {name ?? f.slug}
+              </Link>
+              <FeatureLabel slug={f.slug} />
+              <RenameButton
+                slug={f.slug}
+                named={name !== null}
+                onClick={() => {
+                  setEditing(true);
+                }}
+              />
+              {firstIssue && (
+                <span className="ah-mono ah-small ah-subtle" title={f.issues.join(", ")}>
+                  {issueId(firstIssue)}
+                  {f.issues.length > 1 ? ` +${String(f.issues.length - 1)}` : ""}
+                </span>
+              )}
+            </>
+          )}
+          {tags.map((tag) => (
+            <span key={tag} className="ft-row-tag">
+              {tag}
+            </span>
+          ))}
+        </div>
+        <div
+          id={lineId}
+          className="ft-row-line"
+          title={
+            reason.line === reason.plainLine ? reason.line : `${reason.line} · ${reason.plainLine}`
+          }
+          style={
+            reason.needs !== null && reason.tone ? { color: TONE_COLOR[reason.tone] } : undefined
+          }
+        >
+          {reason.line}
+        </div>
+      </div>
+      <div className="ft-row-meta">
+        {showProject && (
+          <span className="ft-col-project" title={f.repos.join(", ")}>
+            {f.project}
+          </span>
+        )}
+        <StageCell phase={f.golden_path.phase} steps={steps} />
+        <AcCell f={f} />
+        <span
+          className="ft-col-activity"
+          data-quiet={days !== null && days >= QUIET_DAYS ? "" : undefined}
+          title={activity ?? "No dated record"}
+        >
+          {reason.working > 0 ? "now" : agoWords(days)}
+        </span>
+      </div>
+    </li>
+  );
+}
+
+/** The group's hint, then how many of its rows need you and why, so the warnings are read at a glance. */
+function hintOf(id: GroupId, rows: Feature[], reasonFor: (f: Feature) => Reason): string {
+  const hint = GROUPS.find((g) => g.id === id)?.hint ?? "";
+  const needs = rows.map((f) => reasonFor(f).needs);
+  const count = (kind: Reason["needs"]) => needs.filter((n) => n === kind).length;
+  // Each kind in words for one row and for several (U9).
+  const warnings = (
+    [
+      [count("session"), "session waits on you", "sessions wait on you"],
+      [count("your-turn"), "your turn in a session", "your turn in sessions"],
+      [count("change-request"), "plan change waits for you", "plan changes wait for you"],
+      [count("owner-steps"), "waits on your steps", "wait on your steps"],
+      [count("owner-manual"), "sign-off by hand", "sign-offs by hand"],
+      [count("no-ship"), "no ship", "no ship"],
+      [count("problem"), "record cannot be read", "records cannot be read"],
+    ] as const
+  )
+    .filter(([n]) => n > 0)
+    .map(([n, one, many]) => `${String(n)} ${n === 1 ? one : many}`);
+  return [hint, ...warnings].filter(Boolean).join(" · ");
+}
+
+/** The column titles at the top of each group's card; the first card also explains them. */
+function ColumnHeads({
+  withHints,
+  showProject,
+  allSelected,
+  onSelectAll,
+}: {
+  withHints: boolean;
+  showProject: boolean;
+  allSelected: boolean;
+  onSelectAll: () => void;
+}) {
+  const head = (label: string, hint: string, className?: string) => (
+    <span className={className}>
+      <span className="ah-row" style={{ gap: 4, flexWrap: "nowrap" }}>
+        {label}
+        {withHints && (
+          <Tooltip label={hint}>
+            <span
+              role="img"
+              // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+              tabIndex={0}
+              aria-label={`${label}: ${hint}`}
+              style={{ display: "inline-flex" }}
+            >
+              <Icon name="info" size="sm" />
+            </span>
+          </Tooltip>
+        )}
+      </span>
+    </span>
+  );
+  return (
+    <div className="ft-cols">
+      <label className="ft-row-check">
+        <input
+          type="checkbox"
+          checked={allSelected}
+          aria-label="Select every feature in this group"
+          onChange={onSelectAll}
+        />
+      </label>
+      <span aria-hidden="true" />
+      <span>Feature</span>
+      <div className="ft-cols-meta">
+        {showProject && <span>Project</span>}
+        {head(
+          "Stage",
+          `The step the feature is at, of eight: ${Object.values(GOLDEN_STEP_LABEL).join(" → ")}. Open the feature to see each one.`,
+        )}
+        {head(
+          "Criteria met",
+          "Acceptance criteria that pass, of all the feature's criteria. Amber stripes are checks you do by hand.",
+        )}
+        {head(
+          "Last activity",
+          "The newest of: a live session on its tickets, an eval, the spec's last check, your decision.",
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Group({
+  nameOf,
+  reasonFor,
+  id,
+  rows,
+  collapsed,
+  onToggle,
+  showProject,
+  onOpen,
+  filtered,
+  withHints,
+  selected,
+  onSelect,
+  activityOf,
+  now,
+}: {
+  selected: ReadonlySet<string>;
+  onSelect: (features: Feature[], on: boolean) => void;
+  activityOf: (f: Feature) => string | null;
+  now: number;
+  nameOf: (f: Feature) => string | null;
+  reasonFor: (f: Feature) => Reason;
+  withHints: boolean;
+  id: GroupId;
+  rows: Feature[] | null;
+  collapsed: boolean;
+  onToggle: () => void;
+  showProject: boolean;
+  onOpen: (href: string) => void;
+  filtered: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const meta = GROUPS.find((g) => g.id === id) ?? GROUPS[0];
+  if (!meta) return null;
+  const headId = `ft-group-${id}`;
+  const open = !collapsed;
+  const count = rows === null ? "…" : String(rows.length);
+  const preview = id === "done" && !expanded && !filtered;
+  const shown = rows && preview ? rows.slice(0, SHIPPED_PREVIEW) : rows;
+  const hidden = (rows?.length ?? 0) - (shown?.length ?? 0);
+  return (
+    <section className="ft-group" aria-labelledby={headId} data-group={id}>
+      <div className="ft-group-head">
+        <h2 className="ft-group-title">
+          <button
+            type="button"
+            id={headId}
+            className="ft-group-toggle"
+            aria-expanded={open}
+            onClick={onToggle}
+          >
+            <Icon name={open ? "chevron-down" : "chevron-right"} size="sm" />
+            {meta.title} · <span className="ft-group-count">{count}</span>
+          </button>
+        </h2>
+        {open && (rows?.length ? hintOf(id, rows, reasonFor) : meta.hint) && (
+          <span className="ft-group-hint">
+            {rows?.length ? hintOf(id, rows, reasonFor) : meta.hint}
+          </span>
+        )}
+      </div>
+      {open &&
+        (shown === null ? (
+          <ul className="ft-rows ft-card" aria-hidden="true">
+            {Array.from({ length: 3 }, (_, i) => (
+              <li key={i} className="ft-row" style={{ cursor: "default" }}>
+                <span className="ft-row-lead" />
+                <div className="ft-row-main">
+                  <Skeleton width="40%" />
+                  <Skeleton width="60%" />
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : shown.length === 0 ? (
+          <div className="ft-empty">{meta.empty}</div>
+        ) : (
+          <>
+            <div className="ft-card" data-select="" data-project={showProject || undefined}>
+              <ColumnHeads
+                withHints={withHints}
+                showProject={showProject}
+                allSelected={shown.every((f) => selected.has(featureKey(f)))}
+                onSelectAll={() => {
+                  onSelect(shown, !shown.every((f) => selected.has(featureKey(f))));
+                }}
+              />
+              <ul className="ft-rows" aria-labelledby={headId}>
+                {shown.map((f) => (
+                  <FeatureRow
+                    key={`${f.project}/${f.slug}`}
+                    f={f}
+                    name={nameOf(f)}
+                    reason={reasonFor(f)}
+                    showProject={showProject}
+                    onOpen={onOpen}
+                    selected={selected.has(featureKey(f))}
+                    onSelect={() => {
+                      onSelect([f], !selected.has(featureKey(f)));
+                    }}
+                    activity={activityOf(f)}
+                    now={now}
+                  />
+                ))}
+              </ul>
+            </div>
+            {hidden > 0 && (
+              <button
+                type="button"
+                className="ft-more-link"
+                onClick={() => {
+                  setExpanded(true);
+                }}
+              >
+                Show {hidden} more feature{hidden === 1 ? "" : "s"}
+              </button>
+            )}
+          </>
+        ))}
+    </section>
+  );
+}
+
+/** Features list (spec 17, D23): what is moving (rows that need you carry a warning) and what shipped. */
+export function FeaturesScreen() {
+  const [scope] = useScope();
+  const features = useFeatures(scope);
+  const tiles = useLiveSessions(scope).data?.items ?? [];
+  const nameOf = useFeatureNames();
+  const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const { state, asOf } = useCollectorState();
+  // "Working now" is only said while the collector is connected: a stale tile would claim work that stopped.
+  const working = (f: Feature) => (state === "connected" ? sessionsWorkingOn(f, tiles) : []);
+  const [now] = useState(() => Date.now());
+  const activityOf = (f: Feature) => lastActivityOf(f, tiles);
+  const reasonFor = (f: Feature) =>
+    reasonOf(f, sessionWaitOf(f, tiles), working(f), activityOf(f), now);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [decision, setDecision] = useState<StatusDecision | null>(null);
+  const select = (list: Feature[], on: boolean) => {
+    const next = new Set(selected);
+    for (const f of list) {
+      if (on) next.add(featureKey(f));
+      else next.delete(featureKey(f));
+    }
+    setSelected(next);
+  };
+  const { tz } = usePreferences();
+  const [collapsed, toggle] = useCollapsed();
+  const screenRef = useRef<HTMLDivElement>(null);
+  useRowKeys(screenRef);
+
+  // The filters read an old `?phase=` as steps from the first render; this only rewrites the URL.
+  const phase = params.get("phase");
+  useEffect(() => {
+    if (phase === null) return;
+    const steps = stepsOf(phase).join(",");
+    if (steps === phase) return;
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        if (steps) next.set("phase", steps);
+        else next.delete("phase");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [phase, setParams]);
+  const valuesOf = (key: FilterKey) =>
+    key === "phase" ? stepsOf(params.get(key)) : listOf(params.get(key));
+
+  const all = features.data?.items ?? [];
+  const q = params.get("q") ?? "";
+  const active = FILTERS.flatMap((key) => {
+    const values = valuesOf(key);
+    return values.length ? [{ key, values }] : [];
+  });
+  const filtered = q.trim() !== "" || active.length > 0;
+  const rows = all.filter(
+    (f) =>
+      matchesQuery(f, q, nameOf(f)) && active.every(({ key, values }) => matches(f, key, values)),
+  );
+  const byGroup = new Map<GroupId, Feature[]>(GROUPS.map((g) => [g.id, []]));
+  for (const f of rows) byGroup.get(reasonFor(f).group)?.push(f);
+  for (const list of byGroup.values())
+    list.sort((a, b) => byGroupOrder(a, b, reasonFor, activityOf));
+  const chosen = all.filter((f) => selected.has(featureKey(f)));
+
+  const update = (changes: Partial<Record<FilterKey | "q", string | null>>) => {
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        for (const [key, value] of Object.entries(changes)) {
+          if (value === null || value === "") next.delete(key);
+          else next.set(key, value);
+        }
+        return next;
+      },
+      { replace: true },
+    );
+  };
+  const toggleValue = (key: FilterKey, id: string) => {
+    const values = valuesOf(key);
+    const next = values.includes(id) ? values.filter((v) => v !== id) : [...values, id];
+    update({ [key]: next.join(",") || null });
+  };
+  const clearAll = () => {
+    update({ q: null, project: null, phase: null, repo: null, size: null, verdict: null });
+  };
+  const countFor = (key: FilterKey, test: (f: Feature) => boolean) =>
+    all.filter(
+      (f) =>
+        test(f) &&
+        matchesQuery(f, q, nameOf(f)) &&
+        active.every((a) => a.key === key || matches(f, a.key, a.values)),
+    ).length;
+  const facet = (
+    key: FilterKey,
+    ids: readonly { id: string; label: string }[],
+    count: (id: string) => number,
+  ) => {
+    const chosen = valuesOf(key);
+    return ids.map((o) => ({ ...o, count: count(o.id), checked: chosen.includes(o.id) }));
+  };
+  const repos = [...new Set(all.flatMap((f) => f.repos))].sort();
+  const projects = new Set(all.map((f) => f.project));
+  const projectIds = [...projects].sort();
+  const verdicts = listOf(params.get("verdict"));
+  const onOpen = (href: string) => void navigate(href);
+  const workingNow = all.filter((f) => reasonFor(f).working > 0).length;
+  // The first open card with rows explains the columns; the others only name them.
+  const firstCard = GROUPS.find(
+    (g) => !collapsed.has(g.id) && (byGroup.get(g.id)?.length ?? 0) > 0,
+  )?.id;
+
+  return (
+    <div ref={screenRef} style={{ padding: "16px 32px 40px" }} className="ah-stack">
+      <div className="ft-head">
+        <div className="ft-title">
+          <h1 className="ah-h1">Features</h1>
+          <Button
+            variant="primary"
+            size="sm"
+            icon="plus"
+            onClick={() => {
+              void navigate("/features/new");
+            }}
+          >
+            New feature
+          </Button>
+        </div>
+        {features.isSuccess && all.length > 0 && (
+          <p className="ft-summary">
+            {workingNow > 0 && (
+              <span data-group="working">
+                <span className="ah-dot ah-pulse ft-row-live" aria-hidden="true" />
+                <b>{workingNow}</b> working now
+              </span>
+            )}
+            {GROUPS.map((g) => {
+              const n = all.filter((f) => reasonFor(f).group === g.id).length;
+              return (
+                <span key={g.id} data-group={g.id}>
+                  <b>{n}</b> {g.summary}
+                </span>
+              );
+            })}
+            <DerivedLabel how="Grouped from your decisions (status.md), then the golden path, derived from the record files, the tickets' status read from Linear, and the eval records; Quiet from the last activity.">
+              derived
+            </DerivedLabel>
+          </p>
+        )}
+        {state === "offline" ? (
+          <AsOfStamp stale time={fmtClock(asOf, tz)} />
+        ) : (
+          features.isError &&
+          features.data && <AsOfStamp stale time={fmtClock(new Date(features.dataUpdatedAt), tz)} />
+        )}
+      </div>
+      {features.isError && !features.data ? (
+        <ProblemError
+          title={features.error.title}
+          detail={features.error.detail}
+          status={features.error.status}
+          onRetry={() => void features.refetch()}
+        />
+      ) : features.isSuccess && all.length === 0 ? (
+        <div className="ah-card">
+          <EmptyState icon="list-checks" title="No feature records yet." command="/feature AGH-112">
+            Features appear when <span className="ah-mono">/feature</span> writes{" "}
+            <span className="ah-mono">brain/features/&lt;slug&gt;/spec.md</span> in the hub. Start
+            one here with <b>New feature</b>, or in a Claude Code session in the hub:
+          </EmptyState>
+        </div>
+      ) : (
+        <>
+          <div className="ft-toolbar" role="group" aria-label="Filters">
+            <SearchField
+              value={q}
+              onChange={(value) => {
+                update({ q: value });
+              }}
+              label="Find features"
+              placeholder="Find by name, issue or repo"
+              className="ft-search"
+              kbdClassName="ft-search-kbd"
+            />
+            {projectIds.length > 1 && (
+              <FacetMenu
+                label="Project"
+                options={facet(
+                  "project",
+                  projectIds.map((p) => ({ id: p, label: p })),
+                  (id) => countFor("project", (f) => f.project === id),
+                )}
+                onToggle={(id) => {
+                  toggleValue("project", id);
+                }}
+                onClear={() => {
+                  update({ project: null });
+                }}
+              />
+            )}
+            <FacetMenu
+              label="Step"
+              options={facet(
+                "phase",
+                PHASES.map((p) => ({ id: p.id, label: p.label })),
+                (id) => countFor("phase", (f) => f.phase === id),
+              )}
+              onToggle={(id) => {
+                toggleValue("phase", id);
+              }}
+              onClear={() => {
+                update({ phase: null });
+              }}
+            />
+            {repos.length > 1 && (
+              <FacetMenu
+                label="Repo"
+                options={facet(
+                  "repo",
+                  repos.map((r) => ({ id: r, label: r })),
+                  (id) => countFor("repo", (f) => f.repos.includes(id)),
+                )}
+                onToggle={(id) => {
+                  toggleValue("repo", id);
+                }}
+                onClear={() => {
+                  update({ repo: null });
+                }}
+              />
+            )}
+            <FacetMenu
+              label="Size"
+              options={facet(
+                "size",
+                SIZES.map((s) => ({ id: s, label: s })),
+                (id) => countFor("size", (f) => f.size === id),
+              )}
+              onToggle={(id) => {
+                toggleValue("size", id);
+              }}
+              onClear={() => {
+                update({ size: null });
+              }}
+            />
+            {verdicts.map((v) => (
+              <FilterChip
+                key={v}
+                k="Verdict"
+                value={v === NO_VERDICT ? "Not evaluated" : v}
+                onRemove={() => {
+                  toggleValue("verdict", v);
+                }}
+              />
+            ))}
+            {filtered && (
+              <Button size="sm" variant="ghost" icon="x" onClick={clearAll}>
+                Clear filters
+              </Button>
+            )}
+            {filtered && features.isSuccess && (
+              <span className="ah-small ah-muted" role="status">
+                {rows.length} of {all.length} feature{all.length === 1 ? "" : "s"}
+              </span>
+            )}
+          </div>
+          {features.isSuccess && filtered && rows.length === 0 ? (
+            <div className="ft-empty">
+              No features match these filters.{" "}
+              <Button size="sm" variant="ghost" onClick={clearAll}>
+                Clear filters
+              </Button>
+            </div>
+          ) : (
+            <div className="ft-groups">
+              {features.isSuccess && missesLinear(all) && (
+                <p className="ft-notice" role="note">
+                  <Icon name="info" size="sm" />
+                  <span>
+                    This list doesn&apos;t load ticket status from Linear, so some features
+                    can&apos;t show how many tickets are merged. Open a feature to see its tickets.
+                  </span>
+                </p>
+              )}
+              {GROUPS.map((g) => {
+                const list = features.isSuccess ? (byGroup.get(g.id) ?? []) : null;
+                if (filtered && list?.length === 0) return null;
+                const withHints = g.id === firstCard;
+                return (
+                  <Group
+                    key={g.id}
+                    nameOf={nameOf}
+                    reasonFor={reasonFor}
+                    id={g.id}
+                    rows={list}
+                    collapsed={collapsed.has(g.id)}
+                    onToggle={() => {
+                      toggle(g.id);
+                    }}
+                    showProject={projects.size > 1}
+                    onOpen={onOpen}
+                    filtered={filtered}
+                    withHints={withHints}
+                    selected={selected}
+                    onSelect={select}
+                    activityOf={activityOf}
+                    now={now}
+                  />
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+      {chosen.length > 0 && (
+        <div className="ft-bulk" role="region" aria-label="Selected features">
+          <b>{chosen.length} selected</b>
+          {(["shipped", "closed", "paused", "active"] as const).map((s) => (
+            <Button
+              key={s}
+              size="sm"
+              icon={DECISIONS[s].icon}
+              onClick={() => {
+                setDecision(s);
+              }}
+            >
+              {DECISIONS[s].item}
+            </Button>
+          ))}
+          <span className="ah-grow" />
+          <Button
+            size="sm"
+            variant="ghost"
+            icon="x"
+            onClick={() => {
+              setSelected(new Set());
+            }}
+          >
+            Clear
+          </Button>
+        </div>
+      )}
+      {decision && (
+        <OwnerStatusDialog
+          features={chosen}
+          status={decision}
+          nameOf={nameOf}
+          onClose={() => {
+            setDecision(null);
+          }}
+          onDone={(written) => {
+            select(written, false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+const featureKey = (f: Pick<Feature, "project" | "slug">) => `${f.project}/${f.slug}`;

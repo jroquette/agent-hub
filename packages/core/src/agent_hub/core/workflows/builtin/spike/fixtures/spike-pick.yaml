@@ -1,0 +1,41 @@
+# AC-1: every step runs, the owner picks option a with a note, the premortem gives three causes,
+# and draft writes research.md and the ADR draft (complete).
+workflow: spike
+inputs: {question: "Should the session brief be cached between sessions?", timebox: 2h, slug: brief-cache}
+stubs:
+  setup:
+    output: {slug: brief-cache, timebox_s: 7200, spent_s: 0, at: 946684800, over: false, left_m: 120, round: 0}
+  recall:
+    output:
+      summary: The brief is rebuilt on every session start; no decision covers caching it.
+      sources: [{ref: brain/decisions/index.md, says: No decision on the brief cache.}]
+  t_recall:
+    output: {slug: brief-cache, timebox_s: 7200, spent_s: 600, at: 946685400, over: false, left_m: 110, round: 0}
+  research:
+    output:
+      summary: hub brief reads the brain and the tracker on each start and takes about two seconds.
+      repos: [agent-hub]
+      findings:
+        - {area: brief, fact: The brief is built from the brain and the tracker on each call., where: "packages/cli/src/agent_hub/cli/brief_command.py:40"}
+      invariants: [The brief never holds secrets.]
+      open_questions: ["How stale may a brief be?"]
+  t_research:
+    output: {slug: brief-cache, timebox_s: 7200, spent_s: 3000, at: 946687800, over: false, left_m: 70, round: 0}
+  choose__options:
+    output: {options: [{id: a, title: A file cache keyed by the brain's commit, summary: Write the brief to a file and reuse it while the brain's commit is the same., pros: [Fast starts], cons: [A stale tracker part]}, {id: b, title: A short time-to-live cache, summary: Reuse the brief for ten minutes., pros: [Simple], cons: [Stale for up to ten minutes]}], recommendation: a, reason: The commit key never serves a stale brain., brief: "a) A file cache keyed by the brain's commit\nb) A short time-to-live cache"}
+  choose__t_options: {output: {slug: brief-cache, timebox_s: 7200, spent_s: 3600, at: 946690000, over: false, left_m: 60, round: 1}}
+  choose__pick: {decision: a, text: "Go with A, keep the cache small.", approver: Dana Owner}
+  choose__settle: {output: {slug: brief-cache, timebox_s: 7200, spent_s: 3600, at: 946700000, over: false, left_m: 60, round: 1, picked: 'a', go: true, done: true, note: 'Go with A, keep the cache small.', approver: 'Dana Owner', option: {id: a, title: A file cache keyed by the brain's commit, summary: Write the brief to a file and reuse it while the brain's commit is the same., pros: [Fast starts], cons: [A stale tracker part]}}}
+  premortem:
+    output:
+      causes:
+        - {cause: The tracker part goes stale while the brain's commit stays the same., likelihood: high, impact: moderate, sign: A brief lists an issue already closed., experiment: Close an issue and start a session within the minute.}
+        - {cause: Two sessions write the cache file at once., likelihood: moderate, impact: low, sign: A truncated brief file., experiment: Start two sessions together ten times.}
+        - {cause: The cache file is committed by mistake., likelihood: low, impact: high, sign: The file shows in git status., experiment: Run git status after a session start.}
+      others: [The commit key misses an uncommitted brain edit.]
+      assumptions: [{text: The brief takes about two seconds today., checked: true}]
+      first: Start a session after closing an issue and read the brief.
+  draft:
+    output: {result: complete, research: /ws/hub/brain/features/brief-cache/research.md, adr: /ws/hub/brain/features/brief-cache/adr-draft-brief-cache.md, reasons: [], spent_m: 70}
+expect: {status: done, outcome: complete}
+reached: [setup, recall, t_recall, research, t_research, choose, choose__options, choose__t_options, choose__pick, choose__settle, premortem, draft]

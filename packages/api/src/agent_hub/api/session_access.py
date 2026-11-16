@@ -1,0 +1,326 @@
+"""Who may reach the agent-session routes (P6, L1, L2; ADR 0031): a pure ASGI middleware.
+
+It sits inside ``LocalSecurityMiddleware``, so the ``Host`` is already this server's, and it
+refuses before routing, so a refused request never reaches a port.
+
+- **Exchange.** A ``GET`` or ``HEAD`` outside ``/api`` with a ``token`` query answers 303 to the
+  same path with the other query parameters; when the token is this launch's, it also sets the
+  cookie ``agent_hub_<port>`` (``HttpOnly; SameSite=Strict; Path=/``). The redirect drops the
+  token, so it is one hop, never a loop, and the token leaves the address bar.
+- **Discoveries.** A project's ``environment-discoveries`` routes start and read read-only
+  sessions (ADR 0046), so they follow every rule of the agent-session routes below.
+- **Off.** With ``sessions_off`` (the container, L2) every route under ``/api/v1/agent-sessions``
+  answers 404 ``agent-sessions-off``, cookie or not, and so does every workflow-run write
+  (``run-control-off``): both start processes in a hub.
+- **Run writes** (start, cancel, resume, abandon a workflow run) need the cookie too; their
+  Origin and JSON checks are the strict ones of ``LocalSecurityMiddleware``.
+- **Run reads** (a paused scenario run's values, ADR 0049) need the cookie and follow the reads'
+  Origin rules below; with ``sessions_off`` they answer 404 ``run-control-off``.
+- **Item writes** (a Restore into a hub's tree, AGH-295 D13; an owner sign-off, AGH-695) need
+  the cookie too, with the strict checks; with ``sessions_off`` they answer 409
+  ``hub_read_only`` before the cookie is looked at (A6): the container mounts the hubs read-only
+  and mints no token.
+- **Owner writes** (the Hub config writes, the hub actions, the learning decisions, the Linear
+  key, a feature's nickname; AGH-699) need the cookie too, with the strict
+  checks: only the owner's own page makes them, and an exact ``Origin`` is something any local
+  process can send. With ``sessions_off`` they answer 404 ``owner-writes-off`` before the cookie
+  is looked at: the container mints no token, so no request could ever hold it.
+- **Cookie.** Every route under the prefix needs the cookie (constant-time match); else 401.
+  With no token configured, nothing matches. It is ``agent_hub_<port>`` unless ``cookie`` names
+  another (the servers that share a token file share its cookie).
+- **Writes** need this server's exact ``Origin``, ``Sec-Fetch-Site: same-origin`` when sent and,
+  except ``DELETE`` (which carries no body), a JSON body (403, 415).
+- **Reads** (the stream included) refuse any ``Origin`` other than this server's and a
+  ``Sec-Fetch-Site`` of ``cross-site`` or ``same-site``: another port on the loopback is
+  same-site and carries the Strict cookie (spike, L1). A missing ``Origin`` passes.
+- **Read mark.** Every request it passes on carries ``scope[AGENT_SESSION_READS]``, always a
+  bool: True only for a ``GET`` or ``HEAD`` that the agent-session read checks pass (the
+  sessions on, the cookie, the reads' Origin rules), so a screen read fills its agent-session
+  parts only then (ADR 0056); False otherwise, over any value set earlier.
+
+The token, the cookie and the query string are never logged or echoed in a problem.
+"""
+
+import re
+from typing import Final
+from urllib.parse import parse_qsl, quote, urlencode
+
+from starlette.datastructures import Headers
+from starlette.requests import cookie_parser
+from starlette.responses import Response
+from starlette.types import ASGIApp, Receive, Scope, Send
+
+from agent_hub.api.local_security import (
+    STATE_CHANGING_METHODS,
+    is_item_write,
+    is_owner_write,
+    is_run_read,
+    is_run_write,
+    strict_refusal,
+)
+from agent_hub.api.openapi_paths import AGENT_SESSIONS, API_PREFIX
+from agent_hub.api.rfc9457 import item_write_refused_problem, problem
+from agent_hub.api.session_token import SessionToken, cookie_name
+from agent_hub.core.item_versions.hub_item_writer import ItemWriteRefusedError
+
+TOKEN_PARAMETER = "token"  # noqa: S105 -- the query parameter's name, not a token
+# The OpenAPI extension on every operation that needs the launch cookie (``needs_launch_cookie``).
+LAUNCH_COOKIE_EXTENSION: Final = "x-agent-hub-launch-cookie"
+OFF_PROBLEM_TYPE = "urn:agent-hub:problem:agent-sessions-off"
+RUNS_OFF_PROBLEM_TYPE = "urn:agent-hub:problem:run-control-off"
+OWNER_WRITES_OFF_PROBLEM_TYPE = "urn:agent-hub:problem:owner-writes-off"
+UNAUTHORIZED_PROBLEM_TYPE = "urn:agent-hub:problem:agent-session-unauthorized"
+EXCHANGE_METHODS = frozenset({"GET", "HEAD"})
+# The scope key of the read mark: whether this request may read agent-session data.
+AGENT_SESSION_READS: Final = "agent_hub.agent_session_reads"
+BODILESS_WRITES = frozenset({"DELETE"})
+# What a browser sends for a request this server's own page (or the address bar) made.
+OWN_FETCH_SITES = frozenset({"same-origin", "none"})
+CONTAINER_READ_ONLY = ItemWriteRefusedError(
+    "hub_read_only", "The hubs are mounted read-only in the agent-hub container"
+)
+# Characters a redirect path keeps as they are; the rest (a backslash among them) is encoded.
+_PATH_SAFE = "/:@!$&'()*+,;=-._~%"
+
+
+# A project's environment discoveries start and read Claude sessions (ADR 0046): they follow the
+# agent-session rules (off in the container, the cookie, the Origin).
+_DISCOVERIES = re.compile(
+    rf"^{re.escape(API_PREFIX)}/projects/[^/]+/environment-discoveries(/.*)?$"
+)
+
+
+def is_agent_session_path(path: str) -> bool:
+    """Whether ``path`` is under ``/api/v1/agent-sessions``, or a project's discoveries."""
+    in_sessions = path == AGENT_SESSIONS or path.startswith(f"{AGENT_SESSIONS}/")
+    return in_sessions or _DISCOVERIES.fullmatch(path) is not None
+
+
+def needs_launch_cookie(method: str, path: str) -> bool:
+    """Whether a request to ``path`` (a concrete path or a route's template) needs the launch
+    cookie: the agent-session routes and discoveries, the run writes and reads, the item writes
+    and the owner writes. The one list the OpenAPI mark (``LAUNCH_COOKIE_EXTENSION``) and the web
+    app's controls follow."""
+    verb = method.upper()
+    return (
+        is_agent_session_path(path)
+        or is_run_write(verb, path)
+        or is_item_write(verb, path)
+        or is_owner_write(verb, path)
+        or is_run_read(verb, path)
+    )
+
+
+def _is_api_path(path: str) -> bool:
+    return path == API_PREFIX or path.startswith(f"{API_PREFIX}/")
+
+
+def exchange_location(path: str, query_string: bytes) -> str:
+    """Where the exchange redirects: ``path`` on this server, without the ``token`` parameter.
+
+    Leading slashes collapse to one and unsafe characters are percent-encoded, so the
+    location can never name another host (``//host`` or ``/\\host``).
+    """
+    location = "/" + quote(path.lstrip("/"), safe=_PATH_SAFE)
+    kept = [
+        (name, value)
+        for name, value in parse_qsl(query_string.decode("latin-1"), keep_blank_values=True)
+        if name != TOKEN_PARAMETER
+    ]
+    return f"{location}?{urlencode(kept)}" if kept else location
+
+
+def session_cookie(name: str, token: str) -> str:
+    """The ``Set-Cookie`` value of the exchange."""
+    return f"{name}={token}; HttpOnly; SameSite=Strict; Path=/"
+
+
+SESSION_READS: Final = "Agent sessions are read only from this server's pages."
+VALUES_READS: Final = "A scenario run's values are read only from this server's pages."
+SESSION_COOKIE_DETAIL: Final = (
+    "Open the address hub web printed (with its token) to drive sessions."
+)
+VALUES_COOKIE_DETAIL: Final = (
+    "Open the address hub web printed (with its token) to read a scenario run's values."
+)
+OWNER_COOKIE_DETAIL: Final = (
+    "Open the address hub web printed (with its token) to make this change."
+)
+
+
+def read_refusal(headers: Headers, *, detail: str = SESSION_READS) -> tuple[int, str, str] | None:
+    """Why a read under the prefix is refused (L1), or None; ``detail`` says what is read."""
+    origin = headers.get("origin")
+    if origin is not None and origin != f"http://{headers.get('host')}":
+        return 403, "Forbidden origin", detail
+    site = headers.get("sec-fetch-site")
+    if site is not None and site not in OWN_FETCH_SITES:
+        return 403, "Forbidden fetch site", detail
+    return None
+
+
+class SessionAccessMiddleware:
+    """The token exchange, and the cookie and Origin rules of the agent-session routes."""
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        port: int,
+        token: str | None,
+        sessions_off: bool = False,
+        cookie: str | None = None,
+    ) -> None:
+        self.app = app
+        self._cookie = cookie or cookie_name(port)
+        self._token = SessionToken(token) if token else None
+        self._off = sessions_off
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        path = str(scope["path"])
+        headers = Headers(scope=scope)
+        if is_agent_session_path(path):
+            response = self._refusal(scope, headers)
+        elif is_run_write(str(scope["method"]), path):
+            response = self._run_refusal(path, headers)
+        elif is_item_write(str(scope["method"]), path):
+            response = self._item_write_refusal(path, headers)
+        elif is_owner_write(str(scope["method"]), path):
+            response = self._owner_write_refusal(path, headers)
+        elif is_run_read(str(scope["method"]), path):
+            response = self._run_read_refusal(path, headers)
+        else:
+            response = self._exchange(scope)
+        if response is None:
+            scope[AGENT_SESSION_READS] = self._may_read_agent_sessions(scope, headers)
+            await self.app(scope, receive, send)
+            return
+        await response(scope, receive, send)
+
+    def _may_read_agent_sessions(self, scope: Scope, headers: Headers) -> bool:
+        """Whether the agent-session routes would answer this request as a read."""
+        return (
+            not self._off
+            and scope["method"] in EXCHANGE_METHODS
+            and self._has_cookie(headers)
+            and read_refusal(headers) is None
+        )
+
+    def _exchange(self, scope: Scope) -> Response | None:
+        query: bytes = scope.get("query_string", b"")
+        if scope["method"] not in EXCHANGE_METHODS or _is_api_path(str(scope["path"])):
+            return None
+        pairs = parse_qsl(query.decode("latin-1"), keep_blank_values=True)
+        candidates = [value for name, value in pairs if name == TOKEN_PARAMETER]
+        if not candidates:
+            return None
+        candidate = candidates[0]
+        response = Response(
+            status_code=303,
+            headers={"Location": exchange_location(str(scope["path"]), query)},
+        )
+        if self._token is not None and self._token.matches(candidate):
+            response.headers["Set-Cookie"] = session_cookie(self._cookie, self._token.value)
+        return response
+
+    def _refusal(self, scope: Scope, headers: Headers) -> Response | None:
+        instance = str(scope["path"])
+        if self._off:
+            return problem(
+                404,
+                title="Agent sessions are off",
+                detail="Agent sessions cannot be driven from the agent-hub container.",
+                instance=instance,
+                members={"type": OFF_PROBLEM_TYPE},
+            )
+        if not self._has_cookie(headers):
+            return self._unauthorized(instance)
+        method = str(scope["method"])
+        if method in STATE_CHANGING_METHODS:
+            refusal = strict_refusal(headers, needs_json=method not in BODILESS_WRITES)
+        else:
+            refusal = read_refusal(headers)
+        if refusal is None:
+            return None
+        status, title, detail = refusal
+        return problem(status, title=title, detail=detail, instance=instance)
+
+    def _run_refusal(self, instance: str, headers: Headers) -> Response | None:
+        if self._off:
+            return problem(
+                404,
+                title="Run control is off",
+                detail="Workflow runs cannot be started or stopped from the agent-hub container.",
+                instance=instance,
+                members={"type": RUNS_OFF_PROBLEM_TYPE},
+            )
+        if self._has_cookie(headers):
+            return None
+        return self._unauthorized(instance)
+
+    def _run_read_refusal(self, instance: str, headers: Headers) -> Response | None:
+        if self._off:
+            return problem(
+                404,
+                title="Run control is off",
+                detail="A scenario run's values cannot be read from the agent-hub container.",
+                instance=instance,
+                members={"type": RUNS_OFF_PROBLEM_TYPE},
+            )
+        if not self._has_cookie(headers):
+            return self._unauthorized(instance, detail=VALUES_COOKIE_DETAIL)
+        refusal = read_refusal(headers, detail=VALUES_READS)
+        if refusal is None:
+            return None
+        status, title, detail = refusal
+        return problem(status, title=title, detail=detail, instance=instance)
+
+    def _item_write_refusal(self, instance: str, headers: Headers) -> Response | None:
+        if self._off:
+            found = item_write_refused_problem(CONTAINER_READ_ONLY)
+            return problem(
+                found.status,
+                title=found.title,
+                detail=found.detail,
+                instance=instance,
+                members=found.members,
+            )
+        if self._has_cookie(headers):
+            return None
+        return self._unauthorized(instance)
+
+    def _owner_write_refusal(self, instance: str, headers: Headers) -> Response | None:
+        if self._off:
+            return problem(
+                404,
+                title="Owner writes are off",
+                detail=(
+                    "This change needs the launch cookie of a hub web started on this machine; "
+                    "the agent-hub container mints none."
+                ),
+                instance=instance,
+                members={"type": OWNER_WRITES_OFF_PROBLEM_TYPE},
+            )
+        if self._has_cookie(headers):
+            return None
+        return self._unauthorized(instance, detail=OWNER_COOKIE_DETAIL)
+
+    def _unauthorized(self, instance: str, *, detail: str = SESSION_COOKIE_DETAIL) -> Response:
+        response = problem(
+            401,
+            title="Session cookie required",
+            detail=detail,
+            instance=instance,
+            members={"type": UNAUTHORIZED_PROBLEM_TYPE},
+        )
+        response.headers["WWW-Authenticate"] = 'Cookie realm="agent-hub"'
+        return response
+
+    def _has_cookie(self, headers: Headers) -> bool:
+        if self._token is None:
+            return False
+        cookies = cookie_parser(headers.get("cookie", ""))
+        return self._token.matches(cookies.get(self._cookie))

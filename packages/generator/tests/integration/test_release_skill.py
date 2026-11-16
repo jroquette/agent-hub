@@ -1,0 +1,323 @@
+"""The rendered ``/release`` skill: its typed steps, stop rules and never-do lines.
+
+The text is what a hub's session follows, so each acceptance criterion a text can show is
+checked on the demo render: the seven steps in order with their SPEC "Defined directions" §1
+type, the gates it stops at, the version PR it opens itself, the tag the platform repo's release
+workflow creates (ADR 0047) and the session never touches, and the authorship it keeps. The size
+and reference rules run on the same text through ``hub doctor`` on a fresh ``hub init``.
+
+AGH-830 (REL-3): the ``release`` run opens the version PR and ``release-pin`` the pin PR; the
+session follows both PRs with ``/deliver``'s follow-up loop, and the tag goes on the version PR's
+merge commit.
+"""
+
+import re
+from pathlib import Path
+
+import pytest
+
+from agent_hub.core.doctor.instruction_rules import DEFAULT_MAX_LINES
+from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.testing.builders import a_conventions_document
+from agent_hub.generator.render_hub import render_hub
+from agent_hub.generator.workflow_discovery import BUILTIN_WORKFLOWS
+from agent_hub.generator.workflow_yaml import load_workflow_bytes
+
+RELEASE_SKILL = "plugin/hub-workflow/skills/release/SKILL.md"
+WORKFLOW = BUILTIN_WORKFLOWS / "release" / "release.yaml"
+PIN_WORKFLOW = BUILTIN_WORKFLOWS / "release" / "release-pin.yaml"
+NESTED_LIMIT = DEFAULT_MAX_LINES["*/*"]
+STEP = re.compile(r"^(\d+)\. `(agent|script|gate|human)` \*\*([^*]+)\*\*", re.MULTILINE)
+STEP_TYPES = [
+    (1, "script"),
+    (2, "gate"),
+    (3, "script"),
+    (4, "agent"),
+    (5, "agent"),
+    (6, "script"),
+    (7, "agent"),
+]
+# Per step: the phrases its paragraph holds (the AC each one shows is named beside it).
+STEP_PHRASES = {
+    # AC-1: the PR list since the last tag and the proposed bump with its reason.
+    1: (
+        "last `v*` tag",
+        "`type(scope): subject`",
+        "feat → minor",
+        "fix → patch",
+        "major",
+        "reason",
+    ),
+    # AC-1: the run stops at the version and SHA gate.
+    2: ("full SHA", "Stop here", "confirms"),
+    # AC-2: check on the confirmed SHA, never the working tree, stops with the log path; a
+    # version mismatch opens the version PR, waits for its merge and gates the merge commit.
+    3: (
+        "clean checkout of the confirmed SHA",
+        "not the working tree",
+        "`$?`",
+        "log path",
+        "open the version PR yourself",
+        "the lock file (relock)",
+        "waits for the user to merge it",
+        "merge commit",
+        "new step 2 gate",
+    ),
+    # AC-3: the sync section computed by rendering both versions.
+    4: (
+        "Features",
+        "Fixes",
+        "What `hub sync` rewrites in every hub",
+        "Doctor rules added or changed",
+        "Migration steps",
+        "rendering both versions",
+        "never from memory",
+        "notes file",
+        "tag message",
+    ),
+    # The platform repo's release workflow tags on dispatch and is watched (ADR 0047); without
+    # one, the skill prints the commands for the user, as before.
+    5: (
+        "`workflow_dispatch`",
+        "gh workflow run",
+        "-f version=<version>",
+        "-f sha=<full sha>",
+        '-f notes="$(cat <notes file>)"',
+        "the run URL `gh workflow run` prints",
+        "Before dispatching, record the ids",
+        "--json databaseId,displayTitle",
+        "`displayTitle` names `v<version>`",
+        "whose id is not in that set",
+        "gh run watch <run id> --exit-status",
+        "red run stops here with its URL",
+        "65,535 characters",
+        "trim the sync list to a summary",
+        "No such workflow",
+        "git tag -a v<version> --cleanup=verbatim -F <notes file> <full sha>",
+        "git push origin v<version>",
+        "prints",
+    ),
+    # AC-5: the peeled SHA and the lightweight tag fail loudly.
+    6: (
+        'git ls-remote --tags origin "refs/tags/v<version>^{}"',
+        "confirmed SHA",
+        "lightweight",
+        "Fail loudly",
+    ),
+    # AC-6: the hub PR with the pin, sync, doctor, and the shipped issues' comments.
+    # AGH-699 X-2: the same commit keeps `brain/now.md` current (its pin, release lines and date).
+    7: (
+        "`bump-platform` as the description slug",
+        "`platform.version`",
+        "`./hub sync`",
+        "`./hub doctor`",
+        "What `hub sync` rewrites",
+        "comment",
+        "`brain/now.md`",
+        "`pinned to <version>`",
+        "release lines",
+        "`last_verified`",
+        "in the same commit",
+    ),
+}
+NEVER_DO = (
+    "never creates, moves, deletes or pushes a tag itself",
+    "the platform repo's release workflow creates it after the gate",
+    "a wrong tag is never moved, and the fix is a new patch release",
+    'no AI co-author trailer, no "Generated with", no 🤖',
+    "No push to the default branch, no force-push",
+    "never goes straight into `brain/`",
+    "`brain/_inbox/` with `provenance: agent-from-external`",
+)
+
+
+def rendered_release(config: HubConfig) -> str:
+    rendered = {file.path: file.content for file in render_hub(config).files}
+    content = rendered[RELEASE_SKILL]
+    assert content is not None
+    return content.decode("utf-8")
+
+
+@pytest.fixture
+def release_text(demo_config: HubConfig) -> str:
+    return rendered_release(demo_config)
+
+
+def step_paragraphs(text: str) -> dict[int, str]:
+    """Each numbered step's text, up to the next step or the first blank line after it."""
+    starts = list(STEP.finditer(text))
+    paragraphs: dict[int, str] = {}
+    for index, match in enumerate(starts):
+        next_step = starts[index + 1].start() if index + 1 < len(starts) else len(text)
+        blank = text.find("\n\n", match.start())
+        end = next_step if blank == -1 else min(next_step, blank)
+        paragraphs[int(match.group(1))] = text[match.start() : end]
+    return paragraphs
+
+
+def test_types_each_step_when_release_skill_rendered(release_text: str) -> None:
+    found = [(int(match.group(1)), match.group(2)) for match in STEP.finditer(release_text)]
+
+    assert found == STEP_TYPES
+
+
+@pytest.mark.parametrize("number", sorted(STEP_PHRASES))
+def test_holds_step_rules_when_release_skill_rendered(release_text: str, number: int) -> None:
+    paragraph = step_paragraphs(release_text)[number]
+
+    missing = [phrase for phrase in STEP_PHRASES[number] if phrase not in paragraph]
+
+    assert missing == [], f"step {number}"
+
+
+def test_states_never_do_lines_when_release_skill_rendered(release_text: str) -> None:
+    missing = [line for line in NEVER_DO if line not in release_text]
+
+    assert missing == []
+
+
+def test_stops_before_tag_when_check_or_gate_fails(release_text: str) -> None:
+    paragraphs = step_paragraphs(release_text)
+
+    assert "On failure stop and print the log path" in paragraphs[3]
+    assert "Stop here" in paragraphs[2]
+    assert "never pushes" in paragraphs[5]
+
+
+def test_matches_run_by_name_when_dispatched_run_watched(release_text: str) -> None:
+    """The newest run may be the last release's: never take it blindly."""
+    assert "--limit 1" not in release_text
+    assert "createdAt" not in release_text
+    assert "created after" not in release_text
+
+
+def test_opens_version_pr_not_restart_when_versions_mismatch(release_text: str) -> None:
+    paragraph = step_paragraphs(release_text)[3]
+
+    assert "`/change`" not in paragraph
+    assert "restarts at step 1" not in paragraph
+
+
+def test_names_bump_branch_by_shape_when_hub_sets_conventions() -> None:
+    config = HubConfig.model_validate(a_conventions_document())
+    paragraph = step_paragraphs(rendered_release(config))[7]
+
+    missing = [phrase for phrase in STEP_PHRASES[7] if phrase not in paragraph]
+
+    assert missing == []
+    assert "<desc>" not in paragraph
+    assert "repo's own" not in paragraph
+
+
+def test_fits_nested_size_limit_when_release_skill_rendered(release_text: str) -> None:
+    assert len(release_text.splitlines()) <= NESTED_LIMIT
+
+
+def test_names_no_project_value_when_release_skill_rendered(demo_config: HubConfig) -> None:
+    document = a_conventions_document()
+    config = HubConfig.model_validate(document)
+    values = {
+        config.project.name,
+        *config.tracker.team_keys,
+        *(repo.dir for repo in config.repos),
+        *(repo.github for repo in config.repos),
+        demo_config.project.name,
+    }
+    text = rendered_release(config)
+
+    named = sorted(value for value in values if value and value in text)
+
+    assert named == []
+
+
+def run_section(text: str) -> str:
+    """The ``## Run`` section: from its heading to step 1."""
+    start = text.index("## Run")
+    return text[start : text.index("\n1. `", start)]
+
+
+def run_line(text: str, name: str) -> str:
+    """The one line that runs workflow ``name`` (the trailing space keeps ``release-pin`` apart)."""
+    [line] = [line for line in text.splitlines() if f"`./hub workflow run {name} " in line]
+    return line
+
+
+@pytest.mark.parametrize(
+    ("name", "workflow"),
+    [("release", WORKFLOW), ("release-pin", PIN_WORKFLOW)],
+    ids=["release", "release-pin"],
+)
+def test_starts_release_workflow_with_its_inputs_when_release_rendered(
+    release_text: str, name: str, workflow: Path
+) -> None:
+    line = run_line(release_text, name)
+    command = line[line.index(f"`./hub workflow run {name} ") :]
+    command = command[: command.index("`", 1) + 1]
+    inputs = load_workflow_bytes(workflow.read_bytes(), source=str(workflow)).document["inputs"]
+
+    assert isinstance(inputs, dict), workflow
+    assert command.endswith(" --live`"), command
+    for input_name in inputs:
+        assert f"--input {input_name}=" in command, input_name
+    assert release_text.index("## Run") < release_text.index("1. `script` **Changes**")
+    assert "`$?`" in line
+
+
+def test_leaves_gates_to_owner_when_release_rendered(release_text: str) -> None:
+    section = " ".join(run_section(release_text).split())
+
+    for phrase in (
+        "./hub workflow approve <run>",
+        "./hub workflow run release-pin",
+        "never yours",
+        "merge commit",
+        ".agent-runs/workflows/<run>/records.jsonl",
+    ):
+        assert phrase in section, phrase
+
+
+def test_passes_notes_through_a_file_when_release_rendered(release_text: str) -> None:
+    section = " ".join(run_section(release_text).split())
+
+    assert '`echo "${TMPDIR:-/tmp}"`' in section
+    assert "with the Write tool" in section
+    assert "`test -s <notes file>`" in section
+    assert section.index("`test -s <notes file>`") < section.index("do step 5 (dispatch and watch)")
+
+
+def test_leaves_now_release_lines_to_session_when_release_rendered(release_text: str) -> None:
+    # AGH-699 X-2: the run's `pin` step sets now.md's pin and date; what shipped is judgement.
+    section = " ".join(run_section(release_text).split())
+
+    for phrase in (
+        "The `pin` step also sets `brain/now.md`'s `pinned to <version>` and `last_verified`",
+        "its release lines",
+        "on the pin PR's branch",
+        "before the owner merges it",
+    ):
+        assert phrase in section, phrase
+    # AGH-830: `release-pin`'s `pin` step, so the sentence follows its run.
+    assert section.index("`./hub workflow run release-pin ") < section.index(
+        "The `pin` step also sets"
+    )
+
+
+def test_names_hand_fallback_when_release_rendered(release_text: str) -> None:
+    section = " ".join(run_section(release_text).split())
+
+    assert "`./hub workflow list` has no `release`" in section
+    assert "follow the steps below by hand" in section
+
+
+# AGH-480: the owner sees what a gate asks before answering it.
+GATE_RECORDS = "`.agent-runs/workflows/<run>/records.jsonl`"
+GATE_MESSAGE = f'the `message` of the last `"event": "gate"` line of {GATE_RECORDS}'
+
+
+def test_shows_the_gate_message_before_the_owner_answers_when_release_rendered(
+    release_text: str,
+) -> None:
+    section = " ".join(run_section(release_text).split())
+
+    assert GATE_MESSAGE in section
+    assert section.index(GATE_MESSAGE) < section.index("./hub workflow approve <run>")

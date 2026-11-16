@@ -1,0 +1,27 @@
+# AC-4: the repo has neither a shuffle plugin nor pytest-xdist: those modes are skipped and named,
+# the other two run, and a failure in its file's order still reaches classify and report.
+workflow: flaky
+inputs: {repo: demo-api, test: "tests/test_x.py::test_y", runs: 20}
+stubs:
+  config:
+    output: {default_branch: main, branch_prefix: jdoe/, author_name: null, author_email: null, ready_label: agent-ready, teams: [DEM], hub: {github: acme/demo-hub, default_branch: main, target: {github: acme/demo-hub, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}, repos: [{dir: demo-api, github: acme/demo-api, default_branch: main, check_fast: make check-fast, check: make check, target: {github: acme/demo-api, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}]}
+  repeat:
+    output:
+      test: "tests/test_x.py::test_y"
+      repo: demo-api
+      repo_path: /ws/demo-api
+      sha: 0a1b2c3d4e5f60718293a4b5c6d7e8f901234567
+      runner: [uv, run, --locked, python]
+      runs: 20
+      budget_spent: false
+      reproduced: true
+      modes:
+        - {mode: alone, status: ran, note: "the test alone", passed: 20, failed: 0, errors: 0, timed_out: 0, missing: 0, skipped: 0, not_run: 0, tails: []}
+        - {mode: suite, status: ran, note: "tests/test_x.py in its default order", passed: 18, failed: 2, errors: 0, timed_out: 0, missing: 0, skipped: 0, not_run: 0, tails: ["run 7: E   FileExistsError: out.txt"]}
+        - {mode: shuffled, status: unavailable, note: "skipped: neither pytest-randomly nor pytest-random-order is installed", passed: 0, failed: 0, errors: 0, timed_out: 0, missing: 0, skipped: 0, not_run: 0, tails: []}
+        - {mode: parallel, status: unavailable, note: "skipped: pytest-xdist is not installed", passed: 0, failed: 0, errors: 0, timed_out: 0, missing: 0, skipped: 0, not_run: 0, tails: []}
+  classify:
+    output: {cause: shared_state, shared: file, confidence: medium, evidence: "Fails 2 of 20 in its file; test_a writes out.txt in the working folder and never removes it.", next_step: Write out.txt under tmp_path.}
+  report: {output: {outcome: reproduced, path: "brain/_inbox/flaky-<slug>.md"}}
+expect: {status: done, outcome: reproduced}
+reached: [config, repeat, classify, report]

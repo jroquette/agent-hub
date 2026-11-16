@@ -1,0 +1,561 @@
+"""The ``KnowledgeIndex`` contract suite: the in-memory fake and the SQLite index honour it.
+
+An implementation's ``tests/contract/`` provides a ``knowledge_index`` fixture (an empty index)
+and declares ``class Test<Implementation>(KnowledgeIndexContract)``. Checks raise
+``AssertionError`` by hand: core ships this suite without depending on pytest.
+
+``KnowledgeLinksContract`` holds the clauses on each document's links and the backlinks they
+answer (AGH-393, U-3); an implementation adopts it beside ``KnowledgeIndexContract``.
+
+Each query word appears in the documents in the same form, so an index that stems words (FTS5's
+``porter``) and one that does not answer alike.
+"""
+
+import hashlib
+from typing import Final
+
+from agent_hub.core.knowledge.knowledge_index import (
+    INDEX_VERSION,
+    MAX_BACKLINKS,
+    Backlink,
+    Backlinks,
+    Fingerprint,
+    IndexChange,
+    IndexedDocument,
+    Kind,
+    KnowledgeIndex,
+    SkippedFile,
+    StoredFile,
+)
+from agent_hub.core.knowledge.search_query import MAX_RESULTS, MAX_SNIPPET_CHARS
+
+HUB: Final = "/hubs/demo"
+OTHER_HUB: Final = "/hubs/other"
+_MTIME_NS: Final = 1_760_000_000_000_000_000
+
+
+def _check(condition: bool, message: str) -> None:  # noqa: FBT001 -- an assertion's condition
+    if not condition:
+        raise AssertionError(message)
+
+
+def _document(
+    path: str,
+    *,
+    body: str,
+    title: str = "Notes",
+    kind: Kind = "doc",
+    status: str | None = None,
+    provenance: str | None = None,
+    links: tuple[str, ...] = (),
+) -> IndexedDocument:
+    return IndexedDocument(
+        path=path,
+        kind=kind,
+        title=title,
+        status=status,
+        provenance=provenance,
+        fingerprint=Fingerprint(size=len(body.encode()), mtime_ns=_MTIME_NS),
+        sha256=hashlib.sha256(body.encode()).hexdigest(),
+        body=body,
+        links=links,
+    )
+
+
+def _index(index: KnowledgeIndex, *documents: IndexedDocument, hub: str = HUB) -> None:
+    index.apply(hub, IndexChange(version=INDEX_VERSION, documents=documents))
+
+
+def _paths(
+    index: KnowledgeIndex, *words: str, hub: str = HUB, kinds: tuple[Kind, ...] = ()
+) -> list[str]:
+    return [hit.path for hit in index.search(hub, words, kinds=kinds, limit=MAX_RESULTS)]
+
+
+class KnowledgeIndexContract:
+    """Search by every word, kind tier, status tier, title first, kinds, limit; per-hub rows;
+    apply as P-5 says."""
+
+    def test_ranks_title_match_first_when_lengths_equal(
+        self, knowledge_index: KnowledgeIndex
+    ) -> None:
+        in_body = _document(
+            "brain/decisions/0001-cleanup.md",
+            title="Cleanup",
+            body="worktrees removed after merge",
+            kind="decision",
+        )
+        in_title = _document(
+            "brain/playbooks/worktrees.md",
+            title="Worktrees",
+            body="cleanup removed after merge",
+            kind="playbook",
+            status="accepted",
+            provenance="agent",
+        )
+        fillers = [
+            _document(f"brain/learnings/filler-{name}.md", body=f"{name} release checklist")
+            for name in ("alpha", "beta", "gamma")
+        ]
+        _index(knowledge_index, in_body, in_title, *fillers)
+
+        hits = knowledge_index.search(HUB, ("worktrees",), limit=MAX_RESULTS)
+
+        paths = [hit.path for hit in hits]
+        _check(paths == [in_title.path, in_body.path], f"the title match ranks first: {paths}")
+        first = hits[0]
+        shown = (first.kind, first.title, first.status, first.provenance)
+        _check(shown == ("playbook", "Worktrees", "accepted", "agent"), f"its fields: {shown}")
+        _check((hits[1].status, hits[1].provenance) == (None, None), "absent fields are None")
+        _check("worktrees" in hits[1].snippet, f"the snippet holds the word: {hits[1].snippet}")
+        _check("\n" not in hits[1].snippet, "the snippet is one line")
+
+    def test_shows_match_in_snippet_when_body_long(self, knowledge_index: KnowledgeIndex) -> None:
+        body = "filler words\n" * 20 + "the marker sits here\n" + "tail words\n" * 20
+        _index(knowledge_index, _document("brain/long.md", body=body))
+
+        hits = knowledge_index.search(HUB, ("marker",), limit=MAX_RESULTS)
+
+        snippet = hits[0].snippet
+        _check(body.index("marker") > MAX_SNIPPET_CHARS, "the word is past the first line's end")
+        _check("marker" in snippet, f"the snippet holds the word: {snippet}")
+        _check(len(snippet) <= MAX_SNIPPET_CHARS, f"at most the limit: {len(snippet)}")
+        _check("\n" not in snippet, "the snippet is one line")
+
+    def test_orders_by_path_when_scores_equal(self, knowledge_index: KnowledgeIndex) -> None:
+        paths = ("brain/c.md", "brain/a.md", "docs/b.md", "brain/b.md")
+        _index(knowledge_index, *(_document(path, body="marker text") for path in paths))
+
+        found = _paths(knowledge_index, "marker")
+
+        _check(found == sorted(paths), f"equal scores in path order: {found}")
+
+    def test_ranks_curated_kind_first_when_matches_equal(
+        self, knowledge_index: KnowledgeIndex
+    ) -> None:
+        # In path order an inbox note and a feature record come first; inside the second tier the
+        # equal matches stay in path order.
+        expected: list[tuple[Kind, str]] = [
+            ("decision", "brain/decisions/marker.md"),
+            ("domain", "brain/domain/marker.md"),
+            ("learning", "brain/learnings/marker.md"),
+            ("playbook", "brain/playbooks/marker.md"),
+            ("system", "brain/system/marker.md"),
+            ("adr", "repo/docs/adr/0001-marker.md"),
+            ("inbox", "brain/_inbox/marker.md"),
+            ("feature", "brain/features/marker/spec.md"),
+            ("journal", "brain/journal/2026/marker.md"),
+            ("doc", "brain/now.md"),
+        ]
+        _index(
+            knowledge_index,
+            *(_document(path, body="marker text", kind=kind) for kind, path in expected),
+        )
+
+        found = _paths(knowledge_index, "marker")
+
+        order = [path for _, path in expected]
+        _check(found == order, f"curated knowledge, then the rest: {found}")
+
+    def test_ranks_curated_kind_first_when_feature_matches_better(
+        self, knowledge_index: KnowledgeIndex
+    ) -> None:
+        learning = _document(
+            "brain/learnings/gotchas.md",
+            title="Gotchas",
+            body="a long note " * 200 + "the release tag is made by the workflow",
+            kind="learning",
+        )
+        feature = _document(
+            "brain/features/release/spec.md",
+            title="Release",
+            body="release release release",
+            kind="feature",
+        )
+        _index(knowledge_index, feature, learning)
+
+        found = _paths(knowledge_index, "release")
+
+        _check(found == [learning.path, feature.path], f"the learning first: {found}")
+
+    def test_ranks_title_match_first_when_kind_and_status_tiers_equal(
+        self, knowledge_index: KnowledgeIndex
+    ) -> None:
+        # Both curated and both approved, so the text match decides: the title match first.
+        in_body = _document(
+            "brain/decisions/a.md",
+            title="Cleanup",
+            body="worktrees removed after merge",
+            kind="decision",
+            status="approved",
+        )
+        in_title = _document(
+            "brain/learnings/z.md",
+            title="Worktrees",
+            body="cleanup removed after merge",
+            kind="learning",
+            status="Approved (owner)",
+        )
+        _index(knowledge_index, in_body, in_title)
+
+        found = _paths(knowledge_index, "worktrees")
+
+        _check(found == [in_title.path, in_body.path], f"bm25 inside one tier: {found}")
+
+    def test_ranks_settled_status_first_when_matches_equal(
+        self, knowledge_index: KnowledgeIndex
+    ) -> None:
+        # A status counts by its leading word, in any case; in path order the drafts come first.
+        expected: list[tuple[str | None, str]] = [
+            ("approved (owner, 2026-10-13)", "brain/features/h.md"),
+            ("Active", "brain/features/i.md"),
+            (None, "brain/features/d.md"),
+            ("drafted", "brain/features/e.md"),
+            ("(approved)", "brain/features/f.md"),
+            ("done", "brain/features/g.md"),
+            ("accepted", "brain/features/j.md"),
+            ("draft", "brain/features/a.md"),
+            ("PROPOSED", "brain/features/b.md"),
+            ("draft, proposed extra", "brain/features/c.md"),
+        ]
+        _index(
+            knowledge_index,
+            *(
+                _document(path, body="marker text", kind="feature", status=status)
+                for status, path in expected
+            ),
+        )
+
+        found = _paths(knowledge_index, "marker")
+
+        order = [path for _, path in expected]
+        _check(found == order, f"approved and active first, draft and proposed last: {found}")
+
+    def test_ranks_kind_before_status_when_both_differ(
+        self, knowledge_index: KnowledgeIndex
+    ) -> None:
+        approved_feature = _document(
+            "brain/features/a/spec.md", body="marker text", kind="feature", status="approved"
+        )
+        draft_learning = _document(
+            "brain/learnings/z.md", body="marker text", kind="learning", status="draft"
+        )
+        _index(knowledge_index, approved_feature, draft_learning)
+
+        found = _paths(knowledge_index, "marker")
+
+        _check(found == [draft_learning.path, approved_feature.path], f"kind first: {found}")
+
+    def test_returns_nothing_when_no_words_given(self, knowledge_index: KnowledgeIndex) -> None:
+        _index(knowledge_index, _document("brain/now.md", body="marker text"))
+
+        hits = knowledge_index.search(HUB, (), limit=MAX_RESULTS)
+
+        _check(hits == (), f"no word, no result: {hits}")
+
+    def test_returns_only_documents_with_every_word_when_several_given(
+        self, knowledge_index: KnowledgeIndex
+    ) -> None:
+        _index(
+            knowledge_index,
+            _document("brain/both.md", body="alpha and beta together"),
+            _document("brain/alpha.md", body="alpha alone here"),
+            _document("brain/beta.md", body="beta alone here"),
+            _document("brain/title.md", title="Beta", body="alpha in the body"),
+        )
+
+        paths = _paths(knowledge_index, "alpha", "beta")
+
+        _check(sorted(paths) == ["brain/both.md", "brain/title.md"], f"every word: {paths}")
+        _check(_paths(knowledge_index, "ALPHA", "Beta") == paths, "case does not matter")
+        _check(_paths(knowledge_index, "alpha", "zebra") == [], "a missing word matches nothing")
+
+    def test_keeps_listed_kinds_when_kind_filter_given(
+        self, knowledge_index: KnowledgeIndex
+    ) -> None:
+        kinds: tuple[Kind, ...] = ("feature", "adr", "decision", "doc")
+        _index(
+            knowledge_index,
+            *(_document(f"brain/{kind}.md", body="marker text", kind=kind) for kind in kinds),
+        )
+
+        paths = _paths(knowledge_index, "marker", kinds=("feature", "adr"))
+
+        _check(sorted(paths) == ["brain/adr.md", "brain/feature.md"], f"listed kinds: {paths}")
+        _check(len(_paths(knowledge_index, "marker")) == 4, "no filter: every kind")
+
+    def test_returns_at_most_limit_when_more_match(self, knowledge_index: KnowledgeIndex) -> None:
+        _index(
+            knowledge_index,
+            *(_document(f"brain/features/f{n:02}.md", body="marker text") for n in range(60)),
+        )
+
+        paths = _paths(knowledge_index, "marker")
+
+        _check(len(paths) == MAX_RESULTS, f"at most the limit: {len(paths)}")
+        _check(len(set(paths)) == MAX_RESULTS, "each document once")
+
+    def test_never_returns_other_hub_when_words_match_both(
+        self, knowledge_index: KnowledgeIndex
+    ) -> None:
+        path = "brain/now.md"
+        _index(knowledge_index, _document(path, title="Ours", body="marker text"))
+        _index(knowledge_index, _document(path, title="Theirs", body="marker text"), hub=OTHER_HUB)
+
+        hits = knowledge_index.search(HUB, ("marker",), limit=MAX_RESULTS)
+
+        _check([hit.title for hit in hits] == ["Ours"], f"only the hub's own row: {hits}")
+        _check(knowledge_index.search("/hubs/none", ("marker",), limit=MAX_RESULTS) == (), "none")
+
+    def test_leaves_other_hub_when_hub_rebuilt(self, knowledge_index: KnowledgeIndex) -> None:
+        old = (
+            _document("brain/a.md", body="alpha text"),
+            _document("brain/b.md", body="beta text"),
+        )
+        _index(knowledge_index, *old)
+        _index(knowledge_index, *old, hub=OTHER_HUB)
+        rebuilt = _document("brain/c.md", body="gamma text")
+
+        knowledge_index.apply(
+            HUB, IndexChange(version=INDEX_VERSION, rebuild=True, documents=(rebuilt,))
+        )
+
+        ours = set(knowledge_index.stored(HUB).files)
+        theirs = set(knowledge_index.stored(OTHER_HUB).files)
+        _check(ours == {"brain/c.md"}, f"the hub holds only the rebuilt rows: {ours}")
+        _check(theirs == {"brain/a.md", "brain/b.md"}, f"the other hub is untouched: {theirs}")
+        _check(_paths(knowledge_index, "alpha") == [], "the dropped text is not found")
+        _check(_paths(knowledge_index, "alpha", hub=OTHER_HUB) == ["brain/a.md"], "theirs is")
+
+    def test_replaces_document_when_applied_twice(self, knowledge_index: KnowledgeIndex) -> None:
+        first = _document("brain/now.md", body="alpha text")
+        second = _document("brain/now.md", title="Now", body="beta words longer")
+        _index(knowledge_index, first)
+
+        _index(knowledge_index, second)
+
+        files = knowledge_index.stored(HUB).files
+        expected = StoredFile(
+            path=second.path, fingerprint=second.fingerprint, sha256=second.sha256
+        )
+        _check(dict(files) == {second.path: expected}, f"one row, the second: {files}")
+        _check(_paths(knowledge_index, "beta") == ["brain/now.md"], "the new text is found")
+        _check(_paths(knowledge_index, "alpha") == [], "the old text is not")
+
+    def test_drops_document_when_change_drops_path(self, knowledge_index: KnowledgeIndex) -> None:
+        _index(
+            knowledge_index,
+            _document("brain/a.md", body="marker alpha"),
+            _document("brain/b.md", body="marker beta"),
+        )
+
+        knowledge_index.apply(
+            HUB, IndexChange(version=INDEX_VERSION, dropped=("brain/a.md", "brain/never.md"))
+        )
+
+        _check(set(knowledge_index.stored(HUB).files) == {"brain/b.md"}, "the row is dropped")
+        _check(_paths(knowledge_index, "marker") == ["brain/b.md"], "its text is not found")
+
+    def test_updates_fingerprint_when_touched(self, knowledge_index: KnowledgeIndex) -> None:
+        document = _document("brain/now.md", body="marker text")
+        _index(knowledge_index, document)
+        touched = Fingerprint(size=document.fingerprint.size, mtime_ns=_MTIME_NS + 1)
+
+        knowledge_index.apply(
+            HUB, IndexChange(version=INDEX_VERSION, touched={document.path: touched})
+        )
+
+        stored = knowledge_index.stored(HUB).files[document.path]
+        expected = StoredFile(path=document.path, fingerprint=touched, sha256=document.sha256)
+        _check(stored == expected, f"the new fingerprint, the same hash: {stored}")
+        _check(_paths(knowledge_index, "marker") == [document.path], "the text is kept")
+
+    def test_keeps_marker_when_body_redacted(self, knowledge_index: KnowledgeIndex) -> None:
+        # A text a secret rule matched is indexed redacted (AGH-696): the marker stays as
+        # written, and the words around it are found.
+        body = "push with [redacted: github token] after review"
+        _index(knowledge_index, _document("brain/playbooks/push.md", body=body))
+
+        hits = knowledge_index.search(HUB, ("review",), limit=MAX_RESULTS)
+
+        _check([hit.snippet for hit in hits] == [body], f"the marker as written: {hits}")
+        _check(_paths(knowledge_index, "redacted") == ["brain/playbooks/push.md"], "its words")
+
+    def test_stores_skipped_file_without_text_when_skip_applied(
+        self, knowledge_index: KnowledgeIndex
+    ) -> None:
+        latin = _document("brain/_inbox/latin.md", body="marker text")
+        gone = _document("brain/gone.md", body="marker text")
+        _index(knowledge_index, latin, gone)
+        big = Fingerprint(size=262_145, mtime_ns=_MTIME_NS)
+        skipped = (
+            SkippedFile(path=latin.path, fingerprint=latin.fingerprint, reason="not UTF-8"),
+            SkippedFile(path="brain/big.md", fingerprint=big, reason="larger than 256 KiB"),
+            SkippedFile(path=gone.path, fingerprint=None, reason="cannot be read"),
+        )
+
+        knowledge_index.apply(HUB, IndexChange(version=INDEX_VERSION, skipped=skipped))
+
+        files = knowledge_index.stored(HUB).files
+        expected = {
+            latin.path: StoredFile(
+                path=latin.path, fingerprint=latin.fingerprint, skip_reason="not UTF-8"
+            ),
+            "brain/big.md": StoredFile(
+                path="brain/big.md", fingerprint=big, skip_reason="larger than 256 KiB"
+            ),
+        }
+        _check(dict(files) == expected, f"fingerprint and reason, no hash, no row without: {files}")
+        _check(_paths(knowledge_index, "marker") == [], "a skipped file is never found")
+
+    def test_keeps_version_when_change_applied(self, knowledge_index: KnowledgeIndex) -> None:
+        empty = knowledge_index.stored(HUB)
+        _check((empty.version, dict(empty.files)) == (None, {}), f"no row: {empty}")
+        first = _document("brain/a.md", body="alpha text")
+        _index(knowledge_index, first, _document("brain/b.md", body="beta text"))
+        _check(knowledge_index.stored(HUB).version == INDEX_VERSION, "the change's version")
+
+        newer = INDEX_VERSION + 1
+        knowledge_index.apply(
+            HUB, IndexChange(version=newer, touched={first.path: first.fingerprint})
+        )
+        _check(knowledge_index.stored(HUB).version is None, "rows that disagree have none")
+
+        knowledge_index.apply(HUB, IndexChange(version=newer, rebuild=True, documents=(first,)))
+        _check(knowledge_index.stored(HUB).version == newer, "a rebuild sets every row's")
+        _check(knowledge_index.stored(OTHER_HUB).version is None, "another hub has none")
+
+
+NOW: Final = "brain/now.md"
+
+
+def _sources(index: KnowledgeIndex, target: str = NOW, *, hub: str = HUB) -> list[str]:
+    return [item.path for item in index.backlinks(hub, target, limit=MAX_BACKLINKS).items]
+
+
+class KnowledgeLinksContract:
+    """Links are written with their document, replaced, kept, dropped and rebuilt with it, per
+    hub; backlinks are sorted by path and bounded, with their full count."""
+
+    def test_writes_links_with_document_when_applied(self, knowledge_index: KnowledgeIndex) -> None:
+        source = _document(
+            "brain/playbooks/cleanup.md",
+            title="Cleanup",
+            body="see now",
+            kind="playbook",
+            links=(NOW, "brain/decisions/x.md"),
+        )
+        _index(knowledge_index, source, _document(NOW, body="the note itself"))
+
+        answer = knowledge_index.backlinks(HUB, NOW, limit=MAX_BACKLINKS)
+
+        expected = Backlinks(
+            items=(Backlink(path=source.path, kind="playbook", title="Cleanup"),), total=1
+        )
+        _check(answer == expected, f"the document's link is answered: {answer}")
+        _check(_sources(knowledge_index, "brain/decisions/x.md") == [source.path], "each link")
+        _check(_sources(knowledge_index, "brain/none.md") == [], "no link, no backlink")
+
+    def test_answers_one_backlink_when_document_repeats_target(
+        self, knowledge_index: KnowledgeIndex
+    ) -> None:
+        source = _document("brain/playbooks/cleanup.md", body="text", links=(NOW, NOW, NOW))
+        _index(knowledge_index, source)
+
+        answer = knowledge_index.backlinks(HUB, NOW, limit=MAX_BACKLINKS)
+
+        _check([item.path for item in answer.items] == [source.path], f"once: {answer}")
+        _check(answer.total == 1, f"links are distinct per document: {answer.total}")
+
+    def test_replaces_links_when_document_reindexed(self, knowledge_index: KnowledgeIndex) -> None:
+        path = "brain/playbooks/cleanup.md"
+        _index(knowledge_index, _document(path, body="first", links=(NOW,)))
+
+        _index(knowledge_index, _document(path, body="second", links=("brain/other.md",)))
+
+        _check(_sources(knowledge_index) == [], "the old link is gone")
+        _check(_sources(knowledge_index, "brain/other.md") == [path], "the new link is answered")
+
+    def test_keeps_links_when_touched(self, knowledge_index: KnowledgeIndex) -> None:
+        source = _document("brain/playbooks/cleanup.md", body="text", links=(NOW,))
+        _index(knowledge_index, source)
+        touched = Fingerprint(size=source.fingerprint.size, mtime_ns=_MTIME_NS + 1)
+
+        knowledge_index.apply(
+            HUB, IndexChange(version=INDEX_VERSION, touched={source.path: touched})
+        )
+
+        _check(_sources(knowledge_index) == [source.path], "same bytes, same links")
+
+    def test_drops_links_when_document_dropped_or_skipped(
+        self, knowledge_index: KnowledgeIndex
+    ) -> None:
+        sources = [
+            _document(f"brain/playbooks/{name}.md", body="text", links=(NOW,))
+            for name in ("dropped", "latin", "gone", "kept")
+        ]
+        _index(knowledge_index, *sources)
+        dropped, latin, gone, kept = sources
+        skipped = (
+            SkippedFile(path=latin.path, fingerprint=latin.fingerprint, reason="not UTF-8"),
+            SkippedFile(path=gone.path, fingerprint=None, reason="cannot be read"),
+        )
+
+        knowledge_index.apply(
+            HUB, IndexChange(version=INDEX_VERSION, skipped=skipped, dropped=(dropped.path,))
+        )
+
+        _check(_sources(knowledge_index) == [kept.path], "only the kept document links")
+
+    def test_drops_links_when_hub_rebuilt(self, knowledge_index: KnowledgeIndex) -> None:
+        _index(knowledge_index, _document("brain/a.md", body="alpha", links=(NOW,)))
+        rebuilt = _document("brain/b.md", body="beta", links=("brain/other.md",))
+
+        knowledge_index.apply(
+            HUB, IndexChange(version=INDEX_VERSION, rebuild=True, documents=(rebuilt,))
+        )
+
+        _check(_sources(knowledge_index) == [], "the hub's old links are gone")
+        _check(_sources(knowledge_index, "brain/other.md") == [rebuilt.path], "the rebuilt's")
+
+    def test_never_returns_other_hub_backlinks_when_targets_match(
+        self, knowledge_index: KnowledgeIndex
+    ) -> None:
+        _index(knowledge_index, _document("brain/ours.md", body="ours", links=(NOW,)))
+        _index(
+            knowledge_index,
+            _document("brain/theirs.md", body="theirs", links=(NOW,)),
+            hub=OTHER_HUB,
+        )
+
+        ours = _sources(knowledge_index)
+        knowledge_index.apply(HUB, IndexChange(version=INDEX_VERSION, rebuild=True))
+
+        _check(ours == ["brain/ours.md"], f"only the hub's own sources: {ours}")
+        _check(_sources(knowledge_index) == [], "the rebuild dropped the hub's links")
+        theirs = _sources(knowledge_index, hub=OTHER_HUB)
+        _check(theirs == ["brain/theirs.md"], f"the other hub's links are untouched: {theirs}")
+        _check(_sources(knowledge_index, hub="/hubs/none") == [], "an unknown hub has none")
+
+    def test_sorts_and_bounds_backlinks_when_many_link(
+        self, knowledge_index: KnowledgeIndex
+    ) -> None:
+        count = MAX_BACKLINKS + 20
+        dead = "brain/gone.md"
+        # Indexed in reverse, so an answer in insertion order is not sorted by path.
+        sources = [
+            _document(f"brain/learnings/l{number:03}.md", body="text", links=(dead,))
+            for number in reversed(range(count))
+        ]
+        _index(knowledge_index, *sources)
+
+        answer = knowledge_index.backlinks(HUB, dead, limit=MAX_BACKLINKS)
+
+        paths = [item.path for item in answer.items]
+        expected = [f"brain/learnings/l{number:03}.md" for number in range(MAX_BACKLINKS)]
+        _check(MAX_BACKLINKS == 100, f"the bound: {MAX_BACKLINKS}")
+        _check(paths == expected, f"the first {MAX_BACKLINKS} by path: {paths[:3]}…")
+        _check(answer.total == count, f"the full count of a dead target's sources: {answer.total}")
+        few = knowledge_index.backlinks(HUB, dead, limit=2)
+        _check([item.path for item in few.items] == expected[:2], f"the limit: {few}")
+        _check(few.total == count, f"the full count whatever the limit: {few.total}")

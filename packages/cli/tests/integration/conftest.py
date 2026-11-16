@@ -1,0 +1,2779 @@
+"""Fixtures for the cli integration tests: a fake git on ``PATH`` and the ``demo`` inputs.
+
+Also the ``hub.lock`` golden harness (``lock_golden``), a from-scratch child environment
+(``child_env``), the process umask (``set_umask``), and for ``hub sync`` a ``DEMO`` hub built
+once per session (``demo_hub_template``) and copied per test (``demo_hub``), the same with a
+second repo (``demo_two_repo_hub_template``, ``demo_two_repo_hub``) and a synthetic git checkout
+next to it (``demo_checkout``), an in-process sync
+in a folder (``run_sync``), the writer calls a test makes (``adapter_calls``), an injected I/O
+error (``fail_once``) and the temp entries it may leave (``temp_entries``), AC-16.4's hub
+(``ac4``); for ``hub doctor``
+an in-process run in a folder (``run_doctor``), the paths a run reads (``path_reads``) and their
+filters (``reads_in``, ``ancestors``, ``under``); for ``hub bench`` the hub suite's bench
+workspace with a fake ``claude`` (``bench_workspace``); for a rendered ``./hub`` a ``uvx`` that
+runs this workspace's ``hub`` (``fake_uvx_bin``). In the ``DEMO`` workspace, ``traced_git``
+logs each git call and runs the real git; ``env_traced_git`` logs the environment of each call
+too, and can hang on a clone or fetch. For ``hub setup``, a byte-exact text golden harness
+(``compare_text_golden``). For ``hub ship`` a scripted ``gh`` (``ship_workspace``), its tracker
+(``ship_tracker``), task worktrees (``make_task_worktree``) and a ``run_child`` spy
+(``child_calls``), loading every cli module before a spy wraps names in them
+(``import_every_cli_module``). For ``hub mcp``'s ``propose``, a ``knowledge_hub`` with a bare
+``origin`` and a fake ``gh`` (``proposal_hub``).
+"""
+
+import builtins
+import datetime
+import difflib
+import errno
+import importlib
+import io
+import json
+import os
+import pkgutil
+import re
+import shlex
+import shutil
+import stat
+import subprocess
+import sys
+from collections.abc import Callable, Iterator, Mapping
+from importlib.metadata import version
+from pathlib import Path
+from typing import Any, NamedTuple
+
+import pytest
+from typer.testing import CliRunner, Result
+
+from agent_hub.cli.hub_root import HUB_ROOT_VARIABLE
+from agent_hub.cli.main import app
+from agent_hub.cli.sync_command import NO_COMMIT_WAY_BACK
+from agent_hub.core.errors import TrackerError
+from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
+from agent_hub.core.hub_files.tree_snapshot import is_leftover_name
+from agent_hub.core.json_form import dump_json
+from agent_hub.core.testing.builders import (
+    RUN_DESCRIPTION,
+    a_hub_document,
+    a_second_repo,
+    an_issue,
+)
+from agent_hub.core.testing.fakes import FakeTrackerBackend, InMemoryTrackerClient, TrackerState
+from agent_hub.core.tracker.tracker_client import Issue
+
+GIT_TOPLEVEL_ARGS = "rev-parse --show-toplevel"
+# The spec's DEMO_FLAGS: every value given, so git is never called.
+DEMO_FLAGS = (
+    "demo",
+    "--repos",
+    "acme/demo-api",
+    "--tracker",
+    "linear:DEM",
+    "--branch-prefix",
+    "jdoe/",
+    "--author-name",
+    "Jane Doe",
+    "--author-email",
+    "jane@example.com",
+    "--hub-repo",
+    "acme/demo-hub",
+)
+# Exit code of git when a folder is not in a work tree.
+NOT_A_REPO = 128
+# Set by the caller (a git hook, a worktree script, a cloud session's config), a variable with
+# this prefix would change which repo git reads or how it reads it.
+GIT_VARIABLE_PREFIX = "GIT_"
+# The root conftest's guard, kept by every environment built here: git may reach only ``file``
+# remotes, so no command's git reaches the network.
+GIT_PROTOCOL_VARIABLE = "GIT_ALLOW_PROTOCOL"
+LOCAL_GIT_PROTOCOL = "file"
+
+
+@pytest.fixture(autouse=True)
+def no_git_location(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run every test as if git found the repo from the folder: every ``GIT_*`` variable unset.
+
+    ``AGENT_HUB_ROOT`` is unset too, so a command takes the hub from the folder it runs in, and
+    ``CLAUDECODE``, so no run acts as if inside a Claude Code session.
+    """
+    for variable in [name for name in os.environ if name.startswith(GIT_VARIABLE_PREFIX)]:
+        monkeypatch.delenv(variable)
+    # Except the root conftest's guard: git reaches local bare repositories only (ADR 0054's
+    # release lookup must never read the real tag).
+    monkeypatch.setenv(GIT_PROTOCOL_VARIABLE, LOCAL_GIT_PROTOCOL)
+    monkeypatch.delenv(HUB_ROOT_VARIABLE, raising=False)
+    # Set when the suite runs from a Claude Code session; hub doctor would probe the remotes then
+    # (AGH-134). A test that wants a session sets it.
+    monkeypatch.delenv("CLAUDECODE", raising=False)
+
+
+class FakeGit(NamedTuple):
+    """A ``/bin/sh`` script named ``git`` in ``bin_dir`` that logs each call to ``log_path``."""
+
+    bin_dir: Path
+    log_path: Path
+
+    def calls(self) -> list[tuple[str, str]]:
+        """``(physical working directory, arguments)`` of each call, in order."""
+        if not self.log_path.exists():
+            return []
+        lines = self.log_path.read_text(encoding="utf-8").splitlines()
+        return [(cwd, arguments) for cwd, arguments in (line.split("\t") for line in lines)]
+
+
+type FakeGitFactory = Callable[..., FakeGit]
+
+
+@pytest.fixture
+def fake_git(tmp_path: Path) -> FakeGitFactory:
+    """Build a fake git answering ``answers`` (its arguments joined by spaces → one output line).
+
+    ``toplevel`` answers ``rev-parse --show-toplevel``; without it that call exits 128 as outside
+    a work tree. Any other call exits 1 with no output, as ``git config --get`` of an unset key.
+    ``hangs`` makes every call spin (in a child shell that also holds stdout) until killed.
+    The script runs only shell builtins, so it works with ``PATH`` set to its folder alone.
+    """
+
+    def build(
+        answers: Mapping[str, str], *, toplevel: Path | None = None, hangs: bool = False
+    ) -> FakeGit:
+        bin_dir = tmp_path / "fake-git-bin"
+        bin_dir.mkdir()
+        log_path = tmp_path / "fake-git.log"
+        cases = dict(answers)
+        if toplevel is not None:
+            cases[GIT_TOPLEVEL_ARGS] = str(toplevel)
+        branches = "".join(
+            f"  {shlex.quote(arguments)}) printf '%s\\n' {shlex.quote(output)} ;;\n"
+            for arguments, output in cases.items()
+        )
+        no_repo = (
+            ""
+            if toplevel is not None
+            else f"  {shlex.quote(GIT_TOPLEVEL_ARGS)}) exit {NOT_A_REPO} ;;\n"
+        )
+        spin = "( while :; do :; done ) &\nwait\n" if hangs else ""
+        script = bin_dir / "git"
+        script.write_text(
+            "#!/bin/sh\n"
+            f'printf \'%s\\t%s\\n\' "$(pwd -P)" "$*" >> {shlex.quote(str(log_path))}\n'
+            f"{spin}"
+            f'case "$*" in\n{branches}{no_repo}  *) exit 1 ;;\nesac\n',
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
+        return FakeGit(bin_dir=bin_dir, log_path=log_path)
+
+    return build
+
+
+@pytest.fixture
+def no_git_path(tmp_path: Path) -> Path:
+    """An empty folder to use as the whole ``PATH``, so no ``git`` is found."""
+    folder = tmp_path / "no-git-bin"
+    folder.mkdir()
+    return folder
+
+
+def demo_document_value() -> dict[str, Any]:
+    """The spec's ``DEMO``: the example config with no modules (D3), pinned to the running CLI."""
+    document = a_hub_document()
+    del document["modules"]
+    document["platform"]["version"] = version("agent-hub-cli")
+    return document
+
+
+@pytest.fixture
+def demo_document() -> dict[str, Any]:
+    """A fresh ``DEMO`` document, which the test may change."""
+    return demo_document_value()
+
+
+def init_template(base: Path, document: dict[str, Any]) -> Path:
+    """The tree ``hub init --config`` writes for ``document`` in ``base / "hub"``."""
+    config = base / "hub.json"
+    config.write_bytes(dump_json(document))
+    root = base / "hub"
+    result = CliRunner().invoke(app, ["init", "--config", str(config), "--dir", str(root)])
+    assert result.exit_code == 0, result.stderr
+    # A copy must not carry a git folder that points back at the template.
+    assert not os.path.lexists(root / ".git")
+    return root
+
+
+@pytest.fixture(scope="session")
+def demo_hub_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The tree ``hub init --config DEMO`` writes, built once per session: never change it.
+
+    ``init --config`` reads neither git nor ``HOME``, so the function-scoped fixtures that
+    isolate them are not needed here.
+    """
+    return init_template(tmp_path_factory.mktemp("demo-hub-template"), demo_document_value())
+
+
+@pytest.fixture
+def fake_uvx_bin(tmp_path: Path) -> Path:
+    """A folder holding a ``/bin/sh`` ``uvx`` that runs this workspace's ``hub`` (AGH-16 AC-16.11).
+
+    It checks that the call starts ``--from <the pinned source of the running CLI> hub``, as a
+    rendered ``./hub`` of ``DEMO`` makes it, then drops those three words and execs the
+    workspace's ``hub`` with the rest. Any other call exits 90 and names it on stderr.
+    """
+    pinned = PINNED_RELEASE_COMMAND.format(version=version("agent-hub-cli")).split()
+    assert pinned[:2] == ["uvx", "--from"]
+    assert pinned[3:] == ["hub"]
+    hub = Path(sys.prefix) / "bin" / "hub"
+    assert hub.is_file(), hub
+    bin_dir = tmp_path / "fake-uvx-bin"
+    bin_dir.mkdir()
+    uvx = bin_dir / "uvx"
+    uvx.write_text(
+        "#!/bin/sh\n"
+        f'[ "$1" = --from ] && [ "$2" = {shlex.quote(pinned[2])} ] && [ "$3" = hub ] || {{\n'
+        '  echo "fake uvx: unexpected call: $*" >&2\n'
+        "  exit 90\n"
+        "}\n"
+        "shift 3\n"
+        f'exec {shlex.quote(str(hub))} "$@"\n',
+        encoding="utf-8",
+    )
+    uvx.chmod(0o755)
+    return bin_dir
+
+
+@pytest.fixture
+def demo_hub(tmp_path: Path, demo_hub_template: Path) -> Path:
+    """A copy of the ``DEMO`` hub for this test: links kept as links, modes kept."""
+    root = tmp_path / "hub"
+    shutil.copytree(demo_hub_template, root, symlinks=True)
+    return root
+
+
+@pytest.fixture(scope="session")
+def demo_two_repo_hub_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """``DEMO`` with ``demo-web`` after ``demo-api`` in ``repos``, built once: never change it."""
+    document = demo_document_value()
+    document["repos"].append(a_second_repo())
+    return init_template(tmp_path_factory.mktemp("demo-two-repo-hub-template"), document)
+
+
+@pytest.fixture
+def demo_two_repo_hub(tmp_path: Path, demo_two_repo_hub_template: Path) -> Path:
+    """A copy of the two-repo ``DEMO`` hub at ``tmp_path / "hub"``; its checkouts go next to it."""
+    root = tmp_path / "hub"
+    shutil.copytree(demo_two_repo_hub_template, root, symlinks=True)
+    return root
+
+
+type CheckoutFactory = Callable[[str], Path]
+
+
+@pytest.fixture
+def demo_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CheckoutFactory:
+    """``demo_checkout(dir)``: a synthetic git repo at ``tmp_path / dir`` with a committed README
+    and ``AGENTS.md``.
+
+    Git reads the test's own ``HOME`` and config only, here and in the run (no system or global
+    config, no ``XDG_CONFIG_HOME``), and never looks for a repository above ``tmp_path``.
+    """
+    git = shutil.which("git")
+    assert git is not None, "git is needed for a synthetic checkout"
+    home = tmp_path / "checkout-home"
+    home.mkdir()
+    env = {
+        "HOME": str(home),
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CEILING_DIRECTORIES": str(tmp_path),
+        GIT_PROTOCOL_VARIABLE: LOCAL_GIT_PROTOCOL,
+    }
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+    def build(name: str) -> Path:
+        root = tmp_path / name
+        # An empty folder may already stand there (plan E3a).
+        root.mkdir(exist_ok=True)
+        (root / "README.md").write_bytes(f"# {name}\n".encode())
+        (root / "AGENTS.md").write_bytes(f"# {name}\n".encode())
+        author = ["-c", "user.name=Jane Doe", "-c", "user.email=jane@example.com"]
+        for args in (
+            ["-c", "init.defaultBranch=main", "init", "-q"],
+            ["add", "-A"],
+            [*author, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"],
+        ):
+            subprocess.run(  # noqa: S603 - absolute git, fixed arguments, a tmp_path folder
+                [git, *args], cwd=root, env=env, check=True, capture_output=True
+            )
+        return root
+
+    return build
+
+
+type KnowledgeHubFactory = Callable[..., Path]
+
+
+@pytest.fixture
+def knowledge_hub(tmp_path: Path, demo_checkout: CheckoutFactory) -> KnowledgeHubFactory:
+    """``knowledge_hub(files, *, repos=("demo-api",), commit=True)``: a hub checkout at
+    ``tmp_path / "hub"`` holding ``DEMO``'s ``hub.json``, and each of ``repos`` checked out
+    beside it, all synthetic git repos.
+
+    ``files`` maps a hub-relative path, as the knowledge index names it, to its bytes: a path
+    whose first segment is one of ``repos`` is written in that repo (``demo-api/docs/x.md``),
+    any other in the hub (``brain/x.md``). With ``commit`` the files are committed, else they
+    are left untracked.
+    """
+
+    def build(
+        files: Mapping[str, bytes], *, repos: tuple[str, ...] = ("demo-api",), commit: bool = True
+    ) -> Path:
+        hub = tmp_path / "hub"
+        hub.mkdir()
+        (hub / "hub.json").write_bytes(dump_json(demo_document_value()))
+        for name in repos:
+            (tmp_path / name).mkdir()
+
+        def write_files() -> None:
+            for path, data in files.items():
+                first = path.split("/", 1)[0]
+                target = (tmp_path if first in repos else hub) / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data)
+
+        if commit:
+            write_files()
+        for name in ("hub", *repos):
+            demo_checkout(name)
+        if not commit:
+            write_files()
+        return hub
+
+    return build
+
+
+# ``hub mcp``'s ``propose`` (AGH-392): a hub whose ``origin`` is a local bare repository behind a
+# GitHub url, and a fake ``gh``. Adapted from ``packages/hub_git/tests/conftest.py`` (a conftest
+# cannot be shared across packages).
+PROPOSAL_HUB_URL = "https://github.com/acme/demo-hub.git"
+_PROPOSAL_GH = """\
+import json, os, subprocess, sys
+
+state = os.environ["FAKE_GH_DIR"]
+args = sys.argv[1:]
+
+
+def switch(name):
+    return os.path.exists(os.path.join(state, name))
+
+
+with open(os.path.join(state, "calls.jsonl"), "a") as calls:
+    calls.write(json.dumps({"argv": args}) + "\\n")
+if args[:2] == ["auth", "token"]:
+    if switch("logged-out"):
+        sys.exit(1)
+    print("gho_not-a-real-token")
+    sys.exit(0)
+# Only the REST call that opens a pull request (gh api), as a cloud session's proxy lets
+# through: gh pr fails.
+if args[:4] != ["api", "--method", "POST", "repos/acme/demo-hub/pulls"] or switch("fail"):
+    sys.exit(1)
+fields = {}
+for flag, field in zip(args[4::2], args[5::2]):
+    key, value = field.split("=", 1)
+    if flag == "-F":
+        with open(value.removeprefix("@")) as given:
+            value = given.read()
+    fields[key] = value
+head = subprocess.run(
+    ["git", "--git-dir", os.environ["FAKE_GH_ORIGIN"], "rev-parse", "--verify", "--quiet",
+     "refs/heads/" + fields["head"]],
+    stdout=subprocess.DEVNULL,
+)
+if head.returncode != 0:
+    sys.exit(1)
+pulls = os.path.join(state, "pulls.jsonl")
+count = sum(1 for _ in open(pulls)) if os.path.exists(pulls) else 0
+url = "https://github.com/acme/demo-hub/pull/" + str(count + 1)
+pull = {"url": url}
+pull.update({key: fields[key] for key in ("body", "head", "base", "title")})
+with open(pulls, "a") as out:
+    out.write(json.dumps(pull) + "\\n")
+print(json.dumps({"html_url": url, "number": count + 1, "state": "open"}))
+"""
+
+
+class ProposalHub(NamedTuple):
+    """A ``knowledge_hub`` pushed to a bare ``origin`` (``bare``), the environment ``hub mcp``
+    gets (``environ``: the hub named, the fake ``gh`` first on ``PATH``), the fake ``gh``'s
+    state folder and the global git config (``gitconfig``: the identity ``Seed Owner`` and the
+    url rewrite)."""
+
+    hub: Path
+    bare: Path
+    environ: dict[str, str]
+    gh_state: Path
+    gitconfig: Path
+
+    def git(self, *args: str, cwd: Path | None = None) -> str:
+        """Run git in ``cwd`` (default: the hub); its stdout."""
+        return subprocess.run(  # noqa: S603 - the test's own git, an argv list
+            [shutil.which("git") or "git", *args],
+            cwd=cwd or self.hub,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+
+    def origin_git(self, *args: str) -> str:
+        """Run git against the bare ``origin``; its stdout."""
+        return self.git("--git-dir", str(self.bare), *args)
+
+    def branches(self) -> set[str]:
+        """The origin's branches."""
+        listed = self.origin_git("for-each-ref", "--format=%(refname:short)", "refs/heads")
+        return set(listed.split())
+
+    def gh_calls(self) -> list[list[str]]:
+        """The argv of every fake ``gh`` call so far."""
+        calls = self.gh_state / "calls.jsonl"
+        if not calls.exists():
+            return []
+        return [json.loads(line)["argv"] for line in calls.read_text().splitlines()]
+
+    def pulls(self) -> list[dict[str, str]]:
+        """The pull requests the fake ``gh`` opened (url, body, head, base, title), in order."""
+        pulls = self.gh_state / "pulls.jsonl"
+        if not pulls.exists():
+            return []
+        return [json.loads(line) for line in pulls.read_text().splitlines()]
+
+    def switch(self, name: str) -> None:
+        """Turn on a fake ``gh`` switch: ``logged-out`` (``auth token`` fails) or ``fail``
+        (the pull request's creation fails)."""
+        (self.gh_state / name).touch()
+
+    def reject_pushes(self) -> None:
+        """Make ``origin`` refuse every push (a ``pre-receive`` hook that fails)."""
+        hook = self.bare / "hooks" / "pre-receive"
+        hook.write_text("#!/bin/sh\nexit 1\n")
+        hook.chmod(0o755)
+
+    def snapshot(self) -> tuple[str, ...]:
+        """The developer's checkout as git sees it: HEAD, status, refs, stash, worktrees, index
+        and local config."""
+        return (
+            self.git("rev-parse", "HEAD"),
+            self.git("status", "--porcelain", "--ignored"),
+            self.git("for-each-ref"),
+            self.git("stash", "list"),
+            self.git("worktree", "list", "--porcelain"),
+            self.git("ls-files", "--stage"),
+            self.git("config", "--list", "--local"),
+        )
+
+
+type ProposalHubFactory = Callable[..., ProposalHub]
+
+
+@pytest.fixture
+def proposal_hub(
+    tmp_path: Path, knowledge_hub: KnowledgeHubFactory, monkeypatch: pytest.MonkeyPatch
+) -> ProposalHubFactory:
+    """``proposal_hub(files=...)``: ``knowledge_hub(files)`` with ``origin`` =
+    ``https://github.com/acme/demo-hub.git``, which the test's global git config rewrites to a
+    bare repository under ``tmp_path`` (git never reaches the network), ``main`` pushed to it,
+    and a fake ``gh``: ``gh auth token`` succeeds unless ``logged-out`` is on, ``gh api --method
+    POST repos/acme/demo-hub/pulls`` records the pull request and prints it as JSON when the
+    head is on ``origin``, and fails when ``fail`` is on; any other call (``gh pr`` included)
+    fails. Synthetic only: no real repository, account or token."""
+
+    def build(files: Mapping[str, bytes] | None = None) -> ProposalHub:
+        hub = knowledge_hub(dict(files or {}))
+        world = tmp_path / "proposal"
+        bin_dir, gh_state = world / "bin", world / "gh"
+        for folder in (bin_dir, gh_state):
+            folder.mkdir(parents=True)
+        bare = world / "origin.git"
+        gitconfig = world / "gitconfig"
+        gitconfig.write_text(
+            "[user]\n\tname = Seed Owner\n\temail = seed@example.com\n"
+            f'[url "{bare}"]\n\tinsteadOf = {PROPOSAL_HUB_URL}\n'
+        )
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(gitconfig))
+        source = bin_dir / "fake_gh.py"
+        source.write_text(_PROPOSAL_GH)
+        gh = bin_dir / "gh"
+        gh.write_text(
+            f'#!/bin/sh\nexec {shlex.quote(sys.executable)} -I {shlex.quote(str(source))} "$@"\n'
+        )
+        gh.chmod(0o755)
+        environ = dict(
+            os.environ,
+            PATH=f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+            FAKE_GH_DIR=str(gh_state),
+            FAKE_GH_ORIGIN=str(bare),
+            AGENT_HUB_DB=str(world / "index.db"),
+            **{HUB_ROOT_VARIABLE: str(hub)},
+        )
+        proposal = ProposalHub(
+            hub=hub, bare=bare, environ=environ, gh_state=gh_state, gitconfig=gitconfig
+        )
+        proposal.git("init", "--quiet", "--bare", "--initial-branch=main", str(bare), cwd=world)
+        proposal.git("remote", "add", "origin", PROPOSAL_HUB_URL)
+        proposal.git("push", "--quiet", "--set-upstream", "origin", "main")
+        return proposal
+
+    return build
+
+
+type SyncRunner = Callable[..., Result]
+
+
+@pytest.fixture
+def run_sync(monkeypatch: pytest.MonkeyPatch) -> SyncRunner:
+    """Run ``hub sync <args>`` in process with ``root`` as the current folder."""
+
+    def run(root: Path, *args: str) -> Result:
+        monkeypatch.chdir(root)
+        return CliRunner().invoke(app, ["sync", *args])
+
+    return run
+
+
+# AGH-603 Q3: the one warning of a sync whose release lookup failed, its reason, then the way back.
+_LOOKUP_WARNING = re.compile(
+    r"warning: hub\.lock written without the release commit \(.+\);"
+    rf" {re.escape(NO_COMMIT_WAY_BACK)}"
+)
+
+
+def is_lookup_warning(stderr: str) -> bool:
+    """Whether ``stderr`` is exactly Q3's one warning line, the real prefix and way back whole."""
+    lines = stderr.splitlines()
+    return len(lines) == 1 and _LOOKUP_WARNING.fullmatch(lines[0]) is not None
+
+
+@pytest.fixture
+def lookup_warning() -> Callable[[str], bool]:
+    """``lookup_warning(stderr)``: whether a sync's stderr is exactly Q3's one warning line."""
+    return is_lookup_warning
+
+
+type DoctorRunner = Callable[..., Result]
+
+
+@pytest.fixture
+def run_doctor(monkeypatch: pytest.MonkeyPatch) -> DoctorRunner:
+    """Run ``hub doctor <args>`` in process with ``root`` as the current folder."""
+
+    def run(root: Path, *args: str) -> Result:
+        monkeypatch.chdir(root)
+        return CliRunner().invoke(app, ["doctor", *args])
+
+    return run
+
+
+# A folder or file by ``(st_dev, st_ino)``: the same whatever name or descriptor reaches it.
+type Identity = tuple[int, int]
+
+
+class PathRead(NamedTuple):
+    """One call that reads a path: its name, the path, and the identity of its descriptor.
+
+    The path is absolute when the call names it from the current folder, and reads
+    ``<fd N>/<name>`` when it is relative to an open folder (or ``<fd N>`` for the folder itself).
+    ``identity`` is that open folder's (or descriptor's) identity, taken at the call, and
+    ``None`` for a path named from the current folder. ``flags`` is how an open asks for the path:
+    ``os.open``'s flags, or the builtin ``open``'s mode (``"r"`` when not given); ``None`` for a
+    call that does not open.
+    """
+
+    call: str
+    path: str
+    identity: Identity | None = None
+    flags: int | str | None = None
+
+
+# The calls through which a run looks at a path, each recorded before it goes through.
+PATH_READ_CALLS = ("open", "stat", "lstat")
+
+
+def _read_identity(path: Any, dir_fd: int | None) -> Identity | None:
+    descriptor = path if isinstance(path, int) else dir_fd
+    if descriptor is None:
+        return None
+    held = os.fstat(descriptor)
+    return (held.st_dev, held.st_ino)
+
+
+def _read_path(path: Any, dir_fd: int | None) -> str:
+    if isinstance(path, int):
+        return f"<fd {path}>"
+    name = os.fsdecode(path)
+    if dir_fd is not None:
+        return f"<fd {dir_fd}>/{name}"
+    return os.path.join(os.getcwd(), name)
+
+
+def _recorded_listing(
+    reads: list[PathRead], call: str, real: Callable[..., Any]
+) -> Callable[..., Any]:
+    """``real`` (``os.scandir`` or ``os.listdir``), each call recorded in ``reads``."""
+
+    def recorded(path: Any = os.curdir) -> Any:
+        # ``os.listdir(None)`` lists the current folder.
+        named = os.curdir if path is None else path
+        reads.append(PathRead(call, _read_path(named, None), _read_identity(named, None)))
+        return real(path)
+
+    return recorded
+
+
+@pytest.fixture
+def path_reads(monkeypatch: pytest.MonkeyPatch) -> list[PathRead]:
+    """Every path given to ``os.open``, ``os.stat``, ``os.lstat``, ``os.scandir`` and
+    ``os.listdir``, in order, each with the identity of the descriptor it is given or relative to,
+    and an open's flags or mode.
+
+    The builtin ``open`` (also ``io.open``, which ``Path.read_bytes`` uses) is recorded as
+    ``builtin-open`` when given a path, not a descriptor. A ``subprocess.Popen`` is recorded as
+    ``Popen`` with the folder it runs in. Each call goes through.
+    """
+    reads: list[PathRead] = []
+
+    def wrap(call: str, real: Callable[..., Any]) -> Callable[..., Any]:
+        def recorded(path: Any, *args: Any, dir_fd: int | None = None, **kwargs: Any) -> Any:
+            flags = (args[0] if args else kwargs.get("flags")) if call == "open" else None
+            identity = _read_identity(path, dir_fd)
+            reads.append(PathRead(call, _read_path(path, dir_fd), identity, flags))
+            return real(path, *args, dir_fd=dir_fd, **kwargs)
+
+        return recorded
+
+    for call in PATH_READ_CALLS:
+        monkeypatch.setattr(os, call, wrap(call, getattr(os, call)))
+    for call in ("scandir", "listdir"):
+        monkeypatch.setattr(os, call, _recorded_listing(reads, call, getattr(os, call)))
+    real_open = builtins.open
+
+    def recorded_open(file: Any, *args: Any, **kwargs: Any) -> Any:
+        if not isinstance(file, int):
+            mode = args[0] if args else kwargs.get("mode", "r")
+            reads.append(PathRead("builtin-open", _read_path(file, None), None, mode))
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", recorded_open)
+    monkeypatch.setattr(io, "open", recorded_open)
+    real_popen = subprocess.Popen
+
+    def recorded_popen(*args: Any, **kwargs: Any) -> Any:
+        folder = kwargs.get("cwd")
+        reads.append(PathRead("Popen", os.fspath(folder) if folder is not None else os.getcwd()))
+        return real_popen(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", recorded_popen)
+    return reads
+
+
+def reads_in_folder(reads: list[PathRead], folder: Path) -> set[str]:
+    """The paths read inside ``folder`` (itself included), and every read relative to a folder."""
+    # Taken before ``realpath``, whose own looks the recorder would add.
+    recorded = list(reads)
+    real = os.path.realpath(folder)
+    return {
+        read.path
+        for read in recorded
+        if read.path.startswith("<fd") or read.path == real or read.path.startswith(real + os.sep)
+    }
+
+
+def folder_ancestors(folder: str, *, up_to: Path) -> set[str]:
+    """``folder`` and each folder above it, up to and including ``up_to`` (real paths)."""
+    top = os.path.realpath(up_to)
+    found = {top}
+    while folder != top:
+        found.add(folder)
+        folder = os.path.dirname(folder)
+    return found
+
+
+def reads_under_folder(reads: list[PathRead], folder: Path) -> set[str]:
+    """The paths read at or below ``folder``, named from it (a ``<fd N>`` read is not).
+
+    A path is judged by its normalized form, so ``folder/../other`` is not below ``folder``.
+    """
+    recorded = list(reads)
+    real = os.path.realpath(folder)
+    return {
+        read.path
+        for read in recorded
+        if (normal := os.path.normpath(read.path)) == real or normal.startswith(real + os.sep)
+    }
+
+
+@pytest.fixture
+def reads_in() -> Callable[[list[PathRead], Path], set[str]]:
+    """``reads_in(path_reads, folder)``: the paths read inside ``folder``, and every ``<fd N>``."""
+    return reads_in_folder
+
+
+@pytest.fixture
+def ancestors() -> Callable[..., set[str]]:
+    """``ancestors(real_folder, up_to=top)``: the folder and each one above it up to ``top``."""
+    return folder_ancestors
+
+
+@pytest.fixture
+def under() -> Callable[[list[PathRead], Path], set[str]]:
+    """``under(path_reads, folder)``: the recorded paths at or below ``folder``."""
+    return reads_under_folder
+
+
+# The calls through which the writer changes a tree, each recorded by the name it changes.
+ADAPTER_CALLS = ("replace", "unlink", "mkdir")
+
+
+@pytest.fixture
+def adapter_calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
+    """``(call, name)`` of every ``os.replace``, ``os.unlink`` and ``os.mkdir``, in order.
+
+    ``name`` is the destination as given (relative to its ``dir_fd``); each call goes through.
+    """
+    calls: list[tuple[str, str]] = []
+
+    def wrap(call: str, real: Callable[..., Any]) -> Callable[..., Any]:
+        def recorded(*args: Any, **kwargs: Any) -> Any:
+            destination = args[1] if call == "replace" else args[0]
+            calls.append((call, os.fsdecode(destination)))
+            return real(*args, **kwargs)
+
+        return recorded
+
+    for call in ADAPTER_CALLS:
+        monkeypatch.setattr(os, call, wrap(call, getattr(os, call)))
+    return calls
+
+
+def leftover_entries(root: Path) -> list[str]:
+    """The paths under ``root`` whose name has the temp shape."""
+    return [
+        (Path(folder) / name).relative_to(root).as_posix()
+        for folder, folders, files in os.walk(root)
+        for name in [*folders, *files]
+        if is_leftover_name(name)
+    ]
+
+
+@pytest.fixture
+def temp_entries() -> Callable[[Path], list[str]]:
+    """``temp_entries(root)``: the paths under ``root`` whose name has the temp shape."""
+    return leftover_entries
+
+
+def fail_call_once(patch: pytest.MonkeyPatch, *, call: str, name: str | None) -> None:
+    """Make the first ``os.<call>`` (``replace`` or ``unlink``) of ``name`` raise ``EIO``.
+
+    ``name`` is the destination as given (relative to its ``dir_fd``); ``None`` fails the first
+    call whatever it names. Every later call goes through.
+    """
+    real = getattr(os, call)
+    failed: list[str] = []
+
+    def failing(*args: Any, **kwargs: Any) -> Any:
+        destination = os.fsdecode(args[1] if call == "replace" else args[0])
+        if not failed and name in {None, destination}:
+            failed.append(destination)
+            raise OSError(errno.EIO, os.strerror(errno.EIO))
+        return real(*args, **kwargs)
+
+    patch.setattr(os, call, failing)
+
+
+@pytest.fixture
+def fail_once() -> Callable[..., None]:
+    """``fail_once(patch, call=..., name=...)``: the first matching ``os.<call>`` raises ``EIO``."""
+    return fail_call_once
+
+
+class Ac4Hub(NamedTuple):
+    """AC-16.4's hub (AGH-16): ``make(hub)`` deletes ``hub.lock``, appends a line to ``Makefile``,
+    takes ``u+x`` from ``guard``, edits the seeded ``now`` and deletes ``schema``; ``listing`` is
+    the line adopt prints for each of the two managed files that then differ, in path order."""
+
+    make: Callable[[Path], Path]
+    guard: str
+    now: str
+    schema: str
+    listing: tuple[str, ...]
+
+
+AC4_GUARD = "plugin/hub-workflow/hooks/guard.py"
+AC4_NOW = "brain/now.md"
+AC4_SCHEMA = "hub.schema.json"
+
+
+def _make_ac4_hub(hub: Path) -> Path:
+    (hub / "hub.lock").unlink()
+    with (hub / "Makefile").open("ab") as makefile:
+        makefile.write(b"local:\n")
+    os.chmod(hub / AC4_GUARD, 0o644)
+    (hub / AC4_NOW).write_bytes(b"# Now\nShip the adopt.\n")
+    (hub / AC4_SCHEMA).unlink()
+    return hub
+
+
+@pytest.fixture
+def ac4() -> Ac4Hub:
+    """AC-16.4's hub edits, its paths and its listing (``Ac4Hub``)."""
+    return Ac4Hub(
+        make=_make_ac4_hub,
+        guard=AC4_GUARD,
+        now=AC4_NOW,
+        schema=AC4_SCHEMA,
+        listing=(
+            "Makefile: +0 -1 lines",
+            f"{AC4_GUARD}: +0 -0 lines, executable bit differs (on disk -x, render +x)",
+        ),
+    )
+
+
+@pytest.fixture
+def demo_config_file(tmp_path: Path, demo_document: dict[str, Any]) -> Path:
+    """``DEMO`` written in the one JSON form, outside any target folder."""
+    folder = tmp_path / "config"
+    folder.mkdir()
+    path = folder / "hub.json"
+    path.write_bytes(dump_json(demo_document))
+    return path
+
+
+@pytest.fixture
+def demo_flags() -> list[str]:
+    """The ``init`` arguments of the spec's ``DEMO_FLAGS``."""
+    return list(DEMO_FLAGS)
+
+
+# One entry of a digest: the type, the permission bits, and the bytes or the link target.
+type DigestEntry = tuple[str, int, bytes | str | None]
+type TreeDigest = Callable[[Path], dict[str, DigestEntry]]
+
+
+def _digest_entry(path: Path) -> DigestEntry:
+    status = path.lstat()
+    mode = stat.S_IMODE(status.st_mode)
+    if stat.S_ISLNK(status.st_mode):
+        return ("link", mode, os.readlink(path))
+    if stat.S_ISREG(status.st_mode):
+        return ("file", mode, path.read_bytes())
+    if stat.S_ISDIR(status.st_mode):
+        return ("folder", mode, None)
+    return ("other", mode, None)
+
+
+@pytest.fixture
+def tree_digest() -> TreeDigest:
+    """Digest a path: every entry under it (itself as ``.``), never following a link.
+
+    Each entry is its type, permission bits, and a file's bytes or a link's target, so two
+    trees with equal digests hold the same paths, bytes, modes and links.
+    """
+
+    def digest(root: Path) -> dict[str, DigestEntry]:
+        found = {".": _digest_entry(root)}
+        if found["."][0] != "folder":
+            return found
+        for folder, folders, files in os.walk(root):
+            for name in [*folders, *files]:
+                path = Path(folder) / name
+                found[path.relative_to(root).as_posix()] = _digest_entry(path)
+        return found
+
+    return digest
+
+
+@pytest.fixture
+def set_umask() -> Iterator[Callable[[int], None]]:
+    """Set the process umask for the test; the original one is restored afterwards."""
+    original = os.umask(0o022)
+    os.umask(original)
+    try:
+        yield lambda mask: os.umask(mask) and None
+    finally:
+        os.umask(original)
+
+
+# The golden harness of the init lock (AC-12.28). Its twin is ``update_mode`` in
+# packages/generator/tests/integration/conftest.py, which a conftest cannot import: same variable,
+# same refusal under CI, same message.
+UPDATE_VARIABLE = "GOLDEN_UPDATE"
+DEMO_LOCK_GOLDEN = Path(__file__).parent / "golden" / "init" / "demo.hub.lock"
+VERSION_MARK = "<VERSION>"
+UPDATE_HINT = (
+    f"Update: {UPDATE_VARIABLE}=1 uv run --locked --all-packages pytest -m integration "
+    "packages/cli/tests/integration/test_synthetic_demo.py -q, "
+    "then review and commit the golden diff"
+)
+# A child never rewrites goldens, keeps roots or runs as CI because this run does.
+CHILD_DROPPED = frozenset({UPDATE_VARIABLE, "GOLDEN_KEEP", "CI"})
+
+
+def golden_update_mode() -> bool:
+    """Whether ``GOLDEN_UPDATE=1`` asks to rewrite goldens; fails the test when ``CI`` is set."""
+    if os.environ.get(UPDATE_VARIABLE) != "1":
+        return False
+    if os.environ.get("CI"):
+        pytest.fail(
+            f"{UPDATE_VARIABLE}=1 is refused when CI is set: goldens are regenerated locally, "
+            "reviewed and committed"
+        )
+    return True
+
+
+def normalized_lock(content: bytes) -> bytes:
+    """``content`` with its one ``platform_version`` value replaced by ``<VERSION>``."""
+    field = f'"platform_version": {json.dumps(version("agent-hub-cli"))}'.encode()
+    if content.count(field) != 1:
+        pytest.fail(f"the lock holds {content.count(field)} of {field!r}, not one")
+    return content.replace(field, f'"platform_version": "{VERSION_MARK}"'.encode())
+
+
+def compare_lock_golden(
+    content: bytes, *, golden: Path = DEMO_LOCK_GOLDEN, update: bool | None = None
+) -> None:
+    """Fail unless the normalized ``content`` equals ``golden``; update mode rewrites it instead.
+
+    Update mode is read (and refused under ``CI``) before anything is compared, unless ``update``
+    is given: ``False`` only compares, whatever ``GOLDEN_UPDATE`` says.
+    """
+    if update is None:
+        update = golden_update_mode()
+    new = normalized_lock(content)
+    old = golden.read_bytes() if golden.is_file() else None
+    if old == new:
+        return
+    if update:
+        golden.parent.mkdir(parents=True, exist_ok=True)
+        golden.write_bytes(new)
+        sys.stderr.write(f"wrote {golden}\n")
+        return
+    if old is None:
+        pytest.fail(f"missing golden {golden}\n{UPDATE_HINT}")
+    diff = difflib.unified_diff(
+        old.decode(errors="replace").splitlines(),
+        new.decode(errors="replace").splitlines(),
+        "golden",
+        "actual",
+        lineterm="",
+    )
+    pytest.fail("\n".join([f"{golden} differs from the lock:", *diff, UPDATE_HINT]))
+
+
+@pytest.fixture
+def lock_golden() -> Callable[..., None]:
+    """Compare a ``hub.lock`` with its golden (``demo.hub.lock`` by default) or rewrite it."""
+    return compare_lock_golden
+
+
+def _compare_text_golden(actual: bytes, golden: Path, hint: str) -> None:
+    """Fail unless ``actual`` equals ``golden`` byte for byte; update mode rewrites it instead.
+
+    As ``compare_lock_golden``, with no normalization: update mode is read (and refused under
+    ``CI``) before anything is compared; ``hint`` says how to update.
+    """
+    update = golden_update_mode()
+    old = golden.read_bytes() if golden.is_file() else None
+    if old == actual:
+        return
+    if update:
+        golden.parent.mkdir(parents=True, exist_ok=True)
+        golden.write_bytes(actual)
+        sys.stderr.write(f"wrote {golden}\n")
+        return
+    if old is None:
+        pytest.fail(f"missing golden {golden}\n{hint}")
+    diff = difflib.unified_diff(
+        old.decode(errors="replace").splitlines(),
+        actual.decode(errors="replace").splitlines(),
+        "golden",
+        "actual",
+        lineterm="",
+    )
+    pytest.fail("\n".join([f"{golden} differs from the output:", *diff, hint]))
+
+
+type TextGoldenComparer = Callable[[bytes, Path, str], None]
+
+
+@pytest.fixture
+def compare_text_golden() -> TextGoldenComparer:
+    """Compare output bytes with a golden file ``(actual, golden, hint)`` or rewrite it."""
+    return _compare_text_golden
+
+
+@pytest.fixture
+def child_env() -> Callable[[Mapping[str, str]], dict[str, str]]:
+    """Build a child's environment from ``values`` alone, the harness mode variables dropped."""
+
+    def build(values: Mapping[str, str]) -> dict[str, str]:
+        return {name: value for name, value in values.items() if name not in CHILD_DROPPED}
+
+    return build
+
+
+# The spec's "DEMO workspace" (AC-15.1 to AC-15.4): a DEMO hub whose default branch is trunk and
+# whose two repos are clones of local bare origins, each origin advanced after the clone.
+WORKSPACE_BRANCH = "trunk"
+WORKSPACE_REPOS = ("demo-api", "demo-web")
+_WORKSPACE_IDENTITY = ("-c", "user.name=Jane Doe", "-c", "user.email=jane@example.com")
+
+
+def _workspace_git_env(home: Path) -> dict[str, str]:
+    """Git with this home only: no system or global config, no location variable."""
+    return {
+        "PATH": os.environ["PATH"],
+        "HOME": str(home),
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        GIT_PROTOCOL_VARIABLE: LOCAL_GIT_PROTOCOL,
+    }
+
+
+def _run_git(folder: Path, env: Mapping[str, str], *args: str, path: str | None = None) -> str:
+    # ``path`` set: the git on that search path, never a traced one put first on ``PATH``.
+    git = shutil.which("git", path=path)
+    assert git is not None, "git is needed for a DEMO workspace"
+    completed = subprocess.run(  # noqa: S603 - absolute git, fixed arguments, a tmp_path folder
+        [os.path.abspath(git), *_WORKSPACE_IDENTITY, "-c", "commit.gpgsign=false", *args],
+        cwd=folder,
+        env=dict(env),
+        check=True,
+        capture_output=True,
+    )
+    return completed.stdout.decode().strip()
+
+
+# The project keys a developer may set in hub.local.json instead of hub.json.
+_IDENTITY_KEYS = ("branch_prefix", "author_name", "author_email")
+
+
+class DemoWorkspace:
+    """A ``DEMO`` workspace: ``ws/hub``, one clone per repo, their bare origins in ``origins``.
+
+    ``setenv`` (a test's ``monkeypatch.setenv``) changes the command's environment; only a
+    test's copy has one.
+    """
+
+    def __init__(
+        self,
+        base: Path,
+        env: Mapping[str, str],
+        *,
+        setenv: Callable[[str, str], None] | None = None,
+    ) -> None:
+        self.base = base
+        self.ws = base / "ws"
+        self.hub = self.ws / "hub"
+        self.origins = base / "origins"
+        self.env = dict(env)
+        self._setenv = setenv
+        # The global git config the first ``git_identity`` call replaced; every call includes it.
+        self._replaced_global: str | None = None
+
+    def write_local(self, text: str) -> None:
+        """Write the developer's ``hub.local.json`` in the hub."""
+        (self.hub / "hub.local.json").write_text(text, encoding="utf-8")
+
+    def drop_identity(self) -> None:
+        """Remove ``branch_prefix``, ``author_name`` and ``author_email`` from ``hub.json``."""
+        path = self.hub / "hub.json"
+        document = json.loads(path.read_text())
+        for key in _IDENTITY_KEYS:
+            document["project"].pop(key, None)
+        path.write_text(json.dumps(document, indent=2) + "\n")
+
+    def git_identity(self, name: str, email: str) -> None:
+        """Give the command's git this ``user.name`` and ``user.email``: ``base/gitconfig``
+        becomes its global config, including the one the first call replaced (a run's url
+        rewrites), however often it is called."""
+        assert self._setenv is not None, "only a test's copy of the workspace has an environment"
+        config = self.base / "gitconfig"
+        if self._replaced_global is None:
+            self._replaced_global = os.environ.get("GIT_CONFIG_GLOBAL", os.devnull)
+        replaced = self._replaced_global
+        included = (
+            "" if replaced in (os.devnull, str(config)) else f"[include]\n\tpath = {replaced}\n"
+        )
+        config.write_text(f"{included}[user]\n\tname = {name}\n\temail = {email}\n")
+        self._setenv("GIT_CONFIG_GLOBAL", str(config))
+
+    def rewrite_github(self, owner: str = "acme") -> None:
+        """Send the command's git for ``owner``'s GitHub repos, over https or ssh, to the local
+        origins: ``base/github.gitconfig`` becomes its global config. Call it before
+        ``git_identity``, which then includes it."""
+        assert self._setenv is not None, "only a test's copy of the workspace has an environment"
+        assert self._replaced_global is None, (
+            "call rewrite_github before git_identity: both set GIT_CONFIG_GLOBAL, and only"
+            " git_identity includes the other"
+        )
+        config = self.base / "github.gitconfig"
+        config.write_text(
+            f'[url "file://{self.origins}/"]\n'
+            f"\tinsteadOf = https://github.com/{owner}/\n"
+            f"\tinsteadOf = git@github.com:{owner}/\n",
+            encoding="utf-8",
+        )
+        self._setenv("GIT_CONFIG_GLOBAL", str(config))
+
+    def init_hub_repo(self, origin: str | None) -> None:
+        """Make the hub a git repo on ``trunk`` with one commit of its files, and ``origin`` its
+        ``origin`` remote when given (the URL is only recorded, never reached).
+
+        The workspace's own git runs (``git``), so a traced git logs none of these calls."""
+        steps = [
+            ("init", "-q", "-b", WORKSPACE_BRANCH),
+            ("add", "-A"),
+            ("commit", "-q", "-m", "init"),
+        ]
+        if origin is not None:
+            steps.append(("remote", "add", "origin", origin))
+        for step in steps:
+            self.git(self.hub, *step)
+
+    def git(self, folder: Path, *args: str) -> str:
+        """Run git in ``folder`` and return its stripped stdout; a failure fails the test.
+
+        The git is found on the workspace's own ``PATH``, so a traced git a test put first on
+        the process's ``PATH`` never runs (nor logs, nor hangs) a workspace helper's call."""
+        return _run_git(folder, self.env, *args, path=self.env["PATH"])
+
+    def origin(self, repo: str) -> Path:
+        return self.origins / f"{repo}.git"
+
+    def origin_head(self, repo: str, branch: str = WORKSPACE_BRANCH) -> str:
+        return self.git(self.origin(repo), "rev-parse", branch)
+
+    def use_repo_branch(self, repo: str, branch: str) -> None:
+        """Rename ``repo``'s only origin branch to ``branch``, fetch it into the clone (pruned)
+        and set ``repos[].default_branch`` in the hub's ``hub.json``."""
+        self.git(self.origin(repo), "branch", "-m", WORKSPACE_BRANCH, branch)
+        clone = self.ws / repo
+        # By path, not by remote name: hub run's workspace points the remote at a GitHub url.
+        refspec = "+refs/heads/*:refs/remotes/origin/*"
+        self.git(clone, "fetch", "-q", "--prune", str(self.origin(repo)), refspec)
+        self.git(clone, "remote", "set-head", "origin", branch)
+        path = self.hub / "hub.json"
+        document = json.loads(path.read_text())
+        entry = next(entry for entry in document["repos"] if entry["dir"] == repo)
+        entry["default_branch"] = branch
+        path.write_text(json.dumps(document, indent=2) + "\n")
+
+    def use_teams(self, *keys: str) -> None:
+        """Replace ``tracker.team`` with ``tracker.teams`` (``keys``) in the hub's ``hub.json``."""
+        path = self.hub / "hub.json"
+        document = json.loads(path.read_text())
+        del document["tracker"]["team"]
+        document["tracker"]["teams"] = list(keys)
+        path.write_text(json.dumps(document, indent=2) + "\n")
+
+    def use_conventions(
+        self,
+        *,
+        project: Mapping[str, str] | None = None,
+        repos: Mapping[str, Mapping[str, str]] | None = None,
+    ) -> None:
+        """Set ``project.conventions`` (``project``) and each named repo's ``conventions``
+        (``repos``: dir → keys) in the hub's ``hub.json``."""
+        path = self.hub / "hub.json"
+        document = json.loads(path.read_text())
+        if project is not None:
+            document["project"]["conventions"] = dict(project)
+        for entry in document["repos"]:
+            if repos is not None and entry["dir"] in repos:
+                entry["conventions"] = dict(repos[entry["dir"]])
+        path.write_text(json.dumps(document, indent=2) + "\n")
+
+    def worktree(self, repo: str, name: str) -> Path:
+        return self.ws / repo / ".claude" / "worktrees" / name
+
+    def advance(self, repo: str, files: Mapping[str, tuple[bytes, int]] | None = None) -> str:
+        """Push one commit to ``repo``'s origin (``files``: path → content and mode); its sha."""
+        pusher = self.base / "pusher"
+        shutil.rmtree(pusher, ignore_errors=True)
+        # No auto-maintenance in the throwaway clone: a detached one still writes in its .git
+        # while the rmtree below removes it (Directory not empty).
+        options = [arg for key, value in _NO_MAINTENANCE for arg in ("-c", f"{key}={value}")]
+        self.git(self.base, "clone", "-q", *options, str(self.origin(repo)), str(pusher))
+        written = dict(files or {"CHANGES.md": (f"{self.origin_head(repo)}\n".encode(), 0o644)})
+        for path, (content, mode) in written.items():
+            target = pusher / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+            target.chmod(mode)
+        self.git(pusher, "add", "-A")
+        self.git(pusher, "commit", "-q", "-m", "advance")
+        self.git(pusher, "push", "-q", "origin", WORKSPACE_BRANCH)
+        shutil.rmtree(pusher)
+        return self.origin_head(repo)
+
+
+def _build_workspace(base: Path) -> DemoWorkspace:
+    home = base / "home"
+    home.mkdir()
+    workspace = DemoWorkspace(base, _workspace_git_env(home))
+    document = demo_document_value()
+    document["project"]["default_branch"] = WORKSPACE_BRANCH
+    document["repos"].append(a_second_repo())
+    config = base / "workspace-hub.json"
+    config.write_bytes(dump_json(document))
+    result = CliRunner().invoke(app, ["init", "--config", str(config), "--dir", str(workspace.hub)])
+    assert result.exit_code == 0, result.stderr
+    config.unlink()
+    for repo in WORKSPACE_REPOS:
+        seed = base / "seed" / repo
+        seed.mkdir(parents=True)
+        workspace.git(seed, "-c", f"init.defaultBranch={WORKSPACE_BRANCH}", "init", "-q")
+        (seed / "README.md").write_bytes(f"# {repo}\n".encode())
+        workspace.git(seed, "add", "-A")
+        workspace.git(seed, "commit", "-q", "-m", "init")
+        workspace.git(base, "clone", "-q", "--bare", str(seed), str(workspace.origin(repo)))
+        workspace.git(base, "clone", "-q", str(workspace.origin(repo)), str(workspace.ws / repo))
+        workspace.advance(repo)
+    shutil.rmtree(base / "seed")
+    return workspace
+
+
+@pytest.fixture(scope="session")
+def demo_workspace_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The ``DEMO`` workspace built once per session: never change it."""
+    return _build_workspace(tmp_path_factory.mktemp("demo-workspace-template")).base
+
+
+@pytest.fixture
+def demo_workspace(
+    tmp_path: Path, demo_workspace_template: Path, monkeypatch: pytest.MonkeyPatch
+) -> DemoWorkspace:
+    """A copy of the ``DEMO`` workspace in ``tmp_path``, each clone's origin pointed at its copy.
+
+    The command's git reads no system or global config and finds no repo above ``tmp_path``.
+    """
+    base = tmp_path / "workspace"
+    shutil.copytree(demo_workspace_template, base, symlinks=True)
+    workspace = DemoWorkspace(base, _workspace_git_env(base / "home"), setenv=monkeypatch.setenv)
+    for repo in WORKSPACE_REPOS:
+        workspace.git(
+            workspace.ws / repo, "remote", "set-url", "origin", str(workspace.origin(repo))
+        )
+    for name, value in workspace.env.items():
+        if name != "PATH":
+            monkeypatch.setenv(name, value)
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    return workspace
+
+
+@pytest.fixture
+def traced_git(
+    demo_workspace: DemoWorkspace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> FakeGit:
+    """``demo_workspace`` with a ``/bin/sh`` ``git`` first on ``PATH`` that logs each call as
+    ``fake_git``'s does, then runs the real git."""
+    real = shutil.which("git")
+    assert real is not None, "git is needed for a DEMO workspace"
+    bin_dir = tmp_path / "traced-git-bin"
+    bin_dir.mkdir()
+    log_path = tmp_path / "traced-git.log"
+    script = bin_dir / "git"
+    script.write_text(
+        "#!/bin/sh\n"
+        f'printf \'%s\\t%s\\n\' "$(pwd -P)" "$*" >> {shlex.quote(str(log_path))}\n'
+        f'exec {shlex.quote(os.path.abspath(real))} "$@"\n',
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    return FakeGit(bin_dir=bin_dir, log_path=log_path)
+
+
+class GitCall(NamedTuple):
+    """One call ``env_traced_git`` logged: its physical working directory, its arguments joined
+    by spaces, its ``GIT_TERMINAL_PROMPT`` (``unset`` when unset), and whether ``GIT_DIR`` and
+    ``LINEAR_API_KEY`` were set (even empty), and its process id (the git it ``exec``s, or
+    the ``sleep`` of a hang, keeps it)."""
+
+    cwd: str
+    args: str
+    prompt: str
+    has_git_dir: bool
+    has_key: bool
+    pid: int
+
+
+class EnvTracedGit(NamedTuple):
+    """A ``/bin/sh`` ``git`` in ``bin_dir`` that logs each call to ``log_path``, then runs the real
+    git, unless ``hang_path`` exists and the call is a clone or a fetch."""
+
+    bin_dir: Path
+    log_path: Path
+    hang_path: Path
+
+    def calls(self) -> list[GitCall]:
+        """Each logged call, in order.
+
+        One line per call, fields split on tabs: a tab or a newline inside an argument or the
+        working directory is not supported (it would split a call's line)."""
+        if not self.log_path.exists():
+            return []
+        lines = self.log_path.read_text(encoding="utf-8").splitlines()
+        return [
+            GitCall(
+                cwd,
+                args,
+                prompt,
+                has_git_dir=git_dir == "set",
+                has_key=key == "set",
+                pid=int(pid),
+            )
+            for cwd, args, prompt, git_dir, key, pid in (line.split("\t") for line in lines)
+        ]
+
+
+@pytest.fixture
+def env_traced_git(
+    demo_workspace: DemoWorkspace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> EnvTracedGit:
+    """``demo_workspace`` with a ``/bin/sh`` ``git`` first on ``PATH`` that logs each call with
+    its environment (``GitCall``), then runs the real git.
+
+    Once ``hang_path`` exists, a call whose arguments hold the word ``clone`` or ``fetch``
+    becomes ``sleep 30`` instead (``exec``, so it keeps the logged pid and no shell is left
+    holding the caller's pipes), as a network call that never answers.
+    """
+    real = shutil.which("git")
+    assert real is not None, "git is needed for a DEMO workspace"
+    bin_dir = tmp_path / "env-traced-git-bin"
+    bin_dir.mkdir()
+    log_path = tmp_path / "env-traced-git.log"
+    hang_path = tmp_path / "env-traced-git.hang"
+    script = bin_dir / "git"
+    script.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n'"
+        ' "$(pwd -P)" "$*" "${GIT_TERMINAL_PROMPT-unset}" "${GIT_DIR+set}" "${LINEAR_API_KEY+set}"'
+        ' "$$"'
+        f" >> {shlex.quote(str(log_path))}\n"
+        f"if [ -e {shlex.quote(str(hang_path))} ]; then\n"
+        '  case " $* " in\n'
+        '    *" clone "*|*" fetch "*) exec sleep 30 ;;\n'
+        "  esac\n"
+        "fi\n"
+        f'exec {shlex.quote(os.path.abspath(real))} "$@"\n',
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    return EnvTracedGit(bin_dir=bin_dir, log_path=log_path, hang_path=hang_path)
+
+
+type CommandRunner = Callable[..., Result]
+
+
+@pytest.fixture
+def run_command(monkeypatch: pytest.MonkeyPatch) -> CommandRunner:
+    """Run ``hub <args>`` in process with ``root`` as the current folder; ``env`` as CliRunner's."""
+
+    def run(root: Path, *args: str, env: Mapping[str, str | None] | None = None) -> Result:
+        monkeypatch.chdir(root)
+        return CliRunner().invoke(app, list(args), env=env)
+
+    return run
+
+
+# The hub's brief workspace (hub ``tests/characterization/support/{fixtures,workspace}.py`` at
+# hub commit 8eaebae), rebuilt so that ``hub brief`` reproduces the hub's brief goldens: the same
+# frozen instant, identity, files, commit dates and fake ``gh`` answers. Only ``hub.json`` differs:
+# it is made model-valid (``schema_version``, ``platform``, ``check_fast``/``check``, the author).
+BRIEF_INSTANT = 1768473000  # 2026-01-15T10:30:00Z
+BRIEF_HUB = "demo-hub"
+BRIEF_SYSTEM_PATH = ("/usr/bin", "/bin", "/usr/sbin", "/sbin")
+_BRIEF_IDENTITY = ("Test User", "t@example.com")
+_REPO_IGNORES = (".claude/worktrees/", ".venv/", "node_modules/", "__pycache__/")
+_HUB_IGNORES = (
+    *_REPO_IGNORES,
+    ".agent-runs/",
+    "brain/_inbox/sessions/",
+    "brain/auto/workspace/session-snapshot.md",
+)
+# Newer git runs auto-maintenance after commits; its lock files would come and go in a copy.
+_NO_MAINTENANCE = (
+    ("maintenance.auto", "false"),
+    ("maintenance.autoDetach", "false"),
+    ("gc.auto", "0"),
+    ("gc.autoDetach", "false"),
+)
+BRIEF_NOW = "---\nlast_verified: 2026-01-12\n---\n# Now\nShip the collector.\nThen the CLI.\n"
+
+
+def _brief_titles(day: int, count: int, width: int) -> str:
+    return "".join(
+        f"## Day {day} topic {index}: " + "x" * width + "\n" for index in range(1, count + 1)
+    )
+
+
+BRIEF_JOURNAL = {
+    "brain/journal/2026/01/14.md": (
+        "---\ntype: journal\n---\n# 2026-01-14\n"
+        + _brief_titles(14, 4, 80)
+        + "### not a title\nbody text\n"
+    ),
+    "brain/journal/2026/01/13.md": (
+        "# 2026-01-13\n## Fixed the loader\nnotes\n## Reviewed slice A\n"
+    ),
+    "brain/journal/2026/01/10.md": "## Older day in the week\n",
+    "brain/journal/2026/01/06.md": "## Outside the week\n",
+}
+BRIEF_PRS = (
+    "\n".join(
+        [
+            "#41 Add login endpoint",
+            "#40 Refactor the session storage layer so that every adapter shares one connection"
+            " pool and retry policy",
+            "#38 Fix pagination",
+            "#37 Bump dependencies",
+            "#35 Fifth PR is never shown",
+        ]
+    )
+    + "\n"
+)
+# The hub repo's calls match no rule: the fake prints nothing and exits 1.
+BRIEF_GH: list[dict[str, Any]] = [
+    {"argv_has": ["pr", "acme/api"], "stdout": BRIEF_PRS},
+    {"argv_has": ["run", "acme/api"], "stdout": "lint\nbuild\nlint\n"},
+    {"argv_has": ["acme/web"], "stdout": ""},
+]
+# The fake gh: logs each call as one JSON line, sleeps a rule's delay, then answers. Written to
+# the case's bin/ at test time (a tests tree holds no helper module).
+_FAKE_GH = """import json, os, sys, time
+answers, log, invoked, args = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
+call = {"tool": "gh", "cwd": os.getcwd(), "argv": [invoked, *args]}
+with open(log, "a", encoding="utf-8") as stream:
+    stream.write(json.dumps(call, ensure_ascii=False) + "\\n")
+with open(answers, encoding="utf-8") as stream:
+    rules = json.load(stream)
+rule = next((r for r in rules if all(a in args for a in r.get("argv_has", []))), None)
+if rule is None:
+    sys.exit(1)
+barrier = rule.get("barrier")
+if barrier:  # wait until `count` calls have arrived, so only calls made at once can all pass
+    open(os.path.join(barrier["dir"], f"started.{os.getpid()}"), "w").close()
+    end = time.monotonic() + barrier["wait"]
+    while len(os.listdir(barrier["dir"])) < barrier["count"]:
+        if time.monotonic() > end:
+            sys.exit(1)
+        time.sleep(0.01)
+if "group_file" in rule:
+    with open(rule["group_file"], "w", encoding="utf-8") as stream:
+        stream.write(str(os.getpgid(0)))
+if "pid_file" in rule:
+    with open(rule["pid_file"], "w", encoding="utf-8") as stream:
+        stream.write(str(os.getpid()))
+time.sleep(rule.get("delay", 0))
+sys.stdout.buffer.write(rule.get("stdout", "").encode())
+sys.stderr.buffer.write(rule.get("stderr", "").encode())
+sys.exit(rule.get("rc", 0))
+"""
+# The fake git: waits at a rule's barrier (the fake gh's rule), then runs the real git with the
+# same arguments; a call that matches no rule runs the real git at once.
+_BRIEF_FAKE_GIT = """import json, os, sys, time
+real, answers, args = sys.argv[1], sys.argv[2], sys.argv[3:]
+with open(answers, encoding="utf-8") as stream:
+    rules = json.load(stream)
+rule = next((r for r in rules if all(a in args for a in r.get("argv_has", []))), None)
+barrier = (rule or {}).get("barrier")
+if barrier:  # wait until `count` calls have arrived, so only calls made at once can all pass
+    open(os.path.join(barrier["dir"], f"started.{os.getpid()}"), "w").close()
+    end = time.monotonic() + barrier["wait"]
+    while len(os.listdir(barrier["dir"])) < barrier["count"]:
+        if time.monotonic() > end:
+            sys.exit(1)
+        time.sleep(0.01)
+os.execv(real, [real, *args])
+"""
+
+
+def brief_at(days_before: int = 0, hhmm: str = "10:30") -> str:
+    """An ISO instant ``days_before`` days before the frozen day, at ``hhmm`` UTC."""
+    day = datetime.datetime.fromtimestamp(BRIEF_INSTANT, datetime.UTC) - datetime.timedelta(
+        days=days_before
+    )
+    return f"{day:%Y-%m-%d}T{hhmm}:00Z"
+
+
+def brief_hub_json() -> dict[str, Any]:
+    """The hub's brief ``hub.json`` (repos ``api``, ``web`` and the absent ``ui``), model-valid."""
+    checks = {"check_fast": "true", "check": "true"}
+    return {
+        "schema_version": 1,
+        "platform": {"version": version("agent-hub-cli")},
+        "project": {
+            "name": "demo",
+            "hub_repo": "acme/demo-hub",
+            "branch_prefix": "dev/",
+            "default_branch": "trunk",
+            "author_name": _BRIEF_IDENTITY[0],
+            "author_email": _BRIEF_IDENTITY[1],
+        },
+        "tracker": {"kind": "linear", "team": "TST"},
+        "repos": [
+            {"dir": "api", "github": "acme/api", **checks},
+            {"dir": "web", "github": "acme/web", **checks},
+            {"dir": "ui", "github": "acme/ui", **checks},
+        ],
+    }
+
+
+def brief_env(root: Path) -> dict[str, str]:
+    """The case environment, built from scratch: the fakes, system tools, a fixed git."""
+    name, email = _BRIEF_IDENTITY
+    env = {
+        "PATH": os.pathsep.join([str(root / "bin"), *BRIEF_SYSTEM_PATH]),
+        "HOME": str(root / "home"),
+        "XDG_CONFIG_HOME": str(root / "home" / ".config"),
+        "TZ": "UTC",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": str(root / "home" / ".gitconfig"),
+        "GIT_AUTHOR_NAME": name,
+        "GIT_AUTHOR_EMAIL": email,
+        "GIT_AUTHOR_DATE": brief_at(),
+        "GIT_COMMITTER_NAME": name,
+        "GIT_COMMITTER_EMAIL": email,
+        "GIT_COMMITTER_DATE": brief_at(),
+        GIT_PROTOCOL_VARIABLE: LOCAL_GIT_PROTOCOL,
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_CEILING_DIRECTORIES": str(root),
+        "GIT_CONFIG_COUNT": str(len(_NO_MAINTENANCE)),
+    }
+    for index, (key, value) in enumerate(_NO_MAINTENANCE):
+        env[f"GIT_CONFIG_KEY_{index}"] = key
+        env[f"GIT_CONFIG_VALUE_{index}"] = value
+    return env
+
+
+class BriefWorkspace:
+    """A case root: ``ws/demo-hub`` (the hub), ``ws/api``, ``ws/web``, ``origins/``, ``bin/gh``."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.ws = root / "ws"
+        self.hub = self.ws / BRIEF_HUB
+        self.env = brief_env(root)
+        self.log = root / "log" / "calls.jsonl"
+
+    def git(self, *args: str, cwd: Path, date: str | None = None) -> str:
+        """Run git with the case environment; ``date`` sets both commit dates."""
+        env = dict(self.env)
+        if date is not None:
+            env["GIT_AUTHOR_DATE"] = env["GIT_COMMITTER_DATE"] = date
+        git = shutil.which("git", path=env["PATH"])
+        assert git is not None, "git is needed for the brief workspace"
+        completed = subprocess.run(  # noqa: S603 - absolute git, fixed arguments, a tmp_path folder
+            [git, *args], cwd=cwd, env=env, check=True, capture_output=True
+        )
+        return completed.stdout.decode().strip()
+
+    def write(self, base: Path, files: Mapping[str, str | bytes | None]) -> None:
+        """Write (text or bytes) or delete (None) ``files`` under ``base``."""
+        for relative, content in files.items():
+            path = base / relative
+            if content is None:
+                path.unlink()
+                continue
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content if isinstance(content, bytes) else content.encode())
+
+    def make_repo(
+        self,
+        path: Path,
+        files: Mapping[str, str],
+        commits: tuple[tuple[int, str, Mapping[str, str]], ...] = (),
+        *,
+        ignores: tuple[str, ...] = _REPO_IGNORES,
+    ) -> Path:
+        """An ``init`` commit at T-30 (``files`` and ``.gitignore``), then each commit in order."""
+        path.mkdir(parents=True, exist_ok=True)
+        self.git("init", "-q", "-b", "trunk", cwd=path)
+        self.write(path, {**files, ".gitignore": "".join(f"{line}\n" for line in ignores)})
+        for index, (days_before, message, more) in enumerate([(30, "init", {}), *commits]):
+            self.write(path, more)
+            self.git("add", "-A", cwd=path)
+            self.git(
+                "commit",
+                "-q",
+                "-m",
+                message,
+                cwd=path,
+                date=brief_at(days_before, f"09:{index:02d}"),
+            )
+        return path
+
+    def bare_origin(self, repo: Path) -> None:
+        bare = self.root / "origins" / f"{repo.name}.git"
+        self.git("clone", "-q", "--bare", str(repo), str(bare), cwd=self.root)
+        self.git("remote", "add", "origin", str(bare), cwd=repo)
+        self.git("fetch", "-q", "origin", cwd=repo)
+
+    def commit_hub(self, files: Mapping[str, str | bytes | None]) -> None:
+        """Write or delete ``files`` in the hub, committed at T-0 09:30 (the hub stays clean)."""
+        self.write(self.hub, files)
+        self.git("add", "-A", cwd=self.hub)
+        self.git("commit", "-q", "-m", "case change", cwd=self.hub, date=brief_at(0, "09:30"))
+
+    def answer(self, rules: list[dict[str, Any]]) -> None:
+        """Set the fake gh's rules: the first whose ``argv_has`` items are all arguments answers."""
+        (self.root / "bin" / "answers.json").write_text(json.dumps(rules, indent=2) + "\n")
+
+    def calls(self) -> bytes:
+        """The fake gh's call log, the root shown as ``<ROOT>``."""
+        return normalized(self.log.read_bytes() if self.log.exists() else b"", self.root)
+
+    def install_gh(self) -> None:
+        bin_dir = self.root / "bin"
+        (bin_dir / "fake_gh.py").write_text(_FAKE_GH)
+        gh = bin_dir / "gh"
+        gh.write_text(
+            f'#!/bin/sh\nexec "{sys.executable}" -I -S "{bin_dir / "fake_gh.py"}"'
+            f' "{bin_dir / "answers.json"}" "{self.log}" "$0" "$@"\n'
+        )
+        gh.chmod(0o755)
+        self.answer(BRIEF_GH)
+
+    def install_git(self, rules: list[dict[str, Any]]) -> None:
+        """Put the fake git first on ``PATH``: the first rule whose ``argv_has`` items are all
+        arguments sets its ``barrier``; every call then runs the real git."""
+        real = shutil.which("git", path=os.pathsep.join(BRIEF_SYSTEM_PATH))
+        assert real is not None, "git is needed for the brief workspace"
+        bin_dir = self.root / "bin"
+        answers = bin_dir / "git-answers.json"
+        answers.write_text(json.dumps(rules, indent=2) + "\n")
+        (bin_dir / "fake_git.py").write_text(_BRIEF_FAKE_GIT)
+        git = bin_dir / "git"
+        git.write_text(
+            f'#!/bin/sh\nexec "{sys.executable}" -I -S "{bin_dir / "fake_git.py"}"'
+            f' "{real}" "{answers}" "$@"\n'
+        )
+        git.chmod(0o755)
+
+
+def _build_brief_workspace(root: Path) -> None:
+    for folder in ("ws", "origins", "home/.config", "bin", "log", "elsewhere"):
+        (root / folder).mkdir(parents=True)
+    workspace = BriefWorkspace(root)
+    hub_files = {
+        **BRIEF_JOURNAL,
+        "brain/now.md": BRIEF_NOW,
+        "hub.json": json.dumps(brief_hub_json(), indent=2) + "\n",
+    }
+    workspace.make_repo(workspace.hub, hub_files, ignores=_HUB_IGNORES)
+    workspace.bare_origin(workspace.hub)
+    api = workspace.make_repo(
+        workspace.ws / "api", {"README.md": "api\n"}, ((3, "add app", {"app.py": "x = 1\n"}),)
+    )
+    workspace.bare_origin(api)
+    pusher = root / "elsewhere" / "api-pusher"
+    workspace.git("clone", "-q", str(root / "origins" / "api.git"), str(pusher), cwd=root)
+    workspace.write(pusher, {"app.py": "x = 2\n"})
+    workspace.git("commit", "-q", "-am", "upstream change", cwd=pusher, date=brief_at(1, "09:00"))
+    workspace.git("push", "-q", "origin", "trunk", cwd=pusher)
+    workspace.git("fetch", "-q", "origin", cwd=api)
+    workspace.write(api, {"README.md": "api, edited\n", "notes.txt": "untracked\n"})
+    web = workspace.make_repo(
+        workspace.ws / "web", {"index.html": "<p>web</p>\n"}, ((2, "style", {"a.css": "p{}\n"}),)
+    )
+    workspace.git("checkout", "-q", "--detach", cwd=web)
+
+
+@pytest.fixture(scope="session")
+def brief_workspace_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The brief workspace built once per session: never change it."""
+    root = tmp_path_factory.mktemp("brief-workspace-template").resolve()
+    _build_brief_workspace(root)
+    return root
+
+
+@pytest.fixture
+def brief_workspace(
+    tmp_path: Path, brief_workspace_template: Path, monkeypatch: pytest.MonkeyPatch
+) -> BriefWorkspace:
+    """A copy of the brief workspace at ``tmp_path/root``, its environment set for the run.
+
+    Each origin URL is pointed at the copy; the fake ``gh`` answers ``BRIEF_GH``.
+    """
+    root = (tmp_path / "root").resolve()
+    shutil.copytree(brief_workspace_template, root, symlinks=True)
+    workspace = BriefWorkspace(root)
+    for checkout in (workspace.hub, workspace.ws / "api"):
+        url = workspace.git("remote", "get-url", "origin", cwd=checkout)
+        copied = str(root) + url.removeprefix(str(brief_workspace_template))
+        workspace.git("remote", "set-url", "origin", copied, cwd=checkout)
+    workspace.install_gh()
+    for name in [name for name in os.environ if name.startswith(GIT_VARIABLE_PREFIX)]:
+        monkeypatch.delenv(name)
+    for name, value in workspace.env.items():
+        monkeypatch.setenv(name, value)
+    return workspace
+
+
+def normalized(data: bytes, root: Path) -> bytes:
+    """``data`` with the case root shown as ``<ROOT>``."""
+    return data.replace(str(root).encode(), b"<ROOT>")
+
+
+_GOLDEN_HEADER = re.compile(rb"--- (\w+) \((\d+) bytes\) ---\n")
+
+
+def _golden_sections(path: Path) -> dict[str, bytes]:
+    """The sections of a hub characterization golden: ``{stream: bytes}``, in file order."""
+    data = path.read_bytes()
+    sections: dict[str, bytes] = {}
+    position = 0
+    while position < len(data):
+        header = _GOLDEN_HEADER.match(data, position)
+        assert header is not None, f"{path}: no section header at byte {position}"
+        start = header.end()
+        end = start + int(header.group(2))
+        assert data[end : end + 1] == b"\n", f"{path}: no separator after {header.group(1)!r}"
+        sections[header.group(1).decode()] = data[start:end]
+        position = end + 1
+    return sections
+
+
+@pytest.fixture
+def golden_sections() -> Callable[[Path], dict[str, bytes]]:
+    """Parse a hub characterization golden into ``{stream: bytes}``."""
+    return _golden_sections
+
+
+# ``hub agent``'s workspace (AC-15.8): a DEMO hub listing repos ``a``, ``b`` and ``c``.
+AGENT_REPOS = ("a", "b", "c")
+
+
+def agent_document() -> dict[str, Any]:
+    document = demo_document_value()
+    document["repos"] = [
+        {"dir": name, "github": f"acme/{name}", "check_fast": "true", "check": "true"}
+        for name in AGENT_REPOS
+    ]
+    document["guard"] = {"ask_before_edit": []}
+    return document
+
+
+@pytest.fixture(scope="session")
+def agent_workspace_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """``ws/hub``: the hub ``hub init --config`` writes for the agent document, built once."""
+    workspace = tmp_path_factory.mktemp("agent-workspace-template") / "ws"
+    workspace.mkdir()
+    hub = init_template(workspace, agent_document())
+    (workspace / "hub.json").unlink()
+    return hub.parent
+
+
+@pytest.fixture
+def agent_workspace(tmp_path: Path, agent_workspace_template: Path) -> Path:
+    """A copy at ``tmp_path/ws``: the hub, ``a`` with an ``AGENTS.md``, ``b`` without, no ``c``."""
+    workspace = tmp_path / "ws"
+    shutil.copytree(agent_workspace_template, workspace, symlinks=True)
+    (workspace / "a").mkdir()
+    (workspace / "a" / "AGENTS.md").write_bytes(b"# a\nRun make check.\n")
+    (workspace / "b").mkdir()
+    return workspace
+
+
+# hub run's workspace (AGH-27 PR 3): the DEMO workspace with a PATH of fakes. ``claude``, ``gh``
+# and ``make`` are Python scripts behind /bin/sh wrappers that log each call as one JSON line
+# (argv, cwd, the environment's names, never its values, and the process group); ``git`` and
+# ``bash`` are the real ones, linked, and so is the interpreter (``python3``).
+RUN_PR_URL = "https://github.com/acme/demo-api/pull/99"
+RUN_SUMMARY = "Adds the synthetic change."
+RUN_COST_USD = 0.42
+# The environment values a fake may log as they are: none can hold a secret.
+_LOGGED_VALUES = (
+    "OTEL_RESOURCE_ATTRIBUTES",
+    "HUB_RUN_ENVIRONMENT",
+    "GIT_CONFIG_COUNT",
+    *(f"GIT_CONFIG_{part}_{index}" for part in ("KEY", "VALUE") for index in range(4)),
+)
+_FAKE_LOG = """import json, os, sys
+def log(tool, **extra):
+    record = {
+        "argv": sys.argv[1:],
+        "cwd": os.getcwd(),
+        "env": sorted(os.environ),
+        "values": {name: os.environ[name] for name in LOGGED if name in os.environ},
+        "pgid": os.getpgid(0),
+        **extra,
+    }
+    with open(os.path.join(os.environ["FAKE_RUN_LOGS"], tool + ".jsonl"), "a") as file:
+        file.write(json.dumps(record) + "\\n")
+""".replace("LOGGED", repr(_LOGGED_VALUES))
+_FAKE_CLAUDE = (
+    _FAKE_LOG
+    + """import subprocess, time
+argv = sys.argv[1:]
+allowed = argv[argv.index("--allowedTools") + 1:] if "--allowedTools" in argv else []
+if "--disallowedTools" in allowed:
+    allowed = allowed[:allowed.index("--disallowedTools")]
+def answer(result, *, is_error=False, cost=RUN_COST):
+    print(json.dumps({"type": "result", "is_error": is_error, "subtype": "success",
+                      "result": result, "total_cost_usd": cost, "num_turns": 3}))
+if any(tool.startswith("mcp__") for tool in allowed):
+    # A tracker call of the MCP adapter: only get_issue is answered, from FAKE_CLAUDE_ISSUE.
+    log("claude", tracker=True)
+    with open(os.environ["FAKE_CLAUDE_ISSUE"]) as file:
+        answer(json.dumps({"issue": json.load(file)}), cost=0.01)
+    sys.exit(0)
+mode = os.environ.get("FAKE_CLAUDE_MODE", "done")
+log("claude", tracker=False, mode=mode)
+if mode == "hooks":
+    # As Claude Code would (AGH-278): read the --settings file, run its SessionStart hooks for
+    # "startup", then its PreToolUse hooks for one Bash call (FAKE_CLAUDE_BASH), each through sh
+    # in this cwd with CLAUDE_PROJECT_DIR set to it and the event on stdin; then answer as
+    # done-no-commit.
+    import re
+    def covers(matcher, value):
+        # Claude Code (2.1.303): only letters, digits, _ and | = exact names; else an
+        # unanchored regex.
+        if matcher in (None, "", "*"):
+            return True
+        if re.fullmatch(r"[A-Za-z0-9_|]+", matcher):
+            return value in matcher.split("|")
+        return re.search(matcher, value) is not None
+    with open(argv[argv.index("--settings") + 1]) as file:
+        settings = json.load(file)
+    cwd = os.getcwd()
+    bash = os.environ.get("FAKE_CLAUDE_BASH", "echo prod")
+    events = (
+        ("SessionStart", "startup", {"source": "startup"}),
+        ("PreToolUse", "Bash", {"tool_name": "Bash", "tool_input": {"command": bash}}),
+    )
+    runs = []
+    for event, value, fields in events:
+        payload = {"session_id": "fake-session", "hook_event_name": event, **fields, "cwd": cwd}
+        for group in settings["hooks"].get(event, []):
+            if not covers(group.get("matcher"), value):
+                continue
+            for entry in group["hooks"]:
+                ran = subprocess.run(
+                    ["/bin/sh", "-c", entry["command"]], cwd=cwd,
+                    env={**os.environ, "CLAUDE_PROJECT_DIR": cwd}, input=json.dumps(payload),
+                    capture_output=True, text=True, timeout=entry.get("timeout", 60),
+                )
+                runs.append({"event": event, "command": entry["command"],
+                             "code": ran.returncode, "stdout": ran.stdout})
+    log("hooks", settings=settings, runs=runs)
+_answer = answer
+def answer(result, **extra):
+    # FAKE_CLAUDE_PAD: that many characters first; FAKE_CLAUDE_NUL: a NUL among them.
+    pad = "x" * int(os.environ.get("FAKE_CLAUDE_PAD", "0"))
+    pad += "\\0" if os.environ.get("FAKE_CLAUDE_NUL") else ""
+    _answer(f"{pad}\\n{result}" if pad else result, **extra)
+def commit():
+    # One commit per non-empty line of FAKE_CLAUDE_SUBJECTS (oldest first, so the last is the
+    # newest; empty lines are skipped); unset, the one synthetic commit.
+    subjects = os.environ.get("FAKE_CLAUDE_SUBJECTS", "feat(api): synthetic change (DEM-1)")
+    identity = ["-c", "user.name=Jane Doe", "-c", "user.email=jane@example.com"]
+    for subject in filter(None, subjects.split("\\n")):
+        with open("synthetic_change.txt", "a") as file:
+            file.write("change\\n")
+        subprocess.run(["git", "add", "synthetic_change.txt"], check=True)
+        subprocess.run(["git", *identity, "commit", "-q", "-m", subject], check=True)
+summary = os.environ.get("FAKE_CLAUDE_SUMMARY", RUN_SUMMARY)
+verdict = {"status": "done", "summary": summary, "tests": "make check-fast"}
+if mode == "hang":
+    time.sleep(600)
+if mode in (
+    "done", "prose", "done-dirty", "done-untracked", "config-helper", "config-remote",
+    "config-benign",
+):
+    commit()
+if mode == "config-helper":
+    # A session planting a helper the push would run with the GitHub tokens.
+    subprocess.run(["git", "config", "credential.helper", "!echo synthetic"], check=True)
+if mode == "config-remote":
+    url = "https://github.com/acme/other.git"
+    subprocess.run(["git", "config", "remote.origin.url", url], check=True)
+if mode == "config-benign":
+    # What husky or a submodule tool would set: no key a push uses.
+    subprocess.run(["git", "config", "core.hooksPath", ".husky"], check=True)
+    subprocess.run(["git", "config", "submodule.x.url", "https://example.com/x.git"], check=True)
+if mode == "done-dirty":
+    # A tracked file changed and not committed.
+    with open("README.md", "a") as file:
+        file.write("left behind\\n")
+if mode == "done-untracked":
+    with open("notes.txt", "w") as file:
+        file.write("left behind\\n")
+if mode in (
+    "done", "done-no-commit", "done-dirty", "done-untracked", "config-helper", "config-remote",
+    "config-benign", "hooks",
+):
+    answer("Done.\\n" + json.dumps(verdict))
+elif mode == "blocked":
+    answer("Stopping.\\n" + json.dumps({"status": "blocked", "summary": "needs a plan"}))
+elif mode == "blocked-text":
+    answer("BLOCKED: the issue has an open question")
+elif mode == "error":
+    answer("ran out of turns", is_error=True)
+elif mode in ("prose", "silent"):
+    answer("I made the change and ran the tests.")
+""".replace("RUN_COST", repr(RUN_COST_USD)).replace("RUN_SUMMARY", repr(RUN_SUMMARY))
+)
+# Lines of the ``gh`` fakes' source: ``FOOTER``, what a cloud session's environment appends to
+# the body of a PR it creates, and ``EDIT_FOOTER``, the generic one it appends when the body is
+# edited through ``gh``. Built from fragments there, so that neither this file nor a fake holds
+# an attribution line a reader could take for one.
+_FAKE_FOOTER = (
+    'FOOTER = "\\n\\n---\\n_Generated " + '
+    '"by [Claude Code](https://claude.ai/code/session_0123)_"\n'
+    'EDIT_FOOTER = "\\n\\n\\n---\\n_Generated " + "by [Claude Code](https://claude.ai/code)_"\n'
+)
+# hub run's ``gh``: GitHub's REST API (``gh api``), as a cloud session's proxy lets through:
+# ``--method POST repos/<repo>/pulls`` (the body read from stdin, logged as ``stdin``) and
+# ``--method GET repos/<repo>/pulls`` (the branch's open PR). ``pr view <branch>`` answers a
+# workflow's own shell step (the sample pack's ``pr`` node), never hub run, which reads GitHub
+# through the REST API only; any other call exits 2.
+# In the modes ``footer`` and ``footer-stays`` the create answers as a cloud session's does: the
+# PR's ``body`` is the one read plus ``FOOTER``; ``--method PATCH repos/<repo>/pulls/<n>`` (the
+# body read from stdin) then answers the body it read, in ``footer-stays`` with ``EDIT_FOOTER``
+# after it, as a cloud session answers an edit through ``gh``.
+_RUN_FAKE_GH = (
+    _FAKE_LOG
+    + _FAKE_FOOTER
+    + """mode = os.environ.get("FAKE_GH_MODE", "url")
+argv = sys.argv[1:]
+body = sys.stdin.read() if "body=@-" in argv else None
+log("gh", mode=mode, stdin=body)
+footers = ("footer", "footer-stays")
+if argv[:2] == ["pr", "view"] and mode == "exists":
+    print(json.dumps({"url": PR_URL, "state": "OPEN"}))
+    sys.exit(0)
+if argv[:3] == ["api", "--method", "GET"]:
+    # The branch's open PR: listed in mode "exists", none otherwise.
+    print(json.dumps([{"html_url": PR_URL, "state": "open"}] if mode == "exists" else []))
+    sys.exit(0)
+if argv[:3] == ["api", "--method", "PATCH"] and mode in footers and body is not None:
+    held = body + (EDIT_FOOTER if mode == "footer-stays" else "")
+    print(json.dumps({"html_url": PR_URL, "number": 1, "body": held}))
+    sys.exit(0)
+if argv[:3] != ["api", "--method", "POST"]:
+    print("gh (fake): unknown call: " + " ".join(argv), file=sys.stderr)
+    sys.exit(2)
+if mode in ("fail", "exists"):
+    print("gh: Validation Failed (HTTP 422)" if mode == "exists" else "gh: synthetic failure",
+          file=sys.stderr)
+    sys.exit(1)
+if mode in footers:
+    print(json.dumps({"html_url": PR_URL, "number": 1, "body": body + FOOTER}))
+    sys.exit(0)
+print(json.dumps({"number": 1} if mode == "no-url" else {"html_url": PR_URL, "number": 1}))
+""".replace("PR_URL", repr(RUN_PR_URL))
+)
+_FAKE_MAKE = (
+    _FAKE_LOG
+    + """import subprocess, time
+log("make")
+if os.environ.get("FAKE_MAKE_GRANDCHILD"):
+    # A process the gate starts and leaves running; its pid is logged.
+    sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    with open(os.path.join(os.environ["FAKE_RUN_LOGS"], "grandchild.pid"), "w") as file:
+        file.write(str(sleeper.pid))
+time.sleep(float(os.environ.get("FAKE_MAKE_SLEEP", "0")))
+code = int(os.environ.get("FAKE_MAKE_EXIT", "0"))
+sys.stdout.write("x" * int(os.environ.get("FAKE_MAKE_BYTES", "0")))
+if os.environ.get("FAKE_MAKE_STDOUT"):
+    # A gate that also explains itself on stdout, before its stderr line.
+    print("gate stdout line", flush=True)
+print("synthetic gate output", file=sys.stderr if code else sys.stdout)
+sys.exit(code)
+"""
+)
+
+
+# A git that logs each call (argv, cwd, environment names) and then runs the real git.
+_FAKE_GIT = (
+    _FAKE_LOG
+    + """if "FAKE_RUN_LOGS" in os.environ:  # a fixture's own git call has no log folder
+    log("git")
+os.execv(REAL_GIT, [REAL_GIT, *sys.argv[1:]])
+"""
+)
+
+
+class RunWorkspace:
+    """The DEMO workspace for ``hub run``: its fakes' ``bin`` and their call logs."""
+
+    def __init__(self, workspace: Any, bin_dir: Path, logs: Path) -> None:
+        self.workspace = workspace
+        self.bin = bin_dir
+        self.logs = logs
+
+    def calls(self, tool: str) -> list[dict[str, Any]]:
+        """The logged calls of ``tool`` (``claude``, ``gh`` or ``make``), in order."""
+        path = self.logs / f"{tool}.jsonl"
+        if not path.exists():
+            return []
+        return [json.loads(line) for line in path.read_text().splitlines()]
+
+
+def _write_fake(bin_dir: Path, name: str, script: str) -> None:
+    source = bin_dir.parent / "fakes" / f"{name}.py"
+    source.parent.mkdir(exist_ok=True)
+    source.write_text(script)
+    wrapper = bin_dir / name
+    wrapper.write_text(f"#!/bin/sh\nexec '{sys.executable}' '{source}' \"$@\"\n")
+    wrapper.chmod(0o755)
+
+
+def _link_tool(bin_dir: Path, name: str, target: str | None) -> None:
+    assert target is not None, f"{name} is needed for a run workspace"
+    (bin_dir / name).symlink_to(os.path.abspath(target))
+
+
+@pytest.fixture
+def run_workspace(
+    demo_workspace: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> RunWorkspace:
+    """``demo_workspace`` with ``PATH`` = only the fakes, ``git``, ``bash`` and ``python3``.
+
+    ``HOME`` stays under ``tmp_path`` (``demo_workspace``); ``CLAUDECODE`` is unset.
+    """
+    bin_dir = tmp_path / "run-bin"
+    bin_dir.mkdir()
+    logs = tmp_path / "run-logs"
+    logs.mkdir()
+    _write_fake(bin_dir, "claude", _FAKE_CLAUDE)
+    _write_fake(bin_dir, "gh", _RUN_FAKE_GH)
+    _write_fake(bin_dir, "make", _FAKE_MAKE)
+    _link_tool(bin_dir, "git", shutil.which("git"))
+    _link_tool(bin_dir, "bash", shutil.which("bash"))
+    _link_tool(bin_dir, "tail", shutil.which("tail"))
+    _link_tool(bin_dir, "python3", sys.executable)
+    monkeypatch.setenv("PATH", str(bin_dir))
+    # Each clone's origin is the repo's GitHub url, as in a real workspace; the test's global
+    # git config rewrites it to the local bare origin (a global url.*.insteadOf, which the push
+    # guard leaves alone).
+    rewrites = []
+    for repo in WORKSPACE_REPOS:
+        url = f"https://github.com/acme/{repo}.git"
+        demo_workspace.git(demo_workspace.ws / repo, "remote", "set-url", "origin", url)
+        rewrites.append(f'[url "{demo_workspace.origin(repo)}"]\n\tinsteadOf = {url}\n')
+    # Any other GitHub url goes to a folder that does not exist: no test reaches the network.
+    rewrites.append(f'[url "{tmp_path / "no-network"}/"]\n\tinsteadOf = https://github.com/\n')
+    global_config = tmp_path / "run-gitconfig"
+    global_config.write_text("".join(rewrites))
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
+    # Only local repos may be reached: git refuses https, ssh and every other transport.
+    monkeypatch.setenv("GIT_ALLOW_PROTOCOL", "file")
+    monkeypatch.setenv("FAKE_RUN_LOGS", str(logs))
+    monkeypatch.delenv("CLAUDECODE", raising=False)
+    return RunWorkspace(demo_workspace, bin_dir, logs)
+
+
+def tracker_backend_for_run(*, failed: bool = True) -> FakeTrackerBackend:
+    """DEM-1 open, ``agent-ready`` and ``demo-api`` (and ``agent-failed`` unless ``failed`` is
+    False); the team's states include ``In Review``."""
+    labels = ("agent-ready", "demo-api", *(("agent-failed",) if failed else ()))
+    issue = an_issue(
+        id="DEM-1", title="Synthetic run issue", description=RUN_DESCRIPTION, labels=labels
+    )
+    return FakeTrackerBackend(
+        states={
+            "DEM": (
+                TrackerState(name="Todo", type="unstarted"),
+                TrackerState(name="In Progress", type="started"),
+                TrackerState(name="In Review", type="started"),
+                TrackerState(name="Done", type="completed"),
+            )
+        },
+        team_labels={"DEM": ("demo-api", "demo-web")},
+        workspace_labels=("agent-ready", "agent-failed"),
+        issues={issue.id: issue},
+    )
+
+
+class RecordingTracker:
+    """An ``InMemoryTrackerClient`` that records every port call: ``(operation, *arguments)``.
+
+    An operation named in ``fail_on`` is recorded, then raises ``TrackerError`` as an adapter
+    does, changing nothing.
+    """
+
+    def __init__(self, backend: FakeTrackerBackend) -> None:
+        self.backend = backend
+        self._client = InMemoryTrackerClient(backend)
+        self.calls: list[tuple[str, ...]] = []
+        self.fail_on: set[str] = set()
+
+    def _call(self, operation: str, *arguments: str) -> None:
+        self.calls.append((operation, *arguments))
+        if operation in self.fail_on:
+            issue_id = arguments[0] if operation != "list_ready" else None
+            raise TrackerError(
+                operation=operation, issue_id=issue_id, cause="synthetic outage", fix="retry later"
+            )
+
+    def list_ready(self, team: str, label: str) -> list[Issue]:
+        self._call("list_ready", team, label)
+        return self._client.list_ready(team, label)
+
+    def get_issue(self, issue_id: str) -> Issue:
+        self._call("get_issue", issue_id)
+        return self._client.get_issue(issue_id)
+
+    def move_state(
+        self, issue_id: str, state_name: str, *, only_if_unstarted: bool = False
+    ) -> bool:
+        # The flag is recorded only when set, so an unconditional move records as before.
+        flag = ("only_if_unstarted",) if only_if_unstarted else ()
+        self._call("move_state", issue_id, state_name, *flag)
+        return self._client.move_state(issue_id, state_name, only_if_unstarted=only_if_unstarted)
+
+    def add_label(self, issue_id: str, name: str) -> None:
+        self._call("add_label", issue_id, name)
+        self._client.add_label(issue_id, name)
+
+    def remove_label(self, issue_id: str, name: str) -> None:
+        self._call("remove_label", issue_id, name)
+        self._client.remove_label(issue_id, name)
+
+    def comment(self, issue_id: str, body: str) -> None:
+        self._call("comment", issue_id, body)
+        self._client.comment(issue_id, body)
+
+
+@pytest.fixture
+def run_tracker() -> RecordingTracker:
+    """A recording tracker over ``tracker_backend_for_run()``."""
+    return RecordingTracker(tracker_backend_for_run())
+
+
+START_DESCRIPTION = "Collect the synthetic events.\n"
+
+
+def tracker_backend_for_start() -> FakeTrackerBackend:
+    """``hub start``'s tracker: DEM-7 ``Add the collector`` in ``Todo``, over the team states
+    ``Todo`` (unstarted), ``In Progress`` and ``In Review`` (started) and ``Done``."""
+    issue = an_issue(
+        id="DEM-7", title="Add the collector", description=START_DESCRIPTION, labels=()
+    )
+    backend = tracker_backend_for_run()
+    return FakeTrackerBackend(
+        states=backend.states,
+        team_labels=backend.team_labels,
+        workspace_labels=backend.workspace_labels,
+        issues={issue.id: issue},
+    )
+
+
+@pytest.fixture
+def start_tracker() -> RecordingTracker:
+    """A recording tracker over ``tracker_backend_for_start()``."""
+    return RecordingTracker(tracker_backend_for_start())
+
+
+@pytest.fixture
+def logged_git(run_workspace: RunWorkspace) -> RunWorkspace:
+    """The run workspace with its ``git`` replaced by one that logs each call, then runs git."""
+    real = os.path.realpath(run_workspace.bin / "git")
+    (run_workspace.bin / "git").unlink()
+    _write_fake(run_workspace.bin, "git", _FAKE_GIT.replace("REAL_GIT", repr(real)))
+    return run_workspace
+
+
+# hub ship's fakes (AGH-63). Its ``gh`` keeps the PRs it opened in ``FAKE_GH_STATE``, a JSON list
+# of ``{repo, head, base, title, url, state, body, draft}``, and answers only the GitHub REST
+# calls (``gh api``; a cloud session's proxy refuses ``gh pr``, which is GraphQL) hub ship makes:
+# ``--method POST repos/<repo>/pulls`` with the fields ``title``, ``head``, ``base`` (``-f``),
+# ``body`` (``-F body=@-``, read from stdin) and ``-F draft=true``; ``--method GET
+# repos/<repo>/pulls -f head=<owner>:<branch> -f state=open``, with or without ``--jq '[.[] |
+# {html_url, state}]'`` (applied as gh applies it, locally); ``--method GET
+# repos/<repo>/pulls/<n>``; and ``--method PATCH repos/<repo>/pulls/<n> -F body=@<file>``. It
+# prints each PR as the REST API does (``html_url``, ``state`` in lower case, ``body``…) and
+# exits 2 on any other argv. ``FAKE_GH_FAIL`` (``<step>:<repo>,…``, steps ``create``, ``view``,
+# ``body``, ``edit``, repo as its dir) makes that call exit 1; step ``nourl`` makes the create
+# exit 0 without a PR url or opening a PR. Every call is logged as the run fakes log.
+# Step ``footer`` makes the create keep the body with ``FOOTER`` after it, as a cloud session's
+# create does; a ``PATCH`` with ``-F body=@-`` replaces it.
+_SHIP_FAKE_GH = (
+    _FAKE_LOG
+    + _FAKE_FOOTER
+    + """import re
+argv = sys.argv[1:]
+log("gh")
+STATE = os.environ["FAKE_GH_STATE"]
+FAILS = {tuple(entry.split(":", 1)) for entry in os.environ.get("FAKE_GH_FAIL", "").split(",")}
+def refuse():
+    print("gh (fake): unknown call: " + " ".join(argv), file=sys.stderr)
+    sys.exit(2)
+def load():
+    if not os.path.exists(STATE):
+        return []
+    with open(STATE) as file:
+        return json.load(file)
+def save(prs):
+    with open(STATE, "w") as file:
+        json.dump(prs, file)
+def api_fields(arguments):
+    # Each -f key=value as text; -F key=@- from stdin, -F key=@<file> from that file, and
+    # -F key=true as true: the forms hub ship sends. Anything else is refused.
+    if len(arguments) % 2:
+        refuse()
+    found = {}
+    for flag, field in zip(arguments[::2], arguments[1::2]):
+        key, sep, value = field.partition("=")
+        if flag not in ("-f", "-F") or not sep or key in found:
+            refuse()
+        if flag == "-F" and value == "@-":
+            value = sys.stdin.read()
+        elif flag == "-F" and value.startswith("@"):
+            with open(value[1:], encoding="utf-8") as file:
+                value = file.read()
+        elif flag == "-F":
+            value = True if value == "true" else refuse()
+        found[key] = value
+    return found
+def fails(step, repo):
+    if (step, repo.rsplit("/", 1)[-1]) in FAILS:
+        print("gh (fake): synthetic " + step + " failure", file=sys.stderr)
+        sys.exit(1)
+def serve(pr):
+    # The PR as GitHub's REST API answers it (the fields hub ship may read).
+    number = int(pr["url"].rsplit("/", 1)[1])
+    merged = pr["state"] == "MERGED"
+    return {
+        "url": "https://api.github.com/repos/" + pr["repo"] + "/pulls/" + str(number),
+        "html_url": pr["url"], "number": number,
+        "state": "open" if pr["state"] == "OPEN" else "closed",
+        "merged": merged, "merged_at": "2026-10-01T00:00:00Z" if merged else None,
+        "title": pr["title"], "body": pr["body"], "draft": pr["draft"],
+        "head": {"ref": pr["head"], "repo": {"full_name": pr["repo"]}},
+        "base": {"ref": pr["base"], "repo": {"full_name": pr["repo"]}},
+    }
+def show(pr):
+    print(json.dumps(serve(pr)))
+    sys.exit(0)
+def by_url(prs, url):
+    found = [pr for pr in prs if pr["url"] == url]
+    if not found:
+        print("gh (fake): no pull request " + url, file=sys.stderr)
+        sys.exit(1)
+    return found[0]
+prs = load()
+if len(argv) < 4 or argv[:2] != ["api", "--method"]:
+    refuse()
+# The one filter hub ship asks gh to apply (locally, as gh does): the lookup's url and state.
+jq = argv[-1] if argv[-2:-1] == ["--jq"] else None
+method, path = argv[2], argv[3]
+fields = api_fields(argv[4:-2] if jq is not None else argv[4:])
+pulls = re.fullmatch(r"repos/([^/]+)/([^/]+)/pulls", path)
+one = re.fullmatch(r"repos/([^/]+/[^/]+)/pulls/([0-9]+)", path)
+if jq is not None and (method, jq) != ("GET", "[.[] | {html_url, state}]"):
+    refuse()
+if method == "POST" and pulls and set(fields) - {"draft"} == {"title", "head", "base", "body"}:
+    repo, head = pulls.group(1) + "/" + pulls.group(2), fields["head"]
+    if fields.get("draft", True) is not True:
+        refuse()
+    fails("create", repo)
+    if ("nourl", repo.rsplit("/", 1)[-1]) in FAILS:
+        print(json.dumps({"message": "Created"}))
+        sys.exit(0)
+    for pr in prs:
+        if (pr["repo"], pr["head"], pr["state"]) == (repo, head, "OPEN"):
+            print(json.dumps({"message": "Validation Failed", "errors": [
+                {"message": "A pull request already exists for " + pr["url"]}]}))
+            print("gh: Validation Failed (HTTP 422)", file=sys.stderr)
+            sys.exit(1)
+    url = "https://github.com/" + repo + "/pull/" + str(101 + len(prs))
+    if ("footer", repo.rsplit("/", 1)[-1]) in FAILS:
+        fields["body"] += FOOTER
+    prs.append({"repo": repo, "head": head, "base": fields["base"], "title": fields["title"],
+                "url": url, "state": "OPEN", "body": fields["body"],
+                "draft": "draft" in fields})
+    save(prs)
+    show(prs[-1])
+elif method == "GET" and pulls and sorted(fields) == ["head", "state"]:
+    repo = pulls.group(1) + "/" + pulls.group(2)
+    owner, _, head = fields["head"].partition(":")
+    if owner != pulls.group(1) or fields["state"] != "open":
+        refuse()
+    fails("view", repo)
+    found = [serve(pr) for pr in prs
+             if (pr["repo"], pr["head"], pr["state"]) == (repo, head, "OPEN")]
+    if jq is not None:
+        found = [{"html_url": pr["html_url"], "state": pr["state"]} for pr in found]
+    print(json.dumps(found))
+elif method == "GET" and one and not fields:
+    fails("body", one.group(1))
+    show(by_url(prs, "https://github.com/" + one.group(1) + "/pull/" + one.group(2)))
+elif method == "PATCH" and one and list(fields) == ["body"]:
+    fails("edit", one.group(1))
+    pr = by_url(prs, "https://github.com/" + one.group(1) + "/pull/" + one.group(2))
+    pr["body"] = fields["body"]
+    save(prs)
+    show(pr)
+else:
+    refuse()
+"""
+)
+
+
+class ShipWorkspace(RunWorkspace):
+    """The run workspace for ``hub ship``: its ``gh`` is the scripted fake, whose PRs are
+    ``prs()``."""
+
+    def __init__(self, run_workspace: RunWorkspace, state: Path) -> None:
+        super().__init__(run_workspace.workspace, run_workspace.bin, run_workspace.logs)
+        self.state = state
+
+    def prs(self) -> list[dict[str, Any]]:
+        """The fake ``gh``'s PRs, in the order they were opened."""
+        if not self.state.exists():
+            return []
+        prs: list[dict[str, Any]] = json.loads(self.state.read_text())
+        return prs
+
+    def write_prs(self, prs: list[dict[str, Any]]) -> None:
+        """Replace the fake ``gh``'s PRs (a PR opened by hand, a body edited on GitHub)."""
+        self.state.write_text(json.dumps(prs))
+
+
+@pytest.fixture
+def ship_workspace(
+    run_workspace: RunWorkspace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> ShipWorkspace:
+    """``run_workspace`` with ``gh`` replaced by ``hub ship``'s scripted fake, no PR open."""
+    (run_workspace.bin / "gh").unlink()
+    _write_fake(run_workspace.bin, "gh", _SHIP_FAKE_GH)
+    state = tmp_path / "gh-state.json"
+    monkeypatch.setenv("FAKE_GH_STATE", str(state))
+    monkeypatch.delenv("FAKE_GH_FAIL", raising=False)
+    return ShipWorkspace(run_workspace, state)
+
+
+SHIP_STATES = ("Todo", "In Progress", "In Review", "Done")
+_SHIP_STATE_TYPES = {"Todo": "unstarted", "Done": "completed"}
+
+
+def _tracker_backend_for_ship(
+    *, failed: bool = False, states: tuple[str, ...] = SHIP_STATES
+) -> FakeTrackerBackend:
+    """DEM-7 open with its url, labelled ``demo-api`` and ``demo-web`` (and ``agent-failed`` when
+    ``failed``); the team's states are ``states``, ``Done`` closed."""
+    labels = ("demo-api", "demo-web", *(("agent-failed",) if failed else ()))
+    issue = an_issue(id="DEM-7", title="Synthetic ship issue", state="In Progress", labels=labels)
+    return FakeTrackerBackend(
+        states={
+            "DEM": tuple(
+                TrackerState(name=name, type=_SHIP_STATE_TYPES.get(name, "started"))
+                for name in states
+            )
+        },
+        team_labels={"DEM": ("demo-api", "demo-web")},
+        workspace_labels=("agent-ready", "agent-failed"),
+        issues={issue.id: issue},
+    )
+
+
+@pytest.fixture
+def tracker_backend_for_ship() -> Callable[..., FakeTrackerBackend]:
+    """Build ``hub ship``'s tracker backend: ``(*, failed=False, states=SHIP_STATES)``."""
+    return _tracker_backend_for_ship
+
+
+@pytest.fixture
+def ship_tracker() -> RecordingTracker:
+    """A recording tracker over ``hub ship``'s backend: DEM-7, no failed label."""
+    return RecordingTracker(_tracker_backend_for_ship())
+
+
+@pytest.fixture
+def make_task_worktree(
+    ship_workspace: ShipWorkspace, monkeypatch: pytest.MonkeyPatch
+) -> Callable[[str, str, list[str]], Path]:
+    """Make ``<repo>/.claude/worktrees/<name>`` with ``hub worktree <name> --only <repo>``, then
+    one empty commit per subject (oldest first); its path."""
+    workspace = ship_workspace.workspace
+
+    def make(repo: str, name: str, subjects: list[str]) -> Path:
+        monkeypatch.chdir(workspace.hub)
+        result = CliRunner().invoke(app, ["worktree", name, "--only", repo])
+        assert result.exit_code == 0, result.output
+        worktree: Path = workspace.worktree(repo, name)
+        for subject in subjects:
+            workspace.git(worktree, "commit", "--allow-empty", "-q", "-m", subject)
+        return worktree
+
+    return make
+
+
+class SpiedChild(NamedTuple):
+    """One ``run_child`` call: the program's basename and its arguments, then its options."""
+
+    argv: list[str]
+    cwd: Path
+    env: dict[str, str]
+    timeout: float | None
+    own_session: bool | None
+    output_limit: int | None
+    stdin: bytes | None = None
+
+
+class ChildCalls:
+    """Every ``run_child`` call any ``agent_hub.cli`` module makes, in order (defined here, not
+    imported from ``test_run_command.py``)."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.calls: list[SpiedChild] = []
+        for module_name, module in list(sys.modules.items()):
+            real = getattr(module, "run_child", None)
+            if module_name.startswith("agent_hub.cli") and callable(real):
+                monkeypatch.setattr(module, "run_child", self._wrap(real))
+
+    def _wrap(self, real: Callable[..., Any]) -> Callable[..., Any]:
+        def spy(argv: list[str], **options: Any) -> Any:
+            self.calls.append(
+                SpiedChild(
+                    argv=[os.path.basename(argv[0]), *argv[1:]],
+                    cwd=Path(options["cwd"]),
+                    env=dict(options["env"]),
+                    timeout=options.get("timeout"),
+                    own_session=options.get("own_session"),
+                    output_limit=options.get("output_limit"),
+                    stdin=options.get("stdin"),
+                )
+            )
+            return real(argv, **options)
+
+        return spy
+
+    def clear(self) -> None:
+        """Forget the calls so far (a test's setup, such as ``make_task_worktree``)."""
+        self.calls.clear()
+
+    def programs(self) -> list[str]:
+        return [call.argv[0] for call in self.calls]
+
+
+def _import_every_cli_module() -> None:
+    """Import every ``agent_hub.cli`` module but ``__main__`` (which would run the CLI), so a spy
+    that wraps names in the loaded modules also reaches the ones a command loads only when it
+    runs."""
+    import agent_hub.cli  # noqa: PLC0415 - read when a spy fixture runs
+
+    for module in pkgutil.walk_packages(agent_hub.cli.__path__, prefix="agent_hub.cli."):
+        if module.name != "agent_hub.cli.__main__":
+            importlib.import_module(module.name)
+
+
+@pytest.fixture
+def import_every_cli_module() -> Callable[[], None]:
+    """The helper that loads every cli module, for the spy fixtures of the test modules."""
+    return _import_every_cli_module
+
+
+@pytest.fixture
+def child_calls(monkeypatch: pytest.MonkeyPatch) -> ChildCalls:
+    """Spy on ``run_child`` in every ``agent_hub.cli`` module (each import holds its own
+    reference); a ``hub ship`` run's children are its calls."""
+    from agent_hub.cli import command_table  # noqa: PLC0415 - read when the fixture runs
+
+    command_table.import_all()  # loads every command module before patching
+    _import_every_cli_module()  # and the modules a command loads only when it runs
+
+    return ChildCalls(monkeypatch)
+
+
+# hub bench's workspace (AGH-17 PR 3): hub ``tests/characterization/test_bench.py`` at hub commit
+# 5b56604 rebuilt, with a model-valid hub.json selecting bench (E3). ``ws/hub`` is a git repo;
+# ``ws/api`` has the hub suite's commits on ``trunk`` and an origin whose ``main`` holds other
+# agent config: bench overlays it from ``origin/main`` whatever the default branch is.
+BENCH_AGENT_FILES = ("AGENTS.md", "CLAUDE.md", ".claude/rules/x.md", ".claude/settings.json")
+# The hidden check (the hub's CHECK): one copy per directory, named after it. It prints its dir,
+# whether ``fix.txt`` is in cwd, the case env, a mark for the setup_cmd file, the first letter of
+# each agent config file (``t`` trunk, ``M`` origin/main, ``-`` absent), how many paths are
+# staged, and its arguments; then CHECK_TAIL as a last line. It fails without the fix, or when
+# CHECK_FAIL_DIR names its dir.
+BENCH_CHECK = """import os
+import subprocess
+import sys
+
+here = os.path.basename(os.path.dirname(os.path.abspath(__file__)))
+ok = os.path.isfile("fix.txt")
+words = [here, "fix present" if ok else "fix missing", "mode=" + os.environ.get("CHECK_MODE", "-")]
+if os.environ.get("CHECK_FAIL_DIR"):
+    words.append("fail=" + os.environ["CHECK_FAIL_DIR"])
+if os.path.isfile("setup.txt"):
+    words.append("setup")
+cfg = ""
+for p in AGENT_FILES:
+    cfg += open(p).read().strip() if os.path.isfile(p) else "-"
+staged = subprocess.run(
+    ["git", "diff", "--cached", "--name-only"], capture_output=True, text=True
+).stdout.split()
+print(" ".join(words + ["cfg=" + cfg, "staged=%d" % len(staged), "args:"] + sys.argv[1:]))
+if os.environ.get("CHECK_TAIL"):
+    print(os.environ["CHECK_TAIL"])
+sys.exit(0 if ok and os.environ.get("CHECK_FAIL_DIR") != here else 1)
+""".replace("AGENT_FILES", repr(BENCH_AGENT_FILES))
+# The parent's own copy: the grader must replace it with the merge's.
+BENCH_STALE = 'print("stale check")\n'
+# T-8 "add the fix" (real checks and fix.txt); its parent T-9 has stale checks and no fix.
+BENCH_MERGE = "trunk~2"
+# T-6; its parent T-7 already has the fix.
+BENCH_MERGE_FIX_IN_PARENT = "trunk"
+BENCH_TASKS = "brain/workflow/bench/tasks.json"
+_BENCH_INSTANT = datetime.datetime(2026, 1, 15, 10, 30, tzinfo=datetime.UTC)
+_BENCH_IGNORES = (".claude/worktrees/", ".venv/", "node_modules/", "__pycache__/")
+# Newer git runs auto-maintenance in the background after commits; its lock files would come
+# and go while a template is copied.
+_BENCH_GITCONFIG = (
+    "[maintenance]\n\tauto = false\n\tautoDetach = false\n[gc]\n\tauto = 0\n\tautoDetach = false\n"
+)
+# (days before the instant, message, files) of ``api`` after its ``init`` commit at T-30.
+_BENCH_COMMITS: tuple[tuple[int, str, dict[str, str]], ...] = (
+    (10, "base", {**dict.fromkeys(BENCH_AGENT_FILES, "t\n"), "app.py": "x = 1\n"}),
+    (9, "stale checks", {"t/__main__.py": BENCH_STALE, "a/__main__.py": BENCH_STALE}),
+    (
+        8,
+        "add the fix",
+        {"t/__main__.py": BENCH_CHECK, "a/__main__.py": BENCH_CHECK, "fix.txt": "fixed\n"},
+    ),
+    (7, "docs", {"docs.md": "one\n"}),
+    (6, "more docs", {"docs.md": "two\n"}),
+)
+# The fake claude (the hub's fake_tool.py for claude): it logs the call, then answers with the
+# first rule whose ``argv_has`` items are all arguments and whose ``env_has`` values are
+# substrings of those variables: it writes the rule's ``write`` files in its cwd, prints its
+# ``stdout`` and ``stderr`` and exits ``rc`` (0). No rule matches: nothing printed, exit 1.
+_FAKE_BENCH_CLAUDE = """import json, os, sys
+LOG, ANSWERS, LOGGED = sys.argv[1], sys.argv[2], ("OTEL_RESOURCE_ATTRIBUTES",)
+args = sys.argv[3:]
+record = {
+    "argv": args,
+    "cwd": os.getcwd(),
+    "env": sorted(os.environ),
+    "values": {name: os.environ[name] for name in LOGGED if name in os.environ},
+}
+with open(LOG, "a", encoding="utf-8") as file:
+    file.write(json.dumps(record) + "\\n")
+try:
+    with open(ANSWERS, encoding="utf-8") as file:
+        rules = json.load(file)
+except FileNotFoundError:
+    rules = []
+def matches(rule):
+    env_has = rule.get("env_has", {}).items()
+    return (all(item in args for item in rule.get("argv_has", []))
+            and all(sub in os.environ.get(name, "") for name, sub in env_has))
+rule = next((rule for rule in rules if matches(rule)), None)
+if rule is None:
+    sys.exit(1)
+for path, text in rule.get("write", {}).items():
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="") as file:
+        file.write(text)
+sys.stdout.buffer.write(rule.get("stdout", "").encode())
+sys.stderr.buffer.write(rule.get("stderr", "").encode())
+sys.exit(rule.get("rc", 0))
+"""
+
+
+def bench_document() -> dict[str, Any]:
+    """``DEMO`` with one repo ``api`` on ``trunk`` and ``bench`` selected: model-valid (E3)."""
+    document = demo_document_value()
+    document["project"]["default_branch"] = WORKSPACE_BRANCH
+    document["repos"] = [
+        {"dir": "api", "github": "acme/api", "check_fast": "true", "check": "true"}
+    ]
+    document["guard"] = {"ask_before_edit": []}
+    document["modules"] = {"bench": {}}
+    return document
+
+
+def _bench_git_env(home: Path, *, days_before: int = 0, hhmm: str = "10:30") -> dict[str, str]:
+    """Git with this home's config only, and both commit dates fixed."""
+    hour, minute = (int(part) for part in hhmm.split(":"))
+    instant = _BENCH_INSTANT.replace(hour=hour, minute=minute) - datetime.timedelta(
+        days=days_before
+    )
+    date = instant.isoformat()
+    return {
+        "PATH": os.environ["PATH"],
+        "HOME": str(home),
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": str(home / ".gitconfig"),
+        "GIT_AUTHOR_DATE": date,
+        "GIT_COMMITTER_DATE": date,
+        GIT_PROTOCOL_VARIABLE: LOCAL_GIT_PROTOCOL,
+    }
+
+
+class BenchWorkspace:
+    """``ws/hub`` and ``ws/api``, api's bare origin, the fakes' ``bin`` and the claude call log."""
+
+    def __init__(self, base: Path) -> None:
+        self.base = base
+        self.ws = base / "ws"
+        self.hub = self.ws / "hub"
+        self.api = self.ws / "api"
+        self.origin = base / "origins" / "api.git"
+        self.home = base / "home"
+        self.bin = base / "bin"
+        self.claude_log = base / "logs" / "claude.jsonl"
+        self.answers = base / "logs" / "answers.json"
+
+    def git(self, folder: Path, *args: str, days_before: int = 0, hhmm: str = "10:30") -> str:
+        """Run git in ``folder`` and return its stripped stdout; a failure fails the test."""
+        env = _bench_git_env(self.home, days_before=days_before, hhmm=hhmm)
+        return _run_git(folder, env, *args)
+
+    def sha(self, rev: str) -> str:
+        """The full sha of ``rev`` in ``api``."""
+        return self.git(self.api, "rev-parse", rev)
+
+    def case(self, rev: str = BENCH_MERGE, **fields: Any) -> dict[str, Any]:
+        """The hub suite's case ``T1`` at merge ``rev``; ``fields`` replace or add keys."""
+        # Hidden tests unordered and repeated: the grader's second run gets their dirs sorted.
+        case: dict[str, Any] = {
+            "id": "T1",
+            "repo": "api",
+            "merge": self.sha(rev),
+            "prompt": "Add the fix",
+            "hidden_tests": ["t/__main__.py", "a/__main__.py", "t/__main__.py"],
+            "test_cmd": ["python3"],
+            "setup_cmd": "echo ready > setup.txt",
+            "env": {"CHECK_MODE": 1},
+        }
+        return case | fields
+
+    def write_cases(self, cases: Any) -> None:
+        """Write ``cases`` as the hub's ``tasks.json`` (indented, as the hub suite) and commit."""
+        path = self.hub / BENCH_TASKS
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(cases, indent=2) + "\n")
+        self.git(self.hub, "add", "-A")
+        self.git(self.hub, "commit", "-q", "-m", "bench cases")
+
+    def answer(self, rules: list[dict[str, Any]]) -> None:
+        """The fake claude's rules, in order: the first that matches answers."""
+        self.answers.write_text(json.dumps(rules, indent=2) + "\n")
+
+    def claude_calls(self) -> list[dict[str, Any]]:
+        """Each call of the fake claude: argv, cwd, environment names, logged values."""
+        if not self.claude_log.exists():
+            return []
+        return [json.loads(line) for line in self.claude_log.read_text().splitlines()]
+
+    @staticmethod
+    def otel(case_id: str, arm: str) -> dict[str, str]:
+        """An ``env_has`` matching the session of ``case_id`` in ``arm``."""
+        return {"OTEL_RESOURCE_ATTRIBUTES": f"repo=api,bench_case={case_id},bench_arm={arm}"}
+
+    @staticmethod
+    def result(cost: float, turns: int, subtype: str) -> str:
+        """A session's ``--output-format json`` reply."""
+        return json.dumps({"total_cost_usd": cost, "num_turns": turns, "subtype": subtype})
+
+
+def _write_files(folder: Path, files: Mapping[str, str]) -> None:
+    for path, text in files.items():
+        target = folder / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text)
+
+
+def _build_bench_workspace(base: Path) -> None:
+    workspace = BenchWorkspace(base)
+    workspace.home.mkdir(parents=True)
+    (workspace.home / ".gitconfig").write_text(_BENCH_GITCONFIG)
+    workspace.ws.mkdir()
+    hub = init_template(workspace.ws, bench_document())
+    (workspace.ws / "hub.json").unlink()
+    ignores = "".join(f"{entry}\n" for entry in _BENCH_IGNORES)
+    workspace.api.mkdir()
+    for folder in (hub, workspace.api):
+        workspace.git(folder, "init", "-q", "-b", WORKSPACE_BRANCH)
+    _write_files(workspace.api, {".gitignore": ignores, "README.md": "api\n"})
+    workspace.git(hub, "add", "-A")
+    workspace.git(hub, "commit", "-q", "-m", "hub", days_before=30, hhmm="09:00")
+    commits = ((30, "init", {}), *_BENCH_COMMITS)
+    for index, (days_before, message, files) in enumerate(commits):
+        _write_files(workspace.api, files)
+        workspace.git(workspace.api, "add", "-A")
+        workspace.git(
+            workspace.api,
+            "commit",
+            "-q",
+            "-m",
+            message,
+            days_before=days_before,
+            hhmm=f"09:{index:02d}",
+        )
+    workspace.origin.parent.mkdir()
+    workspace.git(base, "clone", "-q", "--bare", str(workspace.api), str(workspace.origin))
+    workspace.git(workspace.api, "remote", "add", "origin", str(workspace.origin))
+    workspace.git(workspace.api, "checkout", "-q", "-b", "main")
+    _write_files(workspace.api, dict.fromkeys(BENCH_AGENT_FILES, "M\n"))
+    workspace.git(
+        workspace.api, "commit", "-q", "-am", "agent config on main", days_before=4, hhmm="09:00"
+    )
+    workspace.git(workspace.api, "push", "-q", "origin", "main")
+    workspace.git(workspace.api, "fetch", "-q", "origin")
+    workspace.git(workspace.api, "checkout", "-q", WORKSPACE_BRANCH)
+    workspace.git(workspace.api, "branch", "-q", "-D", "main")
+
+
+@pytest.fixture(scope="session")
+def bench_workspace_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The bench workspace built once per session: never change it."""
+    base = tmp_path_factory.mktemp("bench-workspace-template")
+    _build_bench_workspace(base)
+    return base
+
+
+@pytest.fixture
+def bench_workspace(
+    tmp_path: Path, bench_workspace_template: Path, monkeypatch: pytest.MonkeyPatch
+) -> BenchWorkspace:
+    """A copy of the bench workspace in ``tmp_path`` with ``PATH`` = only its ``bin``.
+
+    ``bin`` holds the fake ``claude`` and the real ``git``, ``bash`` and ``python3`` (linked).
+    The command's git reads only the copy's home config and finds no repo above ``tmp_path``;
+    it may reach local repos only. ``HOME`` is the copy's home; ``CLAUDECODE`` is unset.
+    """
+    base = tmp_path / "bench"
+    shutil.copytree(bench_workspace_template, base, symlinks=True)
+    workspace = BenchWorkspace(base)
+    workspace.git(workspace.api, "remote", "set-url", "origin", str(workspace.origin))
+    workspace.bin.mkdir()
+    workspace.claude_log.parent.mkdir()
+    source = base / "fakes" / "claude.py"
+    source.parent.mkdir()
+    source.write_text(_FAKE_BENCH_CLAUDE)
+    wrapper = workspace.bin / "claude"
+    wrapper.write_text(
+        f"#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(source))}"
+        f' {shlex.quote(str(workspace.claude_log))} {shlex.quote(str(workspace.answers))} "$@"\n'
+    )
+    wrapper.chmod(0o755)
+    _link_tool(workspace.bin, "git", shutil.which("git"))
+    _link_tool(workspace.bin, "bash", shutil.which("bash"))
+    _link_tool(workspace.bin, "python3", sys.executable)
+    for name, value in _bench_git_env(workspace.home).items():
+        if not name.startswith("GIT_AUTHOR") and not name.startswith("GIT_COMMITTER"):
+            monkeypatch.setenv(name, value)
+    monkeypatch.setenv("PATH", str(workspace.bin))
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    monkeypatch.setenv("GIT_ALLOW_PROTOCOL", "file")
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.delenv("CLAUDECODE", raising=False)
+    return workspace

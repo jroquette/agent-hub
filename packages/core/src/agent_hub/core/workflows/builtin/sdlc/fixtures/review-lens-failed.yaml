@@ -1,0 +1,10 @@
+# The quality lens's reply is not a review: no verdict, the run fails with no outcome.
+workflow: review
+inputs: {issue: DEM-1, path: ../demo-api/.claude/worktrees/dem-1}
+stubs:
+  spec:
+    output: {schema: agent-hub/review/1, reviewer: spec, ticket: DEM-1, task: all, round: 1, commit: 0a1b2c3d, verdict: PASS, findings: []}
+  quality: {fail: output_contract}
+expect: {status: failed}
+failed: [quality]
+reached: [spec, quality]

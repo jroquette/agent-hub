@@ -1,0 +1,36 @@
+[project]
+name = "agent-hub"
+version = "0.38.0"
+description = "Installs every agent-hub package and the hub command."
+license = "Apache-2.0"
+requires-python = ">=3.14"
+dependencies = ["agent-hub-core", "agent-hub-storage", "agent-hub-collector", "agent-hub-generator",
+                "agent-hub-tracker-linear", "agent-hub-hub-git", "agent-hub-cli", "agent-hub-api",
+                "agent-hub-mcp-server"]
+
+[project.optional-dependencies]
+# `uv tool install 'agent-hub[sessions]'` adds session control to hub web (ADR 0031).
+sessions = ["agent-hub-api[sessions]"]
+
+[tool.uv.sources]
+agent-hub-core = { workspace = true }
+agent-hub-storage = { workspace = true }
+agent-hub-collector = { workspace = true }
+agent-hub-generator = { workspace = true }
+agent-hub-tracker-linear = { workspace = true }
+agent-hub-hub-git = { workspace = true }
+agent-hub-cli = { workspace = true }
+agent-hub-api = { workspace = true }
+agent-hub-mcp-server = { workspace = true }
+
+[project.scripts]
+hub = "agent_hub.cli.console:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# hatchling refuses a wheel with no files; this placeholder module is outside the agent_hub
+# namespace so type checking, import contracts and coverage never see it (ADR 0001).
+packages = ["src/agent_hub_meta"]

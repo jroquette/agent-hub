@@ -1,0 +1,445 @@
+"""SDK messages as ``DriverEvent``s (D.3), from synthetic SDK objects."""
+
+from decimal import Decimal
+from typing import Any
+
+import pytest
+from claude_agent_sdk import (
+    AssistantMessage,
+    ResultMessage,
+    StreamEvent,
+    SystemMessage,
+    TaskNotificationMessage,
+    TaskProgressMessage,
+    TaskStartedMessage,
+    TaskUpdatedMessage,
+    TextBlock,
+    ThinkingBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+    UserMessage,
+)
+
+from agent_hub.claude_sessions.message_mapping import EventMapper
+from agent_hub.core.agent_sessions.driver import (
+    ABORTED_TERMINAL_REASON,
+    DriverError,
+    InitEvent,
+    TaskEvent,
+    TextDelta,
+    Thinking,
+    TodoItem,
+    Todos,
+    ToolCall,
+    ToolResult,
+    TurnResult,
+)
+from agent_hub.core.agent_sessions.driver import (
+    TextBlock as TextEvent,
+)
+from agent_hub.core.sessions.session import TokenUsage
+
+SESSION = "00000000-0000-4000-8000-000000000001"
+
+
+def _init(model: str = "claude-stub-model") -> SystemMessage:
+    data = {"subtype": "init", "session_id": SESSION, "model": model, "slash_commands": ["review"]}
+    return SystemMessage(subtype="init", data=data)
+
+
+def _delta(text: str, *, kind: str = "text_delta", parent: str | None = None) -> StreamEvent:
+    event = {"type": "content_block_delta", "index": 0, "delta": {"type": kind, "text": text}}
+    return StreamEvent(uuid="u", session_id=SESSION, event=event, parent_tool_use_id=parent)
+
+
+def _assistant(*blocks: Any, parent: str | None = None) -> AssistantMessage:
+    return AssistantMessage(
+        content=list(blocks), model="claude-stub-model", parent_tool_use_id=parent
+    )
+
+
+def _result(**overrides: Any) -> ResultMessage:
+    fields: dict[str, Any] = {
+        "subtype": "success",
+        "duration_ms": 12,
+        "duration_api_ms": 10,
+        "is_error": False,
+        "num_turns": 1,
+        "session_id": SESSION,
+        "total_cost_usd": 0.0021,
+        "usage": {
+            "input_tokens": 20,
+            "output_tokens": 4,
+            "cache_read_input_tokens": 3,
+            "cache_creation_input_tokens": 2,
+        },
+        "model_usage": {"claude-stub-model": {"inputTokens": 20, "costUSD": 0.0021}},
+        "terminal_reason": "completed",
+    }
+    return ResultMessage(**(fields | overrides))
+
+
+def test_maps_init_once_when_cli_repeats_it_each_turn() -> None:
+    mapper = EventMapper()
+
+    first = mapper.to_events(_init())
+    again = mapper.to_events(_init("sonnet"))
+
+    assert first == [
+        InitEvent(session_id=SESSION, model="claude-stub-model", slash_commands=("review",))
+    ]
+    assert again == []
+
+
+def test_maps_init_agents_when_cli_lists_them() -> None:
+    message = _init()
+    message.data["agents"] = ["general-purpose", "research"]
+
+    [event] = EventMapper().to_events(message)
+
+    assert event == InitEvent(
+        session_id=SESSION,
+        model="claude-stub-model",
+        slash_commands=("review",),
+        agents=("general-purpose", "research"),
+    )
+
+
+def test_numbers_deltas_and_blocks_when_text_streams() -> None:
+    mapper = EventMapper()
+
+    events = [
+        *mapper.to_events(_delta("Hel")),
+        *mapper.to_events(_delta("lo.")),
+        *mapper.to_events(_delta("{", kind="input_json_delta")),
+        *mapper.to_events(_assistant(TextBlock(text="Hello."))),
+        *mapper.to_events(_delta("Next")),
+        *mapper.to_events(_assistant(TextBlock(text="Next."))),
+    ]
+
+    assert events == [
+        TextDelta(block=0, index=0, text="Hel"),
+        TextDelta(block=0, index=1, text="lo."),
+        TextEvent(block=0, text="Hello."),
+        TextDelta(block=1, index=0, text="Next"),
+        TextEvent(block=1, text="Next."),
+    ]
+
+
+def test_restarts_blocks_when_turn_ends() -> None:
+    mapper = EventMapper()
+    mapper.to_events(_assistant(TextBlock(text="One.")))
+    mapper.to_events(_result())
+
+    assert mapper.to_events(_assistant(TextBlock(text="Two."))) == [TextEvent(block=0, text="Two.")]
+
+
+def test_maps_thinking_and_tool_call_when_assistant_uses_tool() -> None:
+    blocks = (
+        ThinkingBlock(thinking="Check the tree first.", signature="sig"),
+        ToolUseBlock(id="toolu_1", name="Bash", input={"command": "git status"}),
+    )
+
+    events = EventMapper().to_events(_assistant(*blocks))
+
+    assert events == [
+        Thinking(text="Check the tree first."),
+        ToolCall(tool_use_id="toolu_1", name="Bash", input={"command": "git status"}),
+    ]
+
+
+def test_keeps_only_tool_calls_when_subagent_speaks() -> None:
+    mapper = EventMapper()
+    message = _assistant(
+        TextBlock(text="subagent text"),
+        ToolUseBlock(id="toolu_2", name="Read", input={"file_path": "README.md"}),
+        parent="toolu_task",
+    )
+
+    events = [*mapper.to_events(_delta("sub", parent="toolu_task")), *mapper.to_events(message)]
+
+    assert events == [
+        ToolCall(
+            tool_use_id="toolu_2",
+            name="Read",
+            input={"file_path": "README.md"},
+            parent_tool_use_id="toolu_task",
+        )
+    ]
+
+
+def test_maps_todos_when_todowrite_called() -> None:
+    todos = {
+        "todos": [
+            {
+                "content": "Run the tests",
+                "status": "in_progress",
+                "activeForm": "Running the tests",
+            },
+            {"content": "Open the PR", "status": "pending"},
+        ]
+    }
+
+    events = EventMapper().to_events(
+        _assistant(ToolUseBlock(id="toolu_3", name="TodoWrite", input=todos))
+    )
+
+    assert events[1] == Todos(
+        items=(
+            TodoItem(
+                content="Run the tests", status="in_progress", active_form="Running the tests"
+            ),
+            TodoItem(content="Open the PR", status="pending"),
+        )
+    )
+    assert isinstance(events[0], ToolCall)
+
+
+def test_skips_todos_when_todowrite_input_malformed() -> None:
+    message = _assistant(ToolUseBlock(id="toolu_4", name="TodoWrite", input={"todos": "none"}))
+
+    assert [event.kind for event in EventMapper().to_events(message)] == ["tool.call"]
+
+
+def test_maps_tool_results_when_user_message_carries_them() -> None:
+    message = UserMessage(
+        content=[
+            ToolResultBlock(tool_use_id="toolu_1", content="clean", is_error=False),
+            ToolResultBlock(
+                tool_use_id="toolu_2", content=[{"type": "text", "text": "x"}], is_error=None
+            ),
+            ToolResultBlock(tool_use_id="toolu_3", content=None, is_error=True),
+        ]
+    )
+
+    assert EventMapper().to_events(message) == [
+        ToolResult(tool_use_id="toolu_1", content="clean"),
+        ToolResult(tool_use_id="toolu_2", content=[{"type": "text", "text": "x"}]),
+        ToolResult(tool_use_id="toolu_3", content="", is_error=True),
+    ]
+
+
+def test_maps_result_when_cost_and_usage_present() -> None:
+    assert EventMapper().to_events(_result()) == [
+        TurnResult(
+            subtype="success",
+            terminal_reason="completed",
+            cost_usd=Decimal("0.0021"),
+            usage=TokenUsage(input=20, output=4, cache_read=3, cache_write=2),
+            model_usage={"claude-stub-model": {"inputTokens": 20, "costUSD": 0.0021}},
+            duration_ms=12,
+            num_turns=1,
+        )
+    ]
+
+
+def test_reports_aborted_when_interrupted_during_tool() -> None:
+    message = _result(
+        subtype="error_during_execution", is_error=True, terminal_reason="aborted_tools"
+    )
+
+    [result] = EventMapper().to_events(message)
+
+    assert isinstance(result, TurnResult)
+    assert result.terminal_reason == ABORTED_TERMINAL_REASON
+
+
+def test_maps_result_without_cost_when_cli_omits_it() -> None:
+    [result] = EventMapper().to_events(_result(total_cost_usd=None, usage=None, model_usage=None))
+
+    assert isinstance(result, TurnResult)
+    assert (result.cost_usd, result.usage, result.model_usage) == (None, None, None)
+
+
+def test_reports_error_code_when_assistant_message_failed() -> None:
+    message = AssistantMessage(content=[], model="claude-stub-model", error="rate_limit")
+
+    assert EventMapper().to_events(message) == [DriverError(message="claude reported rate_limit")]
+
+
+def test_ignores_message_when_kind_not_mapped() -> None:
+    status = SystemMessage(subtype="status", data={"permissionMode": "plan"})
+
+    assert EventMapper().to_events(status) == []
+    assert EventMapper().to_events(UserMessage(content="echoed prompt")) == []
+
+
+IMAGE_BLOCK: Any = {
+    "type": "image",
+    "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="},
+}
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        # What claude-agent-sdk 0.2.165 parses an echoed image prompt to: the text block only.
+        [TextBlock(text="What is on this screen?")],
+        # Were a later SDK to keep the image block, it still maps to nothing.
+        [IMAGE_BLOCK, TextBlock(text="What is on this screen?")],
+    ],
+    ids=["parsed", "raw-image-block"],
+)
+def test_maps_nothing_when_user_echo_has_image_block(content: list[Any]) -> None:
+    assert EventMapper().to_events(UserMessage(content=content)) == []
+
+
+def test_attaches_engine_patch_with_line_numbers_when_file_tool_result_reported() -> None:
+    patch = [{"oldStart": 7, "oldLines": 1, "newStart": 7, "newLines": 1, "lines": ["-a", "+b"]}]
+    message = UserMessage(
+        content=[ToolResultBlock(tool_use_id="toolu_1", content="updated", is_error=False)],
+        tool_use_result={"filePath": "/r/app.py", "structuredPatch": patch, "originalFile": "x"},
+    )
+
+    assert EventMapper().to_events(message) == [
+        ToolResult(
+            tool_use_id="toolu_1",
+            content="updated",
+            diff="--- a//r/app.py\n+++ b//r/app.py\n@@ -7,1 +7,1 @@\n-a\n+b\n",
+        )
+    ]
+
+
+def test_attaches_whole_content_when_file_created() -> None:
+    message = UserMessage(
+        content=[ToolResultBlock(tool_use_id="toolu_1", content="created", is_error=False)],
+        tool_use_result={"type": "create", "filePath": "new.py", "content": "a\nb\n"},
+    )
+
+    [result] = EventMapper().to_events(message)
+
+    assert isinstance(result, ToolResult)
+    assert result.diff == "--- /dev/null\n+++ b/new.py\n@@ -0,0 +1,2 @@\n+a\n+b\n"
+
+
+@pytest.mark.parametrize(
+    "report",
+    [None, "text", {"structuredPatch": []}, {"filePath": "a.py", "structuredPatch": "bad"}],
+)
+def test_attaches_no_diff_when_report_has_no_patch(report: object) -> None:
+    message = UserMessage(
+        content=[ToolResultBlock(tool_use_id="toolu_1", content="ok", is_error=False)],
+        tool_use_result=report,  # type: ignore[arg-type]
+    )
+
+    assert EventMapper().to_events(message) == [ToolResult(tool_use_id="toolu_1", content="ok")]
+
+
+def test_attaches_no_diff_when_result_failed_or_several() -> None:
+    report = {
+        "filePath": "a.py",
+        "structuredPatch": [
+            {"oldStart": 1, "oldLines": 1, "newStart": 1, "newLines": 1, "lines": ["-a", "+b"]}
+        ],
+    }
+    failed = UserMessage(
+        content=[ToolResultBlock(tool_use_id="t1", content="no", is_error=True)],
+        tool_use_result=report,
+    )
+    several = UserMessage(
+        content=[
+            ToolResultBlock(tool_use_id="t1", content="a", is_error=False),
+            ToolResultBlock(tool_use_id="t2", content="b", is_error=False),
+        ],
+        tool_use_result=report,
+    )
+
+    for message in (failed, several):
+        assert all(
+            isinstance(event, ToolResult) and event.diff is None
+            for event in EventMapper().to_events(message)
+        )
+
+
+def _started() -> TaskStartedMessage:
+    data = {"subtype": "task_started", "task_id": "task-1", "description": "Review the change"}
+    return TaskStartedMessage(
+        subtype="task_started",
+        data=data,
+        task_id="task-1",
+        description="Review the change",
+        uuid="u1",
+        session_id=SESSION,
+        tool_use_id="toolu_9",
+        task_type="local_agent",
+    )
+
+
+def test_maps_running_task_when_task_started() -> None:
+    assert EventMapper().to_events(_started()) == [
+        TaskEvent(
+            task_id="task-1",
+            status="running",
+            description="Review the change",
+            tool_use_id="toolu_9",
+            task_type="local_agent",
+        )
+    ]
+
+
+@pytest.mark.parametrize("status", ["completed", "failed", "stopped"])
+def test_maps_task_end_when_task_notification_received(status: Any) -> None:
+    message = TaskNotificationMessage(
+        subtype="task_notification",
+        data={},
+        task_id="task-1",
+        status=status,
+        output_file="out.txt",
+        summary="Done",
+        uuid="u2",
+        session_id=SESSION,
+        tool_use_id="toolu_9",
+    )
+
+    assert EventMapper().to_events(message) == [
+        TaskEvent(task_id="task-1", status=status, tool_use_id="toolu_9")
+    ]
+
+
+def test_maps_killed_as_stopped_when_task_updated_terminal() -> None:
+    message = TaskUpdatedMessage(
+        subtype="task_updated",
+        data={},
+        task_id="task-1",
+        patch={"status": "killed"},
+        status="killed",
+    )
+
+    assert EventMapper().to_events(message) == [TaskEvent(task_id="task-1", status="stopped")]
+
+
+@pytest.mark.parametrize(
+    ("task_id", "status"), [("task-1", "pending"), ("task-1", None), ("", "completed")]
+)
+def test_maps_nothing_when_task_updated_not_terminal_or_unnamed(task_id: str, status: Any) -> None:
+    message = TaskUpdatedMessage(
+        subtype="task_updated", data={}, task_id=task_id, patch={}, status=status
+    )
+
+    assert EventMapper().to_events(message) == []
+
+
+def test_maps_running_again_when_task_updated_running() -> None:
+    message = TaskUpdatedMessage(
+        subtype="task_updated",
+        data={},
+        task_id="task-1",
+        patch={"status": "running"},
+        status="running",
+    )
+
+    assert EventMapper().to_events(message) == [TaskEvent(task_id="task-1", status="running")]
+
+
+def test_maps_nothing_when_task_progress_received() -> None:
+    message = TaskProgressMessage(
+        subtype="task_progress",
+        data={},
+        task_id="task-1",
+        description="Review the change",
+        usage={"total_tokens": 10, "tool_uses": 1, "duration_ms": 5},
+        uuid="u3",
+        session_id=SESSION,
+    )
+
+    assert EventMapper().to_events(message) == []

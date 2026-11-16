@@ -1,0 +1,70 @@
+--- rc (2 bytes) ---
+0
+
+--- stdout (5496 bytes) ---
+# Brief
+
+## Now
+- item 001: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 002: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 003: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 004: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 005: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 006: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 007: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 008: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 009: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 010: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 011: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 012: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 013: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 014: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 015: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 016: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 017: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 018: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 019: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 020: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 021: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 022: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 023: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 024: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 025: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 026: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 027: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 028: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 029: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 030: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 031: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 032: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 033: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 034: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 035: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 036: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 037: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 038: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 039: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 040: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 041: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 042: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 043: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 044: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 045: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 046: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 047: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 048: keep the brief short and current keep the brief short and current keep the brief short and current 
+- item 049: keep the brief short and current keep the brief short and current keep the b
+…(truncated)
+
+--- stderr (0 bytes) ---
+
+--- fs (0 bytes) ---
+
+--- calls (1246 bytes) ---
+{"tool": "gh", "cwd": "<ROOT>/ws/demo-hub", "argv": ["<ROOT>/bin/gh", "pr", "list", "-R", "acme/demo-hub", "--author", "@me", "--json", "number,title", "-q", ".[] | \"#\\(.number) \\(.title)\""]}
+{"tool": "gh", "cwd": "<ROOT>/ws/demo-hub", "argv": ["<ROOT>/bin/gh", "run", "list", "-R", "acme/demo-hub", "--branch", "trunk", "-L", "3", "--json", "name,conclusion", "-q", ".[] | select(.conclusion==\"failure\") | .name"]}
+{"tool": "gh", "cwd": "<ROOT>/ws/demo-hub", "argv": ["<ROOT>/bin/gh", "pr", "list", "-R", "acme/api", "--author", "@me", "--json", "number,title", "-q", ".[] | \"#\\(.number) \\(.title)\""]}
+{"tool": "gh", "cwd": "<ROOT>/ws/demo-hub", "argv": ["<ROOT>/bin/gh", "run", "list", "-R", "acme/api", "--branch", "trunk", "-L", "3", "--json", "name,conclusion", "-q", ".[] | select(.conclusion==\"failure\") | .name"]}
+{"tool": "gh", "cwd": "<ROOT>/ws/demo-hub", "argv": ["<ROOT>/bin/gh", "pr", "list", "-R", "acme/web", "--author", "@me", "--json", "number,title", "-q", ".[] | \"#\\(.number) \\(.title)\""]}
+{"tool": "gh", "cwd": "<ROOT>/ws/demo-hub", "argv": ["<ROOT>/bin/gh", "run", "list", "-R", "acme/web", "--branch", "trunk", "-L", "3", "--json", "name,conclusion", "-q", ".[] | select(.conclusion==\"failure\") | .name"]}
+

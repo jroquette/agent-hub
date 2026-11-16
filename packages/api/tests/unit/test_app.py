@@ -1,0 +1,294 @@
+import asyncio
+from typing import Any
+
+import pytest
+from fastapi.testclient import TestClient
+
+from agent_hub.api.app import CombinedLifecycle, create_app
+from agent_hub.api.change_feed import ChangeFeed
+from agent_hub.api.dependencies import ApiPorts
+from agent_hub.api.openapi_paths import SERVED_PATHS
+from agent_hub.api.settings import ApiSettings
+
+# Valid bodies, so validation passes and the stub itself answers.
+BODIES: dict[tuple[str, str], object] = {
+    ("post", "/api/v1/events/hooks"): {
+        "v": 1,
+        "project": "demo",
+        "sent_at": "2026-10-11T10:00:00Z",
+        "hook": {"hook_event_name": "Stop"},
+    },
+    ("post", "/api/v1/hubs"): {"path": "/home/demo/demo-hub"},
+    ("post", "/api/v1/hubs/{hub_id}/platform-sync"): {},
+    ("post", "/api/v1/hubs/{hub_id}/doctor-fix"): {},
+    ("post", "/api/v1/features/{project}/{slug}/acs/{ac}/check-runs"): {},
+    ("post", "/api/v1/learnings/{learning_id}/accept"): {"target": "learnings/"},
+    ("post", "/api/v1/learnings/{learning_id}/reject"): {"reason": "Duplicate of another note"},
+    ("post", "/api/v1/learnings/decisions"): {
+        "decisions": [{"learning_id": "toolu_1", "action": "reject", "reason": "Duplicate"}]
+    },
+    ("post", "/api/v1/approvals/{approval_id}/decision"): {"decision": "approve"},
+    ("post", "/api/v1/agent-sessions"): {"project": "demo", "workdir_id": "0123456789abcdef"},
+    ("post", "/api/v1/agent-sessions/cloud"): {
+        "project": "demo",
+        "workdir_id": "0123456789abcdef",
+        "task": "Upgrade the linter",
+    },
+    ("post", "/api/v1/agent-sessions/cloud/{cloud_id}/messages"): {"text": "Also the docs"},
+    ("post", "/api/v1/agent-sessions/{agent_session_id}/messages"): {"text": "Run the tests."},
+    ("post", "/api/v1/agent-sessions/{agent_session_id}/permissions/{request_id}"): {
+        "decision": "allow"
+    },
+    ("post", "/api/v1/agent-sessions/{agent_session_id}/settings"): {"mode": "plan"},
+    # Bodiless agent-session writes still send JSON (the access rules want it).
+    ("post", "/api/v1/agent-sessions/{agent_session_id}/interrupt"): {},
+    ("post", "/api/v1/agent-sessions/{agent_session_id}/tasks/{task_id}/stop"): {},
+    ("post", "/api/v1/agent-sessions/{agent_session_id}/close"): {},
+    # The run commands are strict writes: JSON even when bodiless.
+    ("post", "/api/v1/workflow-runs"): {"project": "demo", "workflow": "fix"},
+    ("post", "/api/v1/workflow-runs/{run_id}/cancel"): {},
+    ("post", "/api/v1/workflow-runs/{run_id}/resume"): {},
+    ("post", "/api/v1/workflow-runs/{run_id}/abandon"): {},
+    ("post", "/api/v1/scenario-runs/{run_id}/investigation"): {},
+    ("post", "/api/v1/scenarios/{project}/{name}/plan"): {"environment": "local"},
+    ("post", "/api/v1/scenarios/{project}/{name}/runs"): {"environment": "local"},
+    # The scenario builder's writes.
+    ("put", "/api/v1/scenarios/{project}/{name}"): {"pack": "demo", "document": {}},
+    ("post", "/api/v1/scenarios/{project}/{name}/proposal/dismiss"): {},
+    ("put", "/api/v1/projects/{project}/actions/{pack}/{name}"): {
+        "pack": "demo",
+        "name": "send",
+        "description": "Send it",
+        "effect": "write",
+        "script_text": "print(1)\n",
+    },
+    ("post", "/api/v1/projects/{project}/actions"): {
+        "pack": "demo",
+        "name": "send",
+        "description": "Send it",
+        "effect": "write",
+        "script_text": "print(1)\n",
+    },
+    ("post", "/api/v1/scenario-runs/{run_id}/answer"): {"choice": "retry"},
+    ("post", "/api/v1/scenario-runs/{run_id}/findings/{finding_id}/issue"): {},
+    ("post", "/api/v1/scenario-runs/{run_id}/findings/{finding_id}/inbox"): {},
+    # Debugging a scenario run and migrate (ADR 0049): strict writes, JSON even when bodiless.
+    ("put", "/api/v1/scenario-runs/{run_id}/breakpoints"): {"blocks": []},
+    ("post", "/api/v1/scenario-runs/{run_id}/step"): {},
+    ("post", "/api/v1/scenario-runs/{run_id}/continue"): {},
+    ("post", "/api/v1/scenarios/{project}/{name}/migrate"): {"check": True},
+    # A restore and a publish are strict writes too (AGH-295, D13).
+    (
+        "post",
+        "/api/v1/projects/{project}/skills/{kind}/{source}/{name}/versions/{version_id}/restore",
+    ): {},
+    ("post", "/api/v1/workflows/{project}/{name}/versions/{version_id}/restore"): {},
+    ("post", "/api/v1/projects/{project}/skills/drafts/{draft_id}/publish"): {"target": None},
+    # A change request's decision is a strict write (two-level-flows AC-2.14).
+    ("post", "/api/v1/features/{project}/{slug}/change-requests/{n}/decision"): {
+        "decision": "approved"
+    },
+    # The owner sign-off is a strict item write (AGH-695): JSON even when bodiless.
+    ("post", "/api/v1/features/{project}/{slug}/owner-signoff"): {},
+    ("post", "/api/v1/features/{project}/{slug}/status"): {"status": "closed"},
+    ("post", "/api/v1/projects/{project}/config/environments"): {
+        "op": "remove_environment",
+        "scope": "local",
+        "name": "staging",
+    },
+    ("post", "/api/v1/projects/{project}/config/repos"): {"op": "remove_repo", "dir": "api"},
+    ("post", "/api/v1/projects/{project}/environment-discoveries"): {"repos": ["api"]},
+    # The owner writes are strict writes too (AGH-699): a JSON body, even an empty one.
+    ("put", "/api/v1/projects/{project}/config/local"): {},
+    ("put", "/api/v1/tracker/linear"): {"api_key": "lin_api_" + "x" * 40},
+    ("put", "/api/v1/feature-names"): {"project": "demo", "slug": "demo-feature", "name": "Demo"},
+}
+OWN_ORIGIN = {"Origin": "http://127.0.0.1:7420"}
+QUERIES = {
+    "/api/v1/search": {"q": "make"},
+    "/api/v1/projects/{project}/brain/note": {"path": "index.md"},
+    "/api/v1/agent-sessions/workdirs": {"project": "demo"},
+    "/api/v1/agent-sessions/resumable": {"project": "demo", "workdir_id": "0123456789abcdef"},
+}
+# Agent session ids are UUIDs (the route's convertor); the other ids take any text.
+AGENT_SESSION_ID = "01929a4e-7a11-7c00-8a00-00000000a001"
+# Discovery ids are 12 hex digits (the route's pattern).
+DISCOVERY_ID = "0123456789ab"
+
+
+def _concrete(path: str) -> str:
+    path = path.replace("{agent_session_id}", AGENT_SESSION_ID).replace("{n}", "2")
+    path = path.replace("{discovery_id}", DISCOVERY_ID)
+    # Run commands take the CLI's run ids only.
+    if path.endswith(("/cancel", "/resume", "/abandon")):
+        path = path.replace("{run_id}", "run-1")
+    names = (
+        "hub_id",
+        "project",
+        "session_id",
+        "run_id",
+        "approval_id",
+        "learning_id",
+        "slug",
+        "ac",
+        "ticket",
+    )
+    for name in (*names, "request_id", "cloud_id"):
+        path = path.replace(f"{{{name}}}", f"{name}-1")
+    return path
+
+
+@pytest.mark.parametrize(("method", "path"), sorted(SERVED_PATHS))
+def test_answers_not_implemented_problem_when_route_is_a_stub(
+    client: TestClient, method: str, path: str
+) -> None:
+    url = _concrete(path)
+
+    response = client.request(
+        method,
+        url,
+        json=BODIES.get((method, path)),
+        params=QUERIES.get(path),
+        headers=OWN_ORIGIN,  # the strict writes need it (S7); the other routes ignore it
+    )
+
+    assert response.status_code == 501, response.text
+    assert response.headers["content-type"] == "application/problem+json"
+    problem = response.json()
+    assert problem["status"] == 501
+    assert problem["title"] == "Not implemented in this build"
+    assert problem["instance"] == url
+
+
+def test_serves_openapi_document_when_requested(client: TestClient) -> None:
+    response = client.get("/api/v1/openapi.json")
+
+    assert response.status_code == 200
+    assert response.json()["info"] == {"title": "agent-hub", "version": "0.1.0"}
+
+
+@pytest.mark.parametrize("path", ["/docs", "/redoc"])
+def test_serves_app_instead_of_docs_page_when_requested(client: TestClient, path: str) -> None:
+    # The SPA answers every app route with its index page; FastAPI's docs pages are off.
+    response = client.get(path)
+
+    assert response.status_code == 200
+    assert "<title>agent-hub</title>" in response.text
+    assert "swagger" not in response.text.lower()
+    assert "redoc" not in response.text.lower()
+
+
+def test_serves_no_root_openapi_document_when_requested(client: TestClient) -> None:
+    assert client.get("/openapi.json").status_code == 404
+
+
+def test_keeps_ports_when_app_created(api_settings: ApiSettings) -> None:
+    ports = ApiPorts()
+
+    assert create_app(api_settings, ports=ports).state.ports is ports
+
+
+def test_keeps_settings_when_app_created(api_settings: ApiSettings) -> None:
+    assert create_app(api_settings).state.settings is api_settings
+
+
+def test_closes_change_feed_when_app_shuts_down(api_settings: ApiSettings, fakes: Any) -> None:
+    reader = fakes.EventReader()
+    feed = ChangeFeed(reader, timer=fakes.Clock())
+    app = create_app(api_settings, ports=ApiPorts(event_reader=reader, change_feed=feed))
+
+    with TestClient(app):
+        assert asyncio.run(feed.wait_beyond(0, deadline=1)) == 0
+
+    assert asyncio.run(feed.wait_beyond(0, deadline=1)) is None
+
+
+class RecordingLifecycle:
+    """An ``AppLifecycle`` that records its calls in order."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def start(self) -> None:
+        self.calls.append("start")
+
+    def begin_exit(self) -> None:
+        self.calls.append("begin_exit")
+
+    async def stop(self) -> None:
+        self.calls.append("stop")
+
+
+def test_starts_then_stops_lifecycle_when_app_runs(api_settings: ApiSettings) -> None:
+    lifecycle = RecordingLifecycle()
+    app = create_app(api_settings, lifecycle=lifecycle)
+
+    with TestClient(app):
+        started = list(lifecycle.calls)
+
+    assert started == ["start"]
+    assert lifecycle.calls == ["start", "stop"]
+
+
+def test_closes_feed_and_begins_exit_when_exit_hook_called(
+    api_settings: ApiSettings, fakes: Any
+) -> None:
+    reader = fakes.EventReader()
+    feed = ChangeFeed(reader, timer=fakes.Clock())
+    lifecycle = RecordingLifecycle()
+    app = create_app(
+        api_settings, ports=ApiPorts(event_reader=reader, change_feed=feed), lifecycle=lifecycle
+    )
+
+    app.state.on_exit()
+
+    assert feed.is_closed
+    assert lifecycle.calls == ["begin_exit"]
+
+
+def test_closes_feed_when_exit_hook_called_without_lifecycle(
+    api_settings: ApiSettings, fakes: Any
+) -> None:
+    reader = fakes.EventReader()
+    feed = ChangeFeed(reader, timer=fakes.Clock())
+    app = create_app(api_settings, ports=ApiPorts(event_reader=reader, change_feed=feed))
+
+    app.state.on_exit()
+
+    assert feed.is_closed
+
+
+class NamedLifecycle:
+    """An ``AppLifecycle`` that records its calls, by name, in a shared list."""
+
+    def __init__(self, name: str, calls: list[str]) -> None:
+        self.name, self.calls = name, calls
+
+    async def start(self) -> None:
+        self.calls.append(f"start {self.name}")
+
+    def begin_exit(self) -> None:
+        self.calls.append(f"exit {self.name}")
+
+    async def stop(self) -> None:
+        self.calls.append(f"stop {self.name}")
+
+
+def test_starts_in_order_and_stops_in_reverse_when_lifecycles_combined() -> None:
+    calls: list[str] = []
+    combined = CombinedLifecycle(
+        NamedLifecycle("sessions", calls), NamedLifecycle("scheduler", calls)
+    )
+
+    asyncio.run(combined.start())
+    combined.begin_exit()
+    asyncio.run(combined.stop())
+
+    assert calls == [
+        "start sessions",
+        "start scheduler",
+        "exit sessions",
+        "exit scheduler",
+        "stop scheduler",
+        "stop sessions",
+    ]

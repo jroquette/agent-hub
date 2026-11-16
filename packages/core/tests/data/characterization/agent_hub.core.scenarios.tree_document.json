@@ -1,0 +1,4526 @@
+{
+  "module": "agent_hub.core.scenarios.tree_document",
+  "outcomes": {
+    "invalid tree": {
+      "errors": [
+        {
+          "loc": [
+            "revision"
+          ],
+          "msg": "Input should be greater than or equal to 1",
+          "type": "greater_than_equal"
+        },
+        {
+          "loc": [
+            "stages"
+          ],
+          "msg": "Value error, must hold at least one stage",
+          "type": "value_error"
+        },
+        {
+          "loc": [
+            "colour"
+          ],
+          "msg": "Extra inputs are not permitted",
+          "type": "extra_forbidden"
+        }
+      ]
+    },
+    "valid tree": {
+      "valid": {
+        "description": null,
+        "inputs": {},
+        "kind": "scenario",
+        "name": "demo",
+        "revision": 1,
+        "stages": [
+          {
+            "description": null,
+            "name": "Fetch order",
+            "steps": [
+              {
+                "capture": {},
+                "description": null,
+                "do": "queue-send",
+                "id": null,
+                "retry": null,
+                "timeout": null,
+                "with_": {
+                  "message": "demo.fetch-orders"
+                }
+              },
+              {
+                "capture": {
+                  "order_id": "$self.output.order_id"
+                },
+                "description": null,
+                "every": "15s",
+                "id": null,
+                "retry": null,
+                "timeout": "10m",
+                "until": "$self.output.order_id != ''",
+                "wait_until": "order-state",
+                "with_": {}
+              },
+              {
+                "capture_response": false,
+                "decisions": null,
+                "description": null,
+                "id": null,
+                "you": "Check the order by hand, then approve."
+              }
+            ]
+          }
+        ],
+        "version": 2
+      }
+    }
+  },
+  "schemas": {
+    "DoStep": {
+      "$defs": {
+        "JsonValue": {},
+        "Retry": {
+          "additionalProperties": false,
+          "description": "``max_attempts`` retries after the first attempt, the delay doubling each time.",
+          "properties": {
+            "delay": {
+              "default": "2s",
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Delay",
+              "type": "string"
+            },
+            "max_attempts": {
+              "default": 1,
+              "maximum": 5,
+              "minimum": 0,
+              "title": "Max Attempts",
+              "type": "integer"
+            },
+            "on_error": {
+              "default": "transient",
+              "enum": [
+                "transient",
+                "all"
+              ],
+              "title": "On Error",
+              "type": "string"
+            }
+          },
+          "title": "Retry",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "``do: <action>``: an ``action`` node.",
+      "properties": {
+        "capture": {
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*$": {
+              "type": "string"
+            }
+          },
+          "title": "Capture",
+          "type": "object"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "do": {
+          "pattern": "^(?:[a-z0-9]+(?:-[a-z0-9]+)*/)?[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "title": "Do",
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "retry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Retry"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "timeout": {
+          "anyOf": [
+            {
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeout"
+        },
+        "with": {
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*$": {
+              "$ref": "#/$defs/JsonValue"
+            }
+          },
+          "title": "With",
+          "type": "object"
+        }
+      },
+      "required": [
+        "do"
+      ],
+      "title": "DoStep",
+      "type": "object"
+    },
+    "IfStep": {
+      "$defs": {
+        "Decision": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "label": {
+              "title": "Label",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "label"
+          ],
+          "title": "Decision",
+          "type": "object"
+        },
+        "DoStep": {
+          "additionalProperties": false,
+          "description": "``do: <action>``: an ``action`` node.",
+          "properties": {
+            "capture": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "type": "string"
+                }
+              },
+              "title": "Capture",
+              "type": "object"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "do": {
+              "pattern": "^(?:[a-z0-9]+(?:-[a-z0-9]+)*/)?[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "title": "Do",
+              "type": "string"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "retry": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Retry"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "timeout": {
+              "anyOf": [
+                {
+                  "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Timeout"
+            },
+            "with": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "$ref": "#/$defs/JsonValue"
+                }
+              },
+              "title": "With",
+              "type": "object"
+            }
+          },
+          "required": [
+            "do"
+          ],
+          "title": "DoStep",
+          "type": "object"
+        },
+        "IfStep": {
+          "additionalProperties": false,
+          "description": "``if: <condition>`` with ``then`` and an optional ``else``: no node of its own.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "else": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/Step"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Else"
+            },
+            "if": {
+              "title": "If",
+              "type": "string"
+            },
+            "then": {
+              "items": {
+                "$ref": "#/$defs/Step"
+              },
+              "title": "Then",
+              "type": "array"
+            }
+          },
+          "required": [
+            "if",
+            "then"
+          ],
+          "title": "IfStep",
+          "type": "object"
+        },
+        "IncludeStep": {
+          "additionalProperties": false,
+          "description": "``include: <scenario>`` with ``with``: an ``include`` node, one block.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "include": {
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Include",
+              "type": "string"
+            },
+            "with": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "$ref": "#/$defs/JsonValue"
+                }
+              },
+              "title": "With",
+              "type": "object"
+            }
+          },
+          "required": [
+            "include"
+          ],
+          "title": "IncludeStep",
+          "type": "object"
+        },
+        "JsonValue": {},
+        "RepeatSpec": {
+          "additionalProperties": false,
+          "description": "A Repeat's body, run until ``until`` holds, at most ``max`` times.",
+          "properties": {
+            "max": {
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Max",
+              "type": "integer"
+            },
+            "steps": {
+              "items": {
+                "$ref": "#/$defs/Step"
+              },
+              "title": "Steps",
+              "type": "array"
+            },
+            "until": {
+              "title": "Until",
+              "type": "string"
+            }
+          },
+          "required": [
+            "max",
+            "until",
+            "steps"
+          ],
+          "title": "RepeatSpec",
+          "type": "object"
+        },
+        "RepeatStep": {
+          "additionalProperties": false,
+          "description": "``repeat: {max, until, steps}``: a ``loop_group`` whose body is its steps.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "repeat": {
+              "$ref": "#/$defs/RepeatSpec"
+            }
+          },
+          "required": [
+            "repeat"
+          ],
+          "title": "RepeatStep",
+          "type": "object"
+        },
+        "Retry": {
+          "additionalProperties": false,
+          "description": "``max_attempts`` retries after the first attempt, the delay doubling each time.",
+          "properties": {
+            "delay": {
+              "default": "2s",
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Delay",
+              "type": "string"
+            },
+            "max_attempts": {
+              "default": 1,
+              "maximum": 5,
+              "minimum": 0,
+              "title": "Max Attempts",
+              "type": "integer"
+            },
+            "on_error": {
+              "default": "transient",
+              "enum": [
+                "transient",
+                "all"
+              ],
+              "title": "On Error",
+              "type": "string"
+            }
+          },
+          "title": "Retry",
+          "type": "object"
+        },
+        "Step": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/DoStep"
+            },
+            {
+              "$ref": "#/$defs/WaitUntilStep"
+            },
+            {
+              "$ref": "#/$defs/YouStep"
+            },
+            {
+              "$ref": "#/$defs/WaitStep"
+            },
+            {
+              "$ref": "#/$defs/IncludeStep"
+            },
+            {
+              "$ref": "#/$defs/RepeatStep"
+            },
+            {
+              "$ref": "#/$defs/IfStep"
+            },
+            {
+              "$ref": "#/$defs/TogetherStep"
+            }
+          ]
+        },
+        "TogetherStep": {
+          "additionalProperties": false,
+          "description": "``together: [[...], [...]]``: paths that start together; the next block waits for all.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "together": {
+              "items": {
+                "items": {
+                  "$ref": "#/$defs/Step"
+                },
+                "type": "array"
+              },
+              "title": "Together",
+              "type": "array"
+            }
+          },
+          "required": [
+            "together"
+          ],
+          "title": "TogetherStep",
+          "type": "object"
+        },
+        "WaitSpec": {
+          "additionalProperties": false,
+          "description": "A ``wait``'s condition; the ``wait`` node's model holds its rules.",
+          "properties": {
+            "attention": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Attention"
+            },
+            "duration": {
+              "anyOf": [
+                {
+                  "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Duration"
+            },
+            "options": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/Decision"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Options"
+            },
+            "until": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Until"
+            }
+          },
+          "title": "WaitSpec",
+          "type": "object"
+        },
+        "WaitStep": {
+          "additionalProperties": false,
+          "description": "``wait: {duration | until | attention}``: a ``wait`` node.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "wait": {
+              "$ref": "#/$defs/WaitSpec"
+            }
+          },
+          "required": [
+            "wait"
+          ],
+          "title": "WaitStep",
+          "type": "object"
+        },
+        "WaitUntilStep": {
+          "additionalProperties": false,
+          "description": "``wait_until: <read action>``, polled every ``every`` until ``until``: an ``expect``.",
+          "properties": {
+            "capture": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "type": "string"
+                }
+              },
+              "title": "Capture",
+              "type": "object"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "every": {
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Every",
+              "type": "string"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "retry": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Retry"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "timeout": {
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Timeout",
+              "type": "string"
+            },
+            "until": {
+              "title": "Until",
+              "type": "string"
+            },
+            "wait_until": {
+              "pattern": "^(?:[a-z0-9]+(?:-[a-z0-9]+)*/)?[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "title": "Wait Until",
+              "type": "string"
+            },
+            "with": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "$ref": "#/$defs/JsonValue"
+                }
+              },
+              "title": "With",
+              "type": "object"
+            }
+          },
+          "required": [
+            "wait_until",
+            "until",
+            "every",
+            "timeout"
+          ],
+          "title": "WaitUntilStep",
+          "type": "object"
+        },
+        "YouStep": {
+          "additionalProperties": false,
+          "description": "``you: <message>``: an ``approval`` a person answers.",
+          "properties": {
+            "capture_response": {
+              "default": false,
+              "title": "Capture Response",
+              "type": "boolean"
+            },
+            "decisions": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/Decision"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Decisions"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "you": {
+              "title": "You",
+              "type": "string"
+            }
+          },
+          "required": [
+            "you"
+          ],
+          "title": "YouStep",
+          "type": "object"
+        }
+      },
+      "$ref": "#/$defs/IfStep"
+    },
+    "IncludeStep": {
+      "$defs": {
+        "JsonValue": {}
+      },
+      "additionalProperties": false,
+      "description": "``include: <scenario>`` with ``with``: an ``include`` node, one block.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "include": {
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "title": "Include",
+          "type": "string"
+        },
+        "with": {
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*$": {
+              "$ref": "#/$defs/JsonValue"
+            }
+          },
+          "title": "With",
+          "type": "object"
+        }
+      },
+      "required": [
+        "include"
+      ],
+      "title": "IncludeStep",
+      "type": "object"
+    },
+    "RepeatSpec": {
+      "$defs": {
+        "Decision": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "label": {
+              "title": "Label",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "label"
+          ],
+          "title": "Decision",
+          "type": "object"
+        },
+        "DoStep": {
+          "additionalProperties": false,
+          "description": "``do: <action>``: an ``action`` node.",
+          "properties": {
+            "capture": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "type": "string"
+                }
+              },
+              "title": "Capture",
+              "type": "object"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "do": {
+              "pattern": "^(?:[a-z0-9]+(?:-[a-z0-9]+)*/)?[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "title": "Do",
+              "type": "string"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "retry": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Retry"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "timeout": {
+              "anyOf": [
+                {
+                  "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Timeout"
+            },
+            "with": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "$ref": "#/$defs/JsonValue"
+                }
+              },
+              "title": "With",
+              "type": "object"
+            }
+          },
+          "required": [
+            "do"
+          ],
+          "title": "DoStep",
+          "type": "object"
+        },
+        "IfStep": {
+          "additionalProperties": false,
+          "description": "``if: <condition>`` with ``then`` and an optional ``else``: no node of its own.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "else": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/Step"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Else"
+            },
+            "if": {
+              "title": "If",
+              "type": "string"
+            },
+            "then": {
+              "items": {
+                "$ref": "#/$defs/Step"
+              },
+              "title": "Then",
+              "type": "array"
+            }
+          },
+          "required": [
+            "if",
+            "then"
+          ],
+          "title": "IfStep",
+          "type": "object"
+        },
+        "IncludeStep": {
+          "additionalProperties": false,
+          "description": "``include: <scenario>`` with ``with``: an ``include`` node, one block.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "include": {
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Include",
+              "type": "string"
+            },
+            "with": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "$ref": "#/$defs/JsonValue"
+                }
+              },
+              "title": "With",
+              "type": "object"
+            }
+          },
+          "required": [
+            "include"
+          ],
+          "title": "IncludeStep",
+          "type": "object"
+        },
+        "JsonValue": {},
+        "RepeatSpec": {
+          "additionalProperties": false,
+          "description": "A Repeat's body, run until ``until`` holds, at most ``max`` times.",
+          "properties": {
+            "max": {
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Max",
+              "type": "integer"
+            },
+            "steps": {
+              "items": {
+                "$ref": "#/$defs/Step"
+              },
+              "title": "Steps",
+              "type": "array"
+            },
+            "until": {
+              "title": "Until",
+              "type": "string"
+            }
+          },
+          "required": [
+            "max",
+            "until",
+            "steps"
+          ],
+          "title": "RepeatSpec",
+          "type": "object"
+        },
+        "RepeatStep": {
+          "additionalProperties": false,
+          "description": "``repeat: {max, until, steps}``: a ``loop_group`` whose body is its steps.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "repeat": {
+              "$ref": "#/$defs/RepeatSpec"
+            }
+          },
+          "required": [
+            "repeat"
+          ],
+          "title": "RepeatStep",
+          "type": "object"
+        },
+        "Retry": {
+          "additionalProperties": false,
+          "description": "``max_attempts`` retries after the first attempt, the delay doubling each time.",
+          "properties": {
+            "delay": {
+              "default": "2s",
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Delay",
+              "type": "string"
+            },
+            "max_attempts": {
+              "default": 1,
+              "maximum": 5,
+              "minimum": 0,
+              "title": "Max Attempts",
+              "type": "integer"
+            },
+            "on_error": {
+              "default": "transient",
+              "enum": [
+                "transient",
+                "all"
+              ],
+              "title": "On Error",
+              "type": "string"
+            }
+          },
+          "title": "Retry",
+          "type": "object"
+        },
+        "Step": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/DoStep"
+            },
+            {
+              "$ref": "#/$defs/WaitUntilStep"
+            },
+            {
+              "$ref": "#/$defs/YouStep"
+            },
+            {
+              "$ref": "#/$defs/WaitStep"
+            },
+            {
+              "$ref": "#/$defs/IncludeStep"
+            },
+            {
+              "$ref": "#/$defs/RepeatStep"
+            },
+            {
+              "$ref": "#/$defs/IfStep"
+            },
+            {
+              "$ref": "#/$defs/TogetherStep"
+            }
+          ]
+        },
+        "TogetherStep": {
+          "additionalProperties": false,
+          "description": "``together: [[...], [...]]``: paths that start together; the next block waits for all.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "together": {
+              "items": {
+                "items": {
+                  "$ref": "#/$defs/Step"
+                },
+                "type": "array"
+              },
+              "title": "Together",
+              "type": "array"
+            }
+          },
+          "required": [
+            "together"
+          ],
+          "title": "TogetherStep",
+          "type": "object"
+        },
+        "WaitSpec": {
+          "additionalProperties": false,
+          "description": "A ``wait``'s condition; the ``wait`` node's model holds its rules.",
+          "properties": {
+            "attention": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Attention"
+            },
+            "duration": {
+              "anyOf": [
+                {
+                  "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Duration"
+            },
+            "options": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/Decision"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Options"
+            },
+            "until": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Until"
+            }
+          },
+          "title": "WaitSpec",
+          "type": "object"
+        },
+        "WaitStep": {
+          "additionalProperties": false,
+          "description": "``wait: {duration | until | attention}``: a ``wait`` node.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "wait": {
+              "$ref": "#/$defs/WaitSpec"
+            }
+          },
+          "required": [
+            "wait"
+          ],
+          "title": "WaitStep",
+          "type": "object"
+        },
+        "WaitUntilStep": {
+          "additionalProperties": false,
+          "description": "``wait_until: <read action>``, polled every ``every`` until ``until``: an ``expect``.",
+          "properties": {
+            "capture": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "type": "string"
+                }
+              },
+              "title": "Capture",
+              "type": "object"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "every": {
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Every",
+              "type": "string"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "retry": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Retry"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "timeout": {
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Timeout",
+              "type": "string"
+            },
+            "until": {
+              "title": "Until",
+              "type": "string"
+            },
+            "wait_until": {
+              "pattern": "^(?:[a-z0-9]+(?:-[a-z0-9]+)*/)?[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "title": "Wait Until",
+              "type": "string"
+            },
+            "with": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "$ref": "#/$defs/JsonValue"
+                }
+              },
+              "title": "With",
+              "type": "object"
+            }
+          },
+          "required": [
+            "wait_until",
+            "until",
+            "every",
+            "timeout"
+          ],
+          "title": "WaitUntilStep",
+          "type": "object"
+        },
+        "YouStep": {
+          "additionalProperties": false,
+          "description": "``you: <message>``: an ``approval`` a person answers.",
+          "properties": {
+            "capture_response": {
+              "default": false,
+              "title": "Capture Response",
+              "type": "boolean"
+            },
+            "decisions": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/Decision"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Decisions"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "you": {
+              "title": "You",
+              "type": "string"
+            }
+          },
+          "required": [
+            "you"
+          ],
+          "title": "YouStep",
+          "type": "object"
+        }
+      },
+      "$ref": "#/$defs/RepeatSpec"
+    },
+    "RepeatStep": {
+      "$defs": {
+        "Decision": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "label": {
+              "title": "Label",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "label"
+          ],
+          "title": "Decision",
+          "type": "object"
+        },
+        "DoStep": {
+          "additionalProperties": false,
+          "description": "``do: <action>``: an ``action`` node.",
+          "properties": {
+            "capture": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "type": "string"
+                }
+              },
+              "title": "Capture",
+              "type": "object"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "do": {
+              "pattern": "^(?:[a-z0-9]+(?:-[a-z0-9]+)*/)?[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "title": "Do",
+              "type": "string"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "retry": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Retry"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "timeout": {
+              "anyOf": [
+                {
+                  "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Timeout"
+            },
+            "with": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "$ref": "#/$defs/JsonValue"
+                }
+              },
+              "title": "With",
+              "type": "object"
+            }
+          },
+          "required": [
+            "do"
+          ],
+          "title": "DoStep",
+          "type": "object"
+        },
+        "IfStep": {
+          "additionalProperties": false,
+          "description": "``if: <condition>`` with ``then`` and an optional ``else``: no node of its own.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "else": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/Step"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Else"
+            },
+            "if": {
+              "title": "If",
+              "type": "string"
+            },
+            "then": {
+              "items": {
+                "$ref": "#/$defs/Step"
+              },
+              "title": "Then",
+              "type": "array"
+            }
+          },
+          "required": [
+            "if",
+            "then"
+          ],
+          "title": "IfStep",
+          "type": "object"
+        },
+        "IncludeStep": {
+          "additionalProperties": false,
+          "description": "``include: <scenario>`` with ``with``: an ``include`` node, one block.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "include": {
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Include",
+              "type": "string"
+            },
+            "with": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "$ref": "#/$defs/JsonValue"
+                }
+              },
+              "title": "With",
+              "type": "object"
+            }
+          },
+          "required": [
+            "include"
+          ],
+          "title": "IncludeStep",
+          "type": "object"
+        },
+        "JsonValue": {},
+        "RepeatSpec": {
+          "additionalProperties": false,
+          "description": "A Repeat's body, run until ``until`` holds, at most ``max`` times.",
+          "properties": {
+            "max": {
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Max",
+              "type": "integer"
+            },
+            "steps": {
+              "items": {
+                "$ref": "#/$defs/Step"
+              },
+              "title": "Steps",
+              "type": "array"
+            },
+            "until": {
+              "title": "Until",
+              "type": "string"
+            }
+          },
+          "required": [
+            "max",
+            "until",
+            "steps"
+          ],
+          "title": "RepeatSpec",
+          "type": "object"
+        },
+        "RepeatStep": {
+          "additionalProperties": false,
+          "description": "``repeat: {max, until, steps}``: a ``loop_group`` whose body is its steps.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "repeat": {
+              "$ref": "#/$defs/RepeatSpec"
+            }
+          },
+          "required": [
+            "repeat"
+          ],
+          "title": "RepeatStep",
+          "type": "object"
+        },
+        "Retry": {
+          "additionalProperties": false,
+          "description": "``max_attempts`` retries after the first attempt, the delay doubling each time.",
+          "properties": {
+            "delay": {
+              "default": "2s",
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Delay",
+              "type": "string"
+            },
+            "max_attempts": {
+              "default": 1,
+              "maximum": 5,
+              "minimum": 0,
+              "title": "Max Attempts",
+              "type": "integer"
+            },
+            "on_error": {
+              "default": "transient",
+              "enum": [
+                "transient",
+                "all"
+              ],
+              "title": "On Error",
+              "type": "string"
+            }
+          },
+          "title": "Retry",
+          "type": "object"
+        },
+        "Step": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/DoStep"
+            },
+            {
+              "$ref": "#/$defs/WaitUntilStep"
+            },
+            {
+              "$ref": "#/$defs/YouStep"
+            },
+            {
+              "$ref": "#/$defs/WaitStep"
+            },
+            {
+              "$ref": "#/$defs/IncludeStep"
+            },
+            {
+              "$ref": "#/$defs/RepeatStep"
+            },
+            {
+              "$ref": "#/$defs/IfStep"
+            },
+            {
+              "$ref": "#/$defs/TogetherStep"
+            }
+          ]
+        },
+        "TogetherStep": {
+          "additionalProperties": false,
+          "description": "``together: [[...], [...]]``: paths that start together; the next block waits for all.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "together": {
+              "items": {
+                "items": {
+                  "$ref": "#/$defs/Step"
+                },
+                "type": "array"
+              },
+              "title": "Together",
+              "type": "array"
+            }
+          },
+          "required": [
+            "together"
+          ],
+          "title": "TogetherStep",
+          "type": "object"
+        },
+        "WaitSpec": {
+          "additionalProperties": false,
+          "description": "A ``wait``'s condition; the ``wait`` node's model holds its rules.",
+          "properties": {
+            "attention": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Attention"
+            },
+            "duration": {
+              "anyOf": [
+                {
+                  "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Duration"
+            },
+            "options": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/Decision"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Options"
+            },
+            "until": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Until"
+            }
+          },
+          "title": "WaitSpec",
+          "type": "object"
+        },
+        "WaitStep": {
+          "additionalProperties": false,
+          "description": "``wait: {duration | until | attention}``: a ``wait`` node.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "wait": {
+              "$ref": "#/$defs/WaitSpec"
+            }
+          },
+          "required": [
+            "wait"
+          ],
+          "title": "WaitStep",
+          "type": "object"
+        },
+        "WaitUntilStep": {
+          "additionalProperties": false,
+          "description": "``wait_until: <read action>``, polled every ``every`` until ``until``: an ``expect``.",
+          "properties": {
+            "capture": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "type": "string"
+                }
+              },
+              "title": "Capture",
+              "type": "object"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "every": {
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Every",
+              "type": "string"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "retry": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Retry"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "timeout": {
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Timeout",
+              "type": "string"
+            },
+            "until": {
+              "title": "Until",
+              "type": "string"
+            },
+            "wait_until": {
+              "pattern": "^(?:[a-z0-9]+(?:-[a-z0-9]+)*/)?[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "title": "Wait Until",
+              "type": "string"
+            },
+            "with": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "$ref": "#/$defs/JsonValue"
+                }
+              },
+              "title": "With",
+              "type": "object"
+            }
+          },
+          "required": [
+            "wait_until",
+            "until",
+            "every",
+            "timeout"
+          ],
+          "title": "WaitUntilStep",
+          "type": "object"
+        },
+        "YouStep": {
+          "additionalProperties": false,
+          "description": "``you: <message>``: an ``approval`` a person answers.",
+          "properties": {
+            "capture_response": {
+              "default": false,
+              "title": "Capture Response",
+              "type": "boolean"
+            },
+            "decisions": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/Decision"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Decisions"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "you": {
+              "title": "You",
+              "type": "string"
+            }
+          },
+          "required": [
+            "you"
+          ],
+          "title": "YouStep",
+          "type": "object"
+        }
+      },
+      "$ref": "#/$defs/RepeatStep"
+    },
+    "Stage": {
+      "$defs": {
+        "Decision": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "label": {
+              "title": "Label",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "label"
+          ],
+          "title": "Decision",
+          "type": "object"
+        },
+        "DoStep": {
+          "additionalProperties": false,
+          "description": "``do: <action>``: an ``action`` node.",
+          "properties": {
+            "capture": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "type": "string"
+                }
+              },
+              "title": "Capture",
+              "type": "object"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "do": {
+              "pattern": "^(?:[a-z0-9]+(?:-[a-z0-9]+)*/)?[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "title": "Do",
+              "type": "string"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "retry": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Retry"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "timeout": {
+              "anyOf": [
+                {
+                  "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Timeout"
+            },
+            "with": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "$ref": "#/$defs/JsonValue"
+                }
+              },
+              "title": "With",
+              "type": "object"
+            }
+          },
+          "required": [
+            "do"
+          ],
+          "title": "DoStep",
+          "type": "object"
+        },
+        "IfStep": {
+          "additionalProperties": false,
+          "description": "``if: <condition>`` with ``then`` and an optional ``else``: no node of its own.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "else": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/Step"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Else"
+            },
+            "if": {
+              "title": "If",
+              "type": "string"
+            },
+            "then": {
+              "items": {
+                "$ref": "#/$defs/Step"
+              },
+              "title": "Then",
+              "type": "array"
+            }
+          },
+          "required": [
+            "if",
+            "then"
+          ],
+          "title": "IfStep",
+          "type": "object"
+        },
+        "IncludeStep": {
+          "additionalProperties": false,
+          "description": "``include: <scenario>`` with ``with``: an ``include`` node, one block.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "include": {
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Include",
+              "type": "string"
+            },
+            "with": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "$ref": "#/$defs/JsonValue"
+                }
+              },
+              "title": "With",
+              "type": "object"
+            }
+          },
+          "required": [
+            "include"
+          ],
+          "title": "IncludeStep",
+          "type": "object"
+        },
+        "JsonValue": {},
+        "RepeatSpec": {
+          "additionalProperties": false,
+          "description": "A Repeat's body, run until ``until`` holds, at most ``max`` times.",
+          "properties": {
+            "max": {
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Max",
+              "type": "integer"
+            },
+            "steps": {
+              "items": {
+                "$ref": "#/$defs/Step"
+              },
+              "title": "Steps",
+              "type": "array"
+            },
+            "until": {
+              "title": "Until",
+              "type": "string"
+            }
+          },
+          "required": [
+            "max",
+            "until",
+            "steps"
+          ],
+          "title": "RepeatSpec",
+          "type": "object"
+        },
+        "RepeatStep": {
+          "additionalProperties": false,
+          "description": "``repeat: {max, until, steps}``: a ``loop_group`` whose body is its steps.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "repeat": {
+              "$ref": "#/$defs/RepeatSpec"
+            }
+          },
+          "required": [
+            "repeat"
+          ],
+          "title": "RepeatStep",
+          "type": "object"
+        },
+        "Retry": {
+          "additionalProperties": false,
+          "description": "``max_attempts`` retries after the first attempt, the delay doubling each time.",
+          "properties": {
+            "delay": {
+              "default": "2s",
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Delay",
+              "type": "string"
+            },
+            "max_attempts": {
+              "default": 1,
+              "maximum": 5,
+              "minimum": 0,
+              "title": "Max Attempts",
+              "type": "integer"
+            },
+            "on_error": {
+              "default": "transient",
+              "enum": [
+                "transient",
+                "all"
+              ],
+              "title": "On Error",
+              "type": "string"
+            }
+          },
+          "title": "Retry",
+          "type": "object"
+        },
+        "Step": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/DoStep"
+            },
+            {
+              "$ref": "#/$defs/WaitUntilStep"
+            },
+            {
+              "$ref": "#/$defs/YouStep"
+            },
+            {
+              "$ref": "#/$defs/WaitStep"
+            },
+            {
+              "$ref": "#/$defs/IncludeStep"
+            },
+            {
+              "$ref": "#/$defs/RepeatStep"
+            },
+            {
+              "$ref": "#/$defs/IfStep"
+            },
+            {
+              "$ref": "#/$defs/TogetherStep"
+            }
+          ]
+        },
+        "TogetherStep": {
+          "additionalProperties": false,
+          "description": "``together: [[...], [...]]``: paths that start together; the next block waits for all.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "together": {
+              "items": {
+                "items": {
+                  "$ref": "#/$defs/Step"
+                },
+                "type": "array"
+              },
+              "title": "Together",
+              "type": "array"
+            }
+          },
+          "required": [
+            "together"
+          ],
+          "title": "TogetherStep",
+          "type": "object"
+        },
+        "WaitSpec": {
+          "additionalProperties": false,
+          "description": "A ``wait``'s condition; the ``wait`` node's model holds its rules.",
+          "properties": {
+            "attention": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Attention"
+            },
+            "duration": {
+              "anyOf": [
+                {
+                  "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Duration"
+            },
+            "options": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/Decision"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Options"
+            },
+            "until": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Until"
+            }
+          },
+          "title": "WaitSpec",
+          "type": "object"
+        },
+        "WaitStep": {
+          "additionalProperties": false,
+          "description": "``wait: {duration | until | attention}``: a ``wait`` node.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "wait": {
+              "$ref": "#/$defs/WaitSpec"
+            }
+          },
+          "required": [
+            "wait"
+          ],
+          "title": "WaitStep",
+          "type": "object"
+        },
+        "WaitUntilStep": {
+          "additionalProperties": false,
+          "description": "``wait_until: <read action>``, polled every ``every`` until ``until``: an ``expect``.",
+          "properties": {
+            "capture": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "type": "string"
+                }
+              },
+              "title": "Capture",
+              "type": "object"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "every": {
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Every",
+              "type": "string"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "retry": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Retry"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "timeout": {
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Timeout",
+              "type": "string"
+            },
+            "until": {
+              "title": "Until",
+              "type": "string"
+            },
+            "wait_until": {
+              "pattern": "^(?:[a-z0-9]+(?:-[a-z0-9]+)*/)?[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "title": "Wait Until",
+              "type": "string"
+            },
+            "with": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "$ref": "#/$defs/JsonValue"
+                }
+              },
+              "title": "With",
+              "type": "object"
+            }
+          },
+          "required": [
+            "wait_until",
+            "until",
+            "every",
+            "timeout"
+          ],
+          "title": "WaitUntilStep",
+          "type": "object"
+        },
+        "YouStep": {
+          "additionalProperties": false,
+          "description": "``you: <message>``: an ``approval`` a person answers.",
+          "properties": {
+            "capture_response": {
+              "default": false,
+              "title": "Capture Response",
+              "type": "boolean"
+            },
+            "decisions": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/Decision"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Decisions"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "you": {
+              "title": "You",
+              "type": "string"
+            }
+          },
+          "required": [
+            "you"
+          ],
+          "title": "YouStep",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "A named stage: its steps run in order, after the stage before it.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/Step"
+          },
+          "title": "Steps",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "steps"
+      ],
+      "title": "Stage",
+      "type": "object"
+    },
+    "TogetherStep": {
+      "$defs": {
+        "Decision": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "label": {
+              "title": "Label",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "label"
+          ],
+          "title": "Decision",
+          "type": "object"
+        },
+        "DoStep": {
+          "additionalProperties": false,
+          "description": "``do: <action>``: an ``action`` node.",
+          "properties": {
+            "capture": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "type": "string"
+                }
+              },
+              "title": "Capture",
+              "type": "object"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "do": {
+              "pattern": "^(?:[a-z0-9]+(?:-[a-z0-9]+)*/)?[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "title": "Do",
+              "type": "string"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "retry": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Retry"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "timeout": {
+              "anyOf": [
+                {
+                  "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Timeout"
+            },
+            "with": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "$ref": "#/$defs/JsonValue"
+                }
+              },
+              "title": "With",
+              "type": "object"
+            }
+          },
+          "required": [
+            "do"
+          ],
+          "title": "DoStep",
+          "type": "object"
+        },
+        "IfStep": {
+          "additionalProperties": false,
+          "description": "``if: <condition>`` with ``then`` and an optional ``else``: no node of its own.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "else": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/Step"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Else"
+            },
+            "if": {
+              "title": "If",
+              "type": "string"
+            },
+            "then": {
+              "items": {
+                "$ref": "#/$defs/Step"
+              },
+              "title": "Then",
+              "type": "array"
+            }
+          },
+          "required": [
+            "if",
+            "then"
+          ],
+          "title": "IfStep",
+          "type": "object"
+        },
+        "IncludeStep": {
+          "additionalProperties": false,
+          "description": "``include: <scenario>`` with ``with``: an ``include`` node, one block.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "include": {
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Include",
+              "type": "string"
+            },
+            "with": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "$ref": "#/$defs/JsonValue"
+                }
+              },
+              "title": "With",
+              "type": "object"
+            }
+          },
+          "required": [
+            "include"
+          ],
+          "title": "IncludeStep",
+          "type": "object"
+        },
+        "JsonValue": {},
+        "RepeatSpec": {
+          "additionalProperties": false,
+          "description": "A Repeat's body, run until ``until`` holds, at most ``max`` times.",
+          "properties": {
+            "max": {
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Max",
+              "type": "integer"
+            },
+            "steps": {
+              "items": {
+                "$ref": "#/$defs/Step"
+              },
+              "title": "Steps",
+              "type": "array"
+            },
+            "until": {
+              "title": "Until",
+              "type": "string"
+            }
+          },
+          "required": [
+            "max",
+            "until",
+            "steps"
+          ],
+          "title": "RepeatSpec",
+          "type": "object"
+        },
+        "RepeatStep": {
+          "additionalProperties": false,
+          "description": "``repeat: {max, until, steps}``: a ``loop_group`` whose body is its steps.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "repeat": {
+              "$ref": "#/$defs/RepeatSpec"
+            }
+          },
+          "required": [
+            "repeat"
+          ],
+          "title": "RepeatStep",
+          "type": "object"
+        },
+        "Retry": {
+          "additionalProperties": false,
+          "description": "``max_attempts`` retries after the first attempt, the delay doubling each time.",
+          "properties": {
+            "delay": {
+              "default": "2s",
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Delay",
+              "type": "string"
+            },
+            "max_attempts": {
+              "default": 1,
+              "maximum": 5,
+              "minimum": 0,
+              "title": "Max Attempts",
+              "type": "integer"
+            },
+            "on_error": {
+              "default": "transient",
+              "enum": [
+                "transient",
+                "all"
+              ],
+              "title": "On Error",
+              "type": "string"
+            }
+          },
+          "title": "Retry",
+          "type": "object"
+        },
+        "Step": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/DoStep"
+            },
+            {
+              "$ref": "#/$defs/WaitUntilStep"
+            },
+            {
+              "$ref": "#/$defs/YouStep"
+            },
+            {
+              "$ref": "#/$defs/WaitStep"
+            },
+            {
+              "$ref": "#/$defs/IncludeStep"
+            },
+            {
+              "$ref": "#/$defs/RepeatStep"
+            },
+            {
+              "$ref": "#/$defs/IfStep"
+            },
+            {
+              "$ref": "#/$defs/TogetherStep"
+            }
+          ]
+        },
+        "TogetherStep": {
+          "additionalProperties": false,
+          "description": "``together: [[...], [...]]``: paths that start together; the next block waits for all.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "together": {
+              "items": {
+                "items": {
+                  "$ref": "#/$defs/Step"
+                },
+                "type": "array"
+              },
+              "title": "Together",
+              "type": "array"
+            }
+          },
+          "required": [
+            "together"
+          ],
+          "title": "TogetherStep",
+          "type": "object"
+        },
+        "WaitSpec": {
+          "additionalProperties": false,
+          "description": "A ``wait``'s condition; the ``wait`` node's model holds its rules.",
+          "properties": {
+            "attention": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Attention"
+            },
+            "duration": {
+              "anyOf": [
+                {
+                  "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Duration"
+            },
+            "options": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/Decision"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Options"
+            },
+            "until": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Until"
+            }
+          },
+          "title": "WaitSpec",
+          "type": "object"
+        },
+        "WaitStep": {
+          "additionalProperties": false,
+          "description": "``wait: {duration | until | attention}``: a ``wait`` node.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "wait": {
+              "$ref": "#/$defs/WaitSpec"
+            }
+          },
+          "required": [
+            "wait"
+          ],
+          "title": "WaitStep",
+          "type": "object"
+        },
+        "WaitUntilStep": {
+          "additionalProperties": false,
+          "description": "``wait_until: <read action>``, polled every ``every`` until ``until``: an ``expect``.",
+          "properties": {
+            "capture": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "type": "string"
+                }
+              },
+              "title": "Capture",
+              "type": "object"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "every": {
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Every",
+              "type": "string"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "retry": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Retry"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "timeout": {
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Timeout",
+              "type": "string"
+            },
+            "until": {
+              "title": "Until",
+              "type": "string"
+            },
+            "wait_until": {
+              "pattern": "^(?:[a-z0-9]+(?:-[a-z0-9]+)*/)?[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "title": "Wait Until",
+              "type": "string"
+            },
+            "with": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "$ref": "#/$defs/JsonValue"
+                }
+              },
+              "title": "With",
+              "type": "object"
+            }
+          },
+          "required": [
+            "wait_until",
+            "until",
+            "every",
+            "timeout"
+          ],
+          "title": "WaitUntilStep",
+          "type": "object"
+        },
+        "YouStep": {
+          "additionalProperties": false,
+          "description": "``you: <message>``: an ``approval`` a person answers.",
+          "properties": {
+            "capture_response": {
+              "default": false,
+              "title": "Capture Response",
+              "type": "boolean"
+            },
+            "decisions": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/Decision"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Decisions"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "you": {
+              "title": "You",
+              "type": "string"
+            }
+          },
+          "required": [
+            "you"
+          ],
+          "title": "YouStep",
+          "type": "object"
+        }
+      },
+      "$ref": "#/$defs/TogetherStep"
+    },
+    "TreeDocument": {
+      "$defs": {
+        "Decision": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "label": {
+              "title": "Label",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "label"
+          ],
+          "title": "Decision",
+          "type": "object"
+        },
+        "DoStep": {
+          "additionalProperties": false,
+          "description": "``do: <action>``: an ``action`` node.",
+          "properties": {
+            "capture": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "type": "string"
+                }
+              },
+              "title": "Capture",
+              "type": "object"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "do": {
+              "pattern": "^(?:[a-z0-9]+(?:-[a-z0-9]+)*/)?[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "title": "Do",
+              "type": "string"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "retry": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Retry"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "timeout": {
+              "anyOf": [
+                {
+                  "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Timeout"
+            },
+            "with": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "$ref": "#/$defs/JsonValue"
+                }
+              },
+              "title": "With",
+              "type": "object"
+            }
+          },
+          "required": [
+            "do"
+          ],
+          "title": "DoStep",
+          "type": "object"
+        },
+        "IfStep": {
+          "additionalProperties": false,
+          "description": "``if: <condition>`` with ``then`` and an optional ``else``: no node of its own.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "else": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/Step"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Else"
+            },
+            "if": {
+              "title": "If",
+              "type": "string"
+            },
+            "then": {
+              "items": {
+                "$ref": "#/$defs/Step"
+              },
+              "title": "Then",
+              "type": "array"
+            }
+          },
+          "required": [
+            "if",
+            "then"
+          ],
+          "title": "IfStep",
+          "type": "object"
+        },
+        "IncludeStep": {
+          "additionalProperties": false,
+          "description": "``include: <scenario>`` with ``with``: an ``include`` node, one block.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "include": {
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Include",
+              "type": "string"
+            },
+            "with": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "$ref": "#/$defs/JsonValue"
+                }
+              },
+              "title": "With",
+              "type": "object"
+            }
+          },
+          "required": [
+            "include"
+          ],
+          "title": "IncludeStep",
+          "type": "object"
+        },
+        "JsonValue": {},
+        "RepeatSpec": {
+          "additionalProperties": false,
+          "description": "A Repeat's body, run until ``until`` holds, at most ``max`` times.",
+          "properties": {
+            "max": {
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Max",
+              "type": "integer"
+            },
+            "steps": {
+              "items": {
+                "$ref": "#/$defs/Step"
+              },
+              "title": "Steps",
+              "type": "array"
+            },
+            "until": {
+              "title": "Until",
+              "type": "string"
+            }
+          },
+          "required": [
+            "max",
+            "until",
+            "steps"
+          ],
+          "title": "RepeatSpec",
+          "type": "object"
+        },
+        "RepeatStep": {
+          "additionalProperties": false,
+          "description": "``repeat: {max, until, steps}``: a ``loop_group`` whose body is its steps.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "repeat": {
+              "$ref": "#/$defs/RepeatSpec"
+            }
+          },
+          "required": [
+            "repeat"
+          ],
+          "title": "RepeatStep",
+          "type": "object"
+        },
+        "Retry": {
+          "additionalProperties": false,
+          "description": "``max_attempts`` retries after the first attempt, the delay doubling each time.",
+          "properties": {
+            "delay": {
+              "default": "2s",
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Delay",
+              "type": "string"
+            },
+            "max_attempts": {
+              "default": 1,
+              "maximum": 5,
+              "minimum": 0,
+              "title": "Max Attempts",
+              "type": "integer"
+            },
+            "on_error": {
+              "default": "transient",
+              "enum": [
+                "transient",
+                "all"
+              ],
+              "title": "On Error",
+              "type": "string"
+            }
+          },
+          "title": "Retry",
+          "type": "object"
+        },
+        "Stage": {
+          "additionalProperties": false,
+          "description": "A named stage: its steps run in order, after the stage before it.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "name": {
+              "title": "Name",
+              "type": "string"
+            },
+            "steps": {
+              "items": {
+                "$ref": "#/$defs/Step"
+              },
+              "title": "Steps",
+              "type": "array"
+            }
+          },
+          "required": [
+            "name",
+            "steps"
+          ],
+          "title": "Stage",
+          "type": "object"
+        },
+        "Step": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/DoStep"
+            },
+            {
+              "$ref": "#/$defs/WaitUntilStep"
+            },
+            {
+              "$ref": "#/$defs/YouStep"
+            },
+            {
+              "$ref": "#/$defs/WaitStep"
+            },
+            {
+              "$ref": "#/$defs/IncludeStep"
+            },
+            {
+              "$ref": "#/$defs/RepeatStep"
+            },
+            {
+              "$ref": "#/$defs/IfStep"
+            },
+            {
+              "$ref": "#/$defs/TogetherStep"
+            }
+          ]
+        },
+        "TogetherStep": {
+          "additionalProperties": false,
+          "description": "``together: [[...], [...]]``: paths that start together; the next block waits for all.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "together": {
+              "items": {
+                "items": {
+                  "$ref": "#/$defs/Step"
+                },
+                "type": "array"
+              },
+              "title": "Together",
+              "type": "array"
+            }
+          },
+          "required": [
+            "together"
+          ],
+          "title": "TogetherStep",
+          "type": "object"
+        },
+        "WaitSpec": {
+          "additionalProperties": false,
+          "description": "A ``wait``'s condition; the ``wait`` node's model holds its rules.",
+          "properties": {
+            "attention": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Attention"
+            },
+            "duration": {
+              "anyOf": [
+                {
+                  "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Duration"
+            },
+            "options": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/Decision"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Options"
+            },
+            "until": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Until"
+            }
+          },
+          "title": "WaitSpec",
+          "type": "object"
+        },
+        "WaitStep": {
+          "additionalProperties": false,
+          "description": "``wait: {duration | until | attention}``: a ``wait`` node.",
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "wait": {
+              "$ref": "#/$defs/WaitSpec"
+            }
+          },
+          "required": [
+            "wait"
+          ],
+          "title": "WaitStep",
+          "type": "object"
+        },
+        "WaitUntilStep": {
+          "additionalProperties": false,
+          "description": "``wait_until: <read action>``, polled every ``every`` until ``until``: an ``expect``.",
+          "properties": {
+            "capture": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "type": "string"
+                }
+              },
+              "title": "Capture",
+              "type": "object"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "every": {
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Every",
+              "type": "string"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "retry": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Retry"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "timeout": {
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Timeout",
+              "type": "string"
+            },
+            "until": {
+              "title": "Until",
+              "type": "string"
+            },
+            "wait_until": {
+              "pattern": "^(?:[a-z0-9]+(?:-[a-z0-9]+)*/)?[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "title": "Wait Until",
+              "type": "string"
+            },
+            "with": {
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "$ref": "#/$defs/JsonValue"
+                }
+              },
+              "title": "With",
+              "type": "object"
+            }
+          },
+          "required": [
+            "wait_until",
+            "until",
+            "every",
+            "timeout"
+          ],
+          "title": "WaitUntilStep",
+          "type": "object"
+        },
+        "WorkflowInput": {
+          "additionalProperties": false,
+          "properties": {
+            "default": {
+              "$ref": "#/$defs/JsonValue",
+              "default": null
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "required": {
+              "default": false,
+              "title": "Required",
+              "type": "boolean"
+            },
+            "type": {
+              "default": "string",
+              "enum": [
+                "string",
+                "integer",
+                "number",
+                "boolean"
+              ],
+              "title": "Type",
+              "type": "string"
+            }
+          },
+          "title": "WorkflowInput",
+          "type": "object"
+        },
+        "YouStep": {
+          "additionalProperties": false,
+          "description": "``you: <message>``: an ``approval`` a person answers.",
+          "properties": {
+            "capture_response": {
+              "default": false,
+              "title": "Capture Response",
+              "type": "boolean"
+            },
+            "decisions": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/Decision"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Decisions"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Id"
+            },
+            "you": {
+              "title": "You",
+              "type": "string"
+            }
+          },
+          "required": [
+            "you"
+          ],
+          "title": "YouStep",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "A version-2 scenario: its header, as a version-1 document's, and its stages.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "inputs": {
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*$": {
+              "$ref": "#/$defs/WorkflowInput"
+            }
+          },
+          "title": "Inputs",
+          "type": "object"
+        },
+        "kind": {
+          "const": "scenario",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "revision": {
+          "minimum": 1,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "stages": {
+          "items": {
+            "$ref": "#/$defs/Stage"
+          },
+          "title": "Stages",
+          "type": "array"
+        },
+        "version": {
+          "const": 2,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version",
+        "kind",
+        "name",
+        "revision",
+        "stages"
+      ],
+      "title": "TreeDocument",
+      "type": "object"
+    },
+    "WaitSpec": {
+      "$defs": {
+        "Decision": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "label": {
+              "title": "Label",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "label"
+          ],
+          "title": "Decision",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "A ``wait``'s condition; the ``wait`` node's model holds its rules.",
+      "properties": {
+        "attention": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attention"
+        },
+        "duration": {
+          "anyOf": [
+            {
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration"
+        },
+        "options": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Decision"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Options"
+        },
+        "until": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Until"
+        }
+      },
+      "title": "WaitSpec",
+      "type": "object"
+    },
+    "WaitStep": {
+      "$defs": {
+        "Decision": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "label": {
+              "title": "Label",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "label"
+          ],
+          "title": "Decision",
+          "type": "object"
+        },
+        "WaitSpec": {
+          "additionalProperties": false,
+          "description": "A ``wait``'s condition; the ``wait`` node's model holds its rules.",
+          "properties": {
+            "attention": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Attention"
+            },
+            "duration": {
+              "anyOf": [
+                {
+                  "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Duration"
+            },
+            "options": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/Decision"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Options"
+            },
+            "until": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Until"
+            }
+          },
+          "title": "WaitSpec",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "``wait: {duration | until | attention}``: a ``wait`` node.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "wait": {
+          "$ref": "#/$defs/WaitSpec"
+        }
+      },
+      "required": [
+        "wait"
+      ],
+      "title": "WaitStep",
+      "type": "object"
+    },
+    "WaitUntilStep": {
+      "$defs": {
+        "JsonValue": {},
+        "Retry": {
+          "additionalProperties": false,
+          "description": "``max_attempts`` retries after the first attempt, the delay doubling each time.",
+          "properties": {
+            "delay": {
+              "default": "2s",
+              "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+              "title": "Delay",
+              "type": "string"
+            },
+            "max_attempts": {
+              "default": 1,
+              "maximum": 5,
+              "minimum": 0,
+              "title": "Max Attempts",
+              "type": "integer"
+            },
+            "on_error": {
+              "default": "transient",
+              "enum": [
+                "transient",
+                "all"
+              ],
+              "title": "On Error",
+              "type": "string"
+            }
+          },
+          "title": "Retry",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "``wait_until: <read action>``, polled every ``every`` until ``until``: an ``expect``.",
+      "properties": {
+        "capture": {
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*$": {
+              "type": "string"
+            }
+          },
+          "title": "Capture",
+          "type": "object"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "every": {
+          "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+          "title": "Every",
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "retry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Retry"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "timeout": {
+          "pattern": "^[1-9][0-9]*(s|m|h|d)$",
+          "title": "Timeout",
+          "type": "string"
+        },
+        "until": {
+          "title": "Until",
+          "type": "string"
+        },
+        "wait_until": {
+          "pattern": "^(?:[a-z0-9]+(?:-[a-z0-9]+)*/)?[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "title": "Wait Until",
+          "type": "string"
+        },
+        "with": {
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*$": {
+              "$ref": "#/$defs/JsonValue"
+            }
+          },
+          "title": "With",
+          "type": "object"
+        }
+      },
+      "required": [
+        "wait_until",
+        "until",
+        "every",
+        "timeout"
+      ],
+      "title": "WaitUntilStep",
+      "type": "object"
+    },
+    "YouStep": {
+      "$defs": {
+        "Decision": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "title": "Id",
+              "type": "string"
+            },
+            "label": {
+              "title": "Label",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "label"
+          ],
+          "title": "Decision",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "``you: <message>``: an ``approval`` a person answers.",
+      "properties": {
+        "capture_response": {
+          "default": false,
+          "title": "Capture Response",
+          "type": "boolean"
+        },
+        "decisions": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Decision"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Decisions"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "you": {
+          "title": "You",
+          "type": "string"
+        }
+      },
+      "required": [
+        "you"
+      ],
+      "title": "YouStep",
+      "type": "object"
+    }
+  }
+}

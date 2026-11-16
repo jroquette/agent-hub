@@ -1,0 +1,308 @@
+import { useState, type ReactNode, type RefObject } from "react";
+
+import {
+  Button,
+  CopyButton,
+  DataTable,
+  Dialog,
+  Icon,
+  JsonViewer,
+  PathText,
+  SidePanel,
+  Tabs,
+  HighlightedCode,
+  languageName,
+  languageOfPath,
+} from "../../components";
+import { DraftLine, EffectBadge } from "./parts";
+import type { ScenarioAction, ScenarioStep } from "./queries";
+import { pace } from "./story";
+
+/* The action a step calls, in a side panel: what it does, its effect, the script it runs, its
+ * inputs and output, and its files as the hub holds them (read-only). */
+
+const EFFECT_WORDS: Readonly<Record<string, string>> = {
+  read: "It reads; it never changes the system.",
+  write: "It changes data.",
+  destroy: "It deletes or replaces data.",
+};
+
+/** A file's text, read-only, with its path, its language and Copy; coloured by its language. */
+export function FileText({
+  path,
+  text,
+  truncated = false,
+  caption,
+}: {
+  path: string;
+  text: string | null | undefined;
+  truncated?: boolean;
+  /** What the file is for, under its path ("The code the step runs."). */
+  caption?: ReactNode;
+}) {
+  const language = languageOfPath(path);
+  const languageWords = languageName(language);
+  return (
+    <div className="ah-stack sc-file" style={{ gap: 6 }}>
+      <div className="ah-row" style={{ gap: 6 }}>
+        <Icon name="file-text" size="sm" />
+        <span className="ah-mono ah-small">
+          <PathText path={path} max={72} dimDir />
+        </span>
+        {languageWords !== "" && <span className="ah-badge ah-badge-quiet">{languageWords}</span>}
+        <span className="ah-grow" />
+        {text && <CopyButton text={text} label={`Copy the text of ${path}`} compact />}
+      </div>
+      {caption && <span className="ah-small ah-muted">{caption}</span>}
+      {text === null || text === undefined ? (
+        <span className="ah-small ah-muted">This file could not be read.</span>
+      ) : (
+        // A scrollable region must be reachable by keyboard.
+        // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+        <pre className="ah-json" tabIndex={0} aria-label={`Text of ${path}`}>
+          <HighlightedCode text={text} lang={language} />
+        </pre>
+      )}
+      {truncated && (
+        <span className="ah-small ah-subtle">
+          The file is longer than 64 KiB; the rest is in the file.
+        </span>
+      )}
+    </div>
+  );
+}
+
+export function ActionPanel({
+  action,
+  steps,
+  openerRef,
+  onClose,
+  onShowStep,
+  tools,
+}: {
+  action: ScenarioAction;
+  steps: readonly ScenarioStep[];
+  openerRef: RefObject<HTMLElement | null>;
+  onClose: () => void;
+  onShowStep: (id: string) => void;
+  /** Buttons at the top of the panel (the builder's Edit, Add to the scenario). */
+  tools?: ReactNode;
+}) {
+  const usedBy = steps.filter((step) => step.action === action.ref);
+  return (
+    <SidePanel
+      title={`Action ${action.name}`}
+      closeLabel={`Close action ${action.name}`}
+      onClose={onClose}
+      openerRef={openerRef}
+    >
+      <div className="ah-stack" style={{ gap: 16 }}>
+        {tools && (
+          <div className="ah-row ah-wrap" style={{ gap: 8 }}>
+            {tools}
+          </div>
+        )}
+        <div className="ah-row ah-wrap" style={{ gap: 8 }}>
+          <EffectBadge effect={action.effect} />
+          <span className="ah-small ah-subtle">{action.draft ? "draft" : "committed"}</span>
+          {action.path && (
+            <span className="ah-mono ah-small ah-muted">
+              <PathText path={action.path} max={48} />
+            </span>
+          )}
+        </div>
+        <dl className="sc-values">
+          <div className="sc-value">
+            <dt className="ah-muted">Does</dt>
+            <dd>{action.description}</dd>
+          </div>
+          {action.effect && (
+            <div className="sc-value">
+              <dt className="ah-muted">Effect</dt>
+              <dd>{EFFECT_WORDS[action.effect] ?? action.effect}</dd>
+            </div>
+          )}
+          <div className="sc-value">
+            <dt className="ah-muted">Runs</dt>
+            <dd>
+              {action.runtime === "python" ? "python via uv run" : action.runtime} ·{" "}
+              <span className="ah-mono">{action.script}</span>
+            </dd>
+          </div>
+          {action.timeout && (
+            <div className="sc-value">
+              <dt className="ah-muted">Timeout</dt>
+              <dd>{pace(action.timeout)}</dd>
+            </div>
+          )}
+          <div className="sc-value">
+            <dt className="ah-muted">Used by</dt>
+            <dd className="ah-row ah-wrap" style={{ gap: 6 }}>
+              {usedBy.map((step) => (
+                <Button
+                  key={step.id}
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    onShowStep(step.id);
+                  }}
+                >
+                  <span className="ah-mono">{step.id}</span>
+                </Button>
+              ))}
+            </dd>
+          </div>
+        </dl>
+        {action.draft && action.accept_command && (
+          <DraftLine commands={[action.accept_command]} action={action.name} then="plan again" />
+        )}
+        {action.inputs.length > 0 && (
+          <div className="ah-stack" style={{ gap: 6 }}>
+            <h3 className="ah-h3" style={{ margin: 0 }}>
+              Inputs
+            </h3>
+            <DataTable
+              caption={`Inputs of ${action.name}`}
+              density="compact"
+              rows={[...action.inputs]}
+              rowKey={(input) => input.name}
+              columns={[
+                {
+                  id: "name",
+                  label: "Input",
+                  render: (input) => <span className="ah-mono">{input.name}</span>,
+                },
+                { id: "type", label: "Type", render: (input) => input.type },
+                {
+                  id: "required",
+                  label: "Required",
+                  render: (input) => (input.required ? "yes" : "no"),
+                },
+                {
+                  id: "default",
+                  label: "Default",
+                  render: (input) =>
+                    input.default === null || input.default === undefined ? (
+                      <span className="ah-subtle">—</span>
+                    ) : (
+                      <span className="ah-mono">{JSON.stringify(input.default)}</span>
+                    ),
+                },
+                {
+                  id: "description",
+                  label: "Description",
+                  render: (input) => <span className="ah-small">{input.description ?? ""}</span>,
+                },
+              ]}
+            />
+          </div>
+        )}
+        <div className="ah-stack" style={{ gap: 6 }}>
+          <h3 className="ah-h3" style={{ margin: 0 }}>
+            Output
+          </h3>
+          <span className="ah-small ah-muted">It prints one JSON value of this shape:</span>
+          <JsonViewer value={action.output_format ?? {}} maxHeight={240} />
+        </div>
+        <div className="ah-stack" style={{ gap: 8 }}>
+          <h3 className="ah-h3" style={{ margin: 0 }}>
+            Files
+          </h3>
+          <ActionFiles action={action} expand={false} />
+          <span className="ah-small ah-subtle">
+            Edit the files, or ask Claude with Discuss, and this page updates. A changed action is a
+            draft until you commit it.
+          </span>
+        </div>
+      </div>
+    </SidePanel>
+  );
+}
+
+/** An action's two files in tabs, Script first (what runs) and the action file (what it
+ * declares), with Expand into a dialog (`expand`); `captions` says what each one is for. The
+ * action panel, the step editor's Script tab and an open step show them alike. */
+export function ActionFiles({
+  action,
+  captions = false,
+  expand = true,
+}: {
+  action: ScenarioAction;
+  captions?: boolean;
+  expand?: boolean;
+}) {
+  const [file, setFile] = useState<"script" | "document">("script");
+  const [expanded, setExpanded] = useState(false);
+  const path = file === "script" ? (action.script ?? "") : (action.path ?? "");
+  const text = file === "script" ? action.script_text : action.document_text;
+  const caption = !captions ? undefined : file === "script" ? (
+    <>
+      <b>Runs.</b> The code this step executes: the hub calls it with the step&apos;s values as its
+      inputs.
+    </>
+  ) : (
+    <>
+      <b>Declares.</b> The action file is not run: it names the script, the inputs it takes, whether
+      it changes data and what it answers.
+    </>
+  );
+  const fileView = (
+    <FileText
+      path={path}
+      text={text}
+      truncated={file === "script" ? action.script_truncated : false}
+      caption={caption}
+    />
+  );
+  const tabs = (
+    <Tabs
+      label="Files of the action"
+      value={file}
+      onChange={(id) => {
+        setFile(id === "document" ? "document" : "script");
+      }}
+      tabs={[
+        { id: "script", label: "Script" },
+        { id: "document", label: "Action file" },
+      ]}
+    />
+  );
+  if (!expand) {
+    return (
+      <>
+        {tabs}
+        {fileView}
+      </>
+    );
+  }
+  return (
+    <>
+      <span className="ah-row" style={{ gap: 8 }}>
+        {tabs}
+        <span className="ah-grow" />
+        <Button
+          size="sm"
+          variant="ghost"
+          icon="expand"
+          onClick={() => {
+            setExpanded(true);
+          }}
+        >
+          Expand
+        </Button>
+      </span>
+      {fileView}
+      {expanded && (
+        <Dialog
+          title={`${path} · ${action.name}`}
+          onClose={() => {
+            setExpanded(false);
+          }}
+          size="lg"
+        >
+          <div className="sb-script-dialog">{fileView}</div>
+        </Dialog>
+      )}
+    </>
+  );
+}

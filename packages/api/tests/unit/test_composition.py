@@ -1,0 +1,880 @@
+import asyncio
+import json
+import sys
+import threading
+from collections.abc import Iterator, Mapping
+from contextlib import closing, contextmanager
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import pytest
+from fastapi.testclient import TestClient
+
+from agent_hub.api import composition
+from agent_hub.api.agent_session_runtime import (
+    INSTALL_EXTRA,
+    UnavailableCloudLauncher,
+    UnavailableSessionDriver,
+)
+from agent_hub.api.composition import (
+    HUB_CONFIG_INVALID,
+    HUB_LOCAL_INVALID,
+    NO_AUTHOR,
+    CachedAvailability,
+    RegisteredHubFacts,
+    TicketReaders,
+    build_app,
+    claude_adapters,
+    decider_of,
+    default_brain_changes,
+    hub_read_models,
+    key_digest,
+    ticket_snapshots,
+    web_url,
+    workflow_source_of,
+)
+from agent_hub.api.linear_connection import LinearEnviron, LinearKeyFile
+from agent_hub.api.settings import ApiSettings
+from agent_hub.api.ticket_snapshots import REQUEST_TIMEOUT_SECONDS
+from agent_hub.claude_sessions.cloud_launcher import ClaudeCloudLauncher
+from agent_hub.claude_sessions.sdk_driver import ClaudeSdkSessionDriver
+from agent_hub.core.agent_sessions.agent_session import AgentSessionStatus, EndReason
+from agent_hub.core.agent_sessions.cloud import CloudSessions
+from agent_hub.core.agent_sessions.control import AgentSessionControl
+from agent_hub.core.agent_sessions.links import AgentSessionLinks
+from agent_hub.core.features.ticket_snapshots import SnapshotRequest, TrackerTransport
+from agent_hub.core.hub_config.local_config import LocalConfig, LocalProject
+from agent_hub.core.hub_config.problems import ConfigProblem
+from agent_hub.core.hubs.hub_registry import HubRegistryError, UnreadHubFile
+from agent_hub.core.hubs.registered_hub import RegisteredHub
+from agent_hub.core.item_versions.capture_item_versions import CaptureItemVersions
+from agent_hub.core.learnings.brain_change_requests import CommitAuthor
+from agent_hub.core.learnings.learning_ports import LearningHub
+from agent_hub.core.learnings.read_learnings import HUB_NOT_REGISTERED, UnavailableHub
+from agent_hub.core.projects.project_views import ProjectActivity
+from agent_hub.core.readmodels.filters import Scope
+from agent_hub.core.schedules.scheduled_starts import StartReport, StartScheduledRuns
+from agent_hub.core.sessions.session_label import LabelRules
+from agent_hub.core.skills.skill_view import SkillUsage
+from agent_hub.core.testing.brain_fakes import FakeBrainOrigin, InMemoryBrainChangeRequests
+from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.core.testing.hub_fakes import (
+    FakeHub,
+    FakeHubFileReader,
+    InMemoryHubRegistry,
+    hub_json_bytes,
+)
+from agent_hub.core.testing.knowledge_fakes import FakeKnowledgeCheckout
+from agent_hub.core.testing.read_model_builders import (
+    AGENT_SESSION_ID,
+    a_skill_usage,
+    an_agent_session,
+)
+from agent_hub.core.testing.schedule_fakes import ScriptedEventSource
+from agent_hub.core.testing.session_driver_fakes import InMemorySessionDriver
+from agent_hub.core.testing.skill_trees import a_skills_fixture_tree, fake_hub_of
+from agent_hub.core.testing.tracker_reader_fakes import (
+    CountingTrackerReader,
+    InMemoryTrackerReader,
+    a_seeded_issue_board,
+)
+from agent_hub.core.workflows.catalog import WorkflowFile
+from agent_hub.core.workflows.workflow_reads import ReadWorkflows
+from agent_hub.storage.agent_session_store import open_agent_session_store
+from agent_hub.storage.errors import Fts5UnavailableError, MigrationError
+from agent_hub.storage.event_store import open_event_store
+from agent_hub.storage.item_version_store import SqliteItemVersionStore
+from agent_hub.storage.knowledge_index import FTS5_MISSING
+
+RUNNING = "0.9.0"
+HUB = "/work/demo-hub"
+STOPPED_AT = datetime(2026, 10, 13, 9, 0, tzinfo=UTC)
+
+
+def _without(*keys: str) -> bytes:
+    document: dict[str, Any] = a_hub_document()
+    document["platform"]["version"] = RUNNING
+    for key in keys:
+        del document["project"][key]
+    return json.dumps(document).encode()
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.at = 100.0
+
+    def __call__(self) -> float:
+        return self.at
+
+
+def _facts(
+    hubs: dict[str, FakeHub],
+    *,
+    git: Mapping[str, str] | None = None,
+    clock: _Clock | None = None,
+) -> tuple[RegisteredHubFacts, FakeHubFileReader]:
+    registry = InMemoryHubRegistry()
+    for path in hubs:
+        registry.add(path)
+    reader = FakeHubFileReader(hubs)
+    facts = RegisteredHubFacts(
+        registry=registry,
+        reader=reader,
+        running_version=RUNNING,
+        read_git=lambda _path: lambda _keys: dict(git or {}),
+        clock=clock or _Clock(),
+    )
+    return facts, reader
+
+
+def test_names_hub_when_project_registered() -> None:
+    facts, _ = _facts({HUB: FakeHub(hub_json=hub_json_bytes(pin=RUNNING))})
+
+    assert facts.hub_of("demo") == LearningHub(
+        project="demo",
+        path=HUB,
+        hub_repo="acme/demo-hub",
+        default_branch="main",
+        branch_prefix="jdoe/",
+        author=CommitAuthor(name="Jane Doe", email="jane@example.com"),
+    )
+
+
+def test_takes_identity_from_local_config_when_hub_local_sets_it() -> None:
+    local = LocalConfig(
+        project=LocalProject(
+            branch_prefix="mo/", author_name="Mo Local", author_email="mo@example.com"
+        )
+    )
+    facts, _ = _facts({HUB: FakeHub(hub_json=hub_json_bytes(pin=RUNNING), local=local)})
+
+    hub = facts.hub_of("demo")
+
+    assert isinstance(hub, LearningHub)
+    assert (hub.branch_prefix, hub.author) == (
+        "mo/",
+        CommitAuthor(name="Mo Local", email="mo@example.com"),
+    )
+
+
+def test_takes_author_from_git_when_files_leave_it_out() -> None:
+    hub_json = _without("author_name", "author_email", "branch_prefix")
+    git = {"author_name": "Git Person", "author_email": "gitp@example.com"}
+    facts, _ = _facts({HUB: FakeHub(hub_json=hub_json)}, git=git)
+
+    hub = facts.hub_of("demo")
+
+    assert isinstance(hub, LearningHub)
+    assert (hub.branch_prefix, hub.author.email) == ("gitp/", "gitp@example.com")
+
+
+def test_says_no_author_when_identity_unset() -> None:
+    hub_json = _without("author_name", "author_email")
+    facts, _ = _facts({HUB: FakeHub(hub_json=hub_json)})
+
+    assert facts.hub_of("demo") == UnavailableHub(reason=NO_AUTHOR, path=HUB)
+
+
+# two-level-flows A5 (AGH-405 Q3): a change request's decided_by is the person the hub commits as.
+def test_names_hub_author_as_decider_when_identity_set() -> None:
+    facts, _ = _facts({HUB: FakeHub(hub_json=hub_json_bytes(pin=RUNNING))})
+
+    assert decider_of(facts.hub_of)("demo") == "Jane Doe"
+
+
+def test_names_no_decider_when_identity_unset_or_project_unknown() -> None:
+    facts, _ = _facts({HUB: FakeHub(hub_json=_without("author_name", "author_email"))})
+
+    assert decider_of(facts.hub_of)("demo") is None
+    assert decider_of(facts.hub_of)("other") is None
+
+
+def test_says_not_registered_when_project_unknown() -> None:
+    facts, _ = _facts({HUB: FakeHub(hub_json=hub_json_bytes(pin=RUNNING))})
+
+    assert facts.hub_of("other") == UnavailableHub(reason=HUB_NOT_REGISTERED)
+    assert facts.label_rules_of("other") is None
+
+
+def test_keeps_path_when_hub_json_invalid() -> None:
+    hub_json = b'{"schema_version": 1, "project": {"name": "demo"}}'
+    facts, _ = _facts({HUB: FakeHub(hub_json=hub_json)})
+
+    assert facts.hub_of("demo") == UnavailableHub(reason=HUB_CONFIG_INVALID, path=HUB)
+    assert facts.label_rules_of("demo") is None
+
+
+def test_says_local_invalid_when_hub_local_unreadable() -> None:
+    local = (ConfigProblem(path="$", message="not JSON"),)
+    facts, _ = _facts({HUB: FakeHub(hub_json=hub_json_bytes(pin=RUNNING), local=local)})
+
+    assert facts.hub_of("demo") == UnavailableHub(reason=HUB_LOCAL_INVALID, path=HUB)
+    assert facts.label_rules_of("demo") == LabelRules(teams=("DEM",), branch_prefix="jdoe/")
+
+
+def test_prefers_valid_hub_when_two_hubs_name_project() -> None:
+    facts, _ = _facts(
+        {
+            "/work/broken": FakeHub(hub_json=b'{"project": {"name": "demo"}}'),
+            HUB: FakeHub(hub_json=hub_json_bytes(pin=RUNNING)),
+            "/work/second": FakeHub(hub_json=hub_json_bytes(pin=RUNNING, hub_repo="acme/x")),
+        }
+    )
+
+    assert facts.hub_of("demo").path == HUB
+
+
+def test_returns_label_rules_when_hub_registered() -> None:
+    facts, _ = _facts({HUB: FakeHub(hub_json=hub_json_bytes(pin=RUNNING))})
+
+    assert facts.label_rules_of("demo") == LabelRules(teams=("DEM",), branch_prefix="jdoe/")
+
+
+def test_reuses_hub_reads_when_within_time_to_live() -> None:
+    clock = _Clock()
+    facts, reader = _facts({HUB: FakeHub(hub_json=hub_json_bytes(pin=RUNNING))}, clock=clock)
+    facts.hub_of("demo")
+    reader.hubs[HUB].hub_json = hub_json_bytes(pin=RUNNING, hub_repo="acme/moved")
+
+    clock.at += 1
+    kept = facts.hub_of("demo")
+    clock.at += 10
+    reread = facts.hub_of("demo")
+
+    assert isinstance(kept, LearningHub)
+    assert isinstance(reread, LearningHub)
+    assert (kept.hub_repo, reread.hub_repo) == ("acme/demo-hub", "acme/moved")
+
+
+class _BrokenRegistry:
+    def entries(self) -> tuple[RegisteredHub, ...]:
+        raise HubRegistryError("hubs.json is not JSON")
+
+
+def test_says_not_registered_when_registry_unreadable() -> None:
+    facts = RegisteredHubFacts(
+        registry=_BrokenRegistry(),  # type: ignore[arg-type]
+        reader=FakeHubFileReader(),
+        running_version=RUNNING,
+    )
+
+    assert facts.hub_of("demo") == UnavailableHub(reason=HUB_NOT_REGISTERED)
+
+
+def test_skips_unreadable_hub_when_hub_json_missing() -> None:
+    missing = UnreadHubFile(message="cannot read", is_missing=True)
+    facts, _ = _facts({HUB: FakeHub(hub_json=missing)})
+
+    assert facts.hub_of("demo") == UnavailableHub(reason=HUB_NOT_REGISTERED)
+
+
+class _Checks:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def __call__(self, hub_path: str) -> str | None:
+        self.calls.append(hub_path)
+        return f"checked {len(self.calls)}"
+
+
+def test_caches_availability_per_hub_when_within_time_to_live() -> None:
+    clock = _Clock()
+    checks = _Checks()
+    availability = CachedAvailability(checks, ttl=10.0, clock=clock)
+
+    first = availability(HUB)
+    clock.at += 5
+    again = availability(HUB)
+    other = availability("/work/other-hub")
+
+    assert (first, again, other) == ("checked 1", "checked 1", "checked 2")
+    assert checks.calls == [HUB, "/work/other-hub"]
+
+
+def test_checks_availability_again_when_time_to_live_passed() -> None:
+    clock = _Clock()
+    checks = _Checks()
+    availability = CachedAvailability(checks, ttl=10.0, clock=clock)
+
+    availability(HUB)
+    clock.at += 10
+
+    assert availability(HUB) == "checked 2"
+
+
+def test_says_read_only_when_running_in_container(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENT_HUB_IN_CONTAINER", "1")
+
+    assert default_brain_changes().availability(HUB) == "Hub is read-only here"
+
+
+# A synthetic key: never a real one.
+KEY = "lin_api_synthetic0000"
+
+
+def _with_transport(transport: TrackerTransport) -> bytes:
+    document: dict[str, Any] = a_hub_document()
+    document["platform"]["version"] = RUNNING
+    document["tracker"]["transport"] = transport
+    return json.dumps(document).encode()
+
+
+def _request(transport: TrackerTransport = "api") -> SnapshotRequest:
+    return SnapshotRequest.of(project="demo", transport=transport, ids=("DEM-2", "DEM-1"))
+
+
+def _registered(transport: TrackerTransport = "api") -> RegisteredHubFacts:
+    facts, _ = _facts({HUB: FakeHub(hub_json=_with_transport(transport))})
+    return facts
+
+
+def test_wires_tickets_when_app_built() -> None:
+    reader = CountingTrackerReader(InMemoryTrackerReader(a_seeded_issue_board()))
+    snapshots = ticket_snapshots(
+        _registered(), environ={"LINEAR_API_KEY": KEY}, tracker_reader=reader
+    )
+
+    read = snapshots.fetch(_request())
+
+    assert (read.source, read.failure) == ("linear", None)
+    assert read.snapshot is not None
+    assert [summary.id for summary in read.snapshot.summaries] == ["DEM-1", "DEM-2"]
+    assert reader.calls == [("DEM-1", "DEM-2")]
+
+
+def test_builds_reader_when_transport_mcp_and_key_set() -> None:
+    reader = InMemoryTrackerReader(a_seeded_issue_board())
+    environ = {"LINEAR_API_KEY": KEY}
+    asked_mcp = TicketReaders(_registered(), environ=environ, reader=reader)
+    hub_says_mcp = TicketReaders(_registered("mcp"), environ=environ, reader=reader)
+
+    assert asked_mcp(_request("mcp")) is reader
+    assert hub_says_mcp(_request("api")) is reader
+    assert (
+        ticket_snapshots(_registered("mcp"), environ=environ, tracker_reader=reader)
+        .fetch(_request())
+        .failure
+        is None
+    )
+
+
+def test_builds_no_reader_when_key_missing() -> None:
+    reader = InMemoryTrackerReader(a_seeded_issue_board())
+    readers = TicketReaders(_registered(), environ={"LINEAR_API_KEY": ""}, reader=reader)
+    unset = TicketReaders(_registered(), environ={}, reader=reader)
+
+    assert readers(_request()) is None
+    assert unset(_request()) is None
+
+
+def test_builds_reader_when_key_set_and_transport_api() -> None:
+    reader = InMemoryTrackerReader(a_seeded_issue_board())
+    readers = TicketReaders(_registered(), environ={"LINEAR_API_KEY": KEY}, reader=reader)
+
+    assert readers(_request()) is reader
+
+
+class _RecordingPost:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, float]] = []
+
+    def __call__(
+        self, url: str, headers: Mapping[str, str], body: bytes, *, timeout_s: float
+    ) -> tuple[int, bytes]:
+        self.calls.append((headers["Authorization"], timeout_s))
+        return 401, b'{"errors": [{"message": "Authentication required"}]}'
+
+
+def test_reads_key_at_call_time_when_set_after_app_built() -> None:
+    environ: dict[str, str] = {}
+    post = _RecordingPost()
+    snapshots = ticket_snapshots(_registered(), environ=environ, linear_post=post)
+
+    before = snapshots.fetch(_request())
+    environ["LINEAR_API_KEY"] = KEY
+    after = snapshots.fetch(_request())
+
+    assert (before.failure, after.failure) == ("not_connected", "unauthorized")
+    assert post.calls == [(KEY, REQUEST_TIMEOUT_SECONDS)]
+    assert KEY not in f"{before.detail} {after.detail}"
+
+
+def test_digests_saved_key_without_holding_it_when_key_saved_from_settings(tmp_path: Path) -> None:
+    """The ticket warmer's ``key_digest``: None without a key; a value for a key saved only in
+    Settings' key file (no ``LINEAR_API_KEY`` in the environment), and another one once a new
+    key is saved there, so a new key ends a refused key's pause; never the key itself."""
+    first_key, second_key = "lin_api_synthetic_first_key", "lin_api_synthetic_second_key"
+    key_file = LinearKeyFile(tmp_path / "linear-api-key")
+    digest = key_digest(LinearEnviron({}, key_file))
+
+    without_key = digest()
+    key_file.write(first_key)
+    first = digest()
+    key_file.write(second_key)
+    second = digest()
+
+    assert without_key is None
+    assert first is not None
+    assert second is not None
+    assert first != second
+    assert first_key not in first
+    assert second_key not in second
+
+
+def test_names_tracker_transport_when_hub_registered() -> None:
+    facts = _registered("mcp")
+
+    assert facts.tracker_transport_of("demo") == "mcp"
+    assert facts.tracker_transport_of("other") is None
+
+
+# Agent sessions (CP)
+
+
+def _session_settings(tmp_path: Path, **fields: Any) -> ApiSettings:
+    return ApiSettings(
+        db_path=tmp_path / "agent-hub.db",
+        registry_path=tmp_path / "hubs.json",
+        port=7420,
+        running_version=RUNNING,
+        clock=lambda: STOPPED_AT,
+        **fields,
+    )
+
+
+def _build(
+    settings: ApiSettings, tmp_path: Path, *, tickers: Mapping[str, Any], **options: Any
+) -> Any:
+    return build_app(
+        settings,
+        projects_root=tmp_path / "projects",
+        web_dist=tmp_path / "web_dist",
+        brain_changes=InMemoryBrainChangeRequests(FakeBrainOrigin()),
+        environ={},
+        **tickers,
+        **options,
+    )
+
+
+def test_wires_unavailable_driver_when_extra_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "agent_hub.claude_sessions.sdk_driver", None)
+
+    driver, launcher = claude_adapters({})
+
+    assert isinstance(driver, UnavailableSessionDriver)
+    assert isinstance(launcher, UnavailableCloudLauncher)
+    capabilities = asyncio.run(driver.capabilities())
+    assert (capabilities.available, capabilities.reason) == (False, INSTALL_EXTRA)
+
+
+def test_wires_claude_driver_when_extra_installed() -> None:
+    driver, launcher = claude_adapters({"PATH": ""})
+
+    assert isinstance(driver, ClaudeSdkSessionDriver)
+    assert isinstance(launcher, ClaudeCloudLauncher)
+
+
+def test_builds_no_control_when_in_container(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manual_tickers: dict[str, Any]
+) -> None:
+    def no_driver(_environ: Mapping[str, str]) -> Any:
+        msg = "no driver is built in the container"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(composition, "claude_adapters", no_driver)
+
+    app = _build(_session_settings(tmp_path, sessions_off=True), tmp_path, tickers=manual_tickers)
+
+    with TestClient(app):
+        ports = app.state.ports
+        assert (ports.agent_sessions, ports.cloud_sessions, ports.agent_session_links) == (
+            None,
+            None,
+            None,
+        )
+
+
+def test_wires_control_cloud_and_links_when_sessions_on(
+    tmp_path: Path, manual_tickers: dict[str, Any]
+) -> None:
+    app = _build(
+        _session_settings(tmp_path),
+        tmp_path,
+        tickers=manual_tickers,
+        session_driver=InMemorySessionDriver(),
+    )
+
+    with TestClient(app):
+        ports = app.state.ports
+        assert isinstance(ports.agent_sessions, AgentSessionControl)
+        assert isinstance(ports.cloud_sessions, CloudSessions)
+        assert isinstance(ports.agent_session_links, AgentSessionLinks)
+
+
+def test_wires_capture_when_app_built(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manual_tickers: dict[str, Any]
+) -> None:
+    passed: dict[str, Any] = {}
+    real = composition.hub_read_models
+
+    def spy(settings: ApiSettings, **ports: Any) -> Any:
+        passed.update(ports)
+        return real(settings, **ports)
+
+    monkeypatch.setattr(composition, "hub_read_models", spy)
+
+    app = _build(
+        _session_settings(tmp_path),
+        tmp_path,
+        tickers=manual_tickers,
+        session_driver=InMemorySessionDriver(),
+    )
+
+    with TestClient(app):
+        capture = passed["capture"]
+        assert isinstance(capture, CaptureItemVersions)
+        # One store on the app's database, behind the same file reader the hub reads use.
+        assert isinstance(capture._store, SqliteItemVersionStore)  # noqa: SLF001 - the wiring
+        assert capture._store._engine.url.database == str(tmp_path / "agent-hub.db")  # noqa: SLF001
+        assert capture._reader is passed["reader"]  # noqa: SLF001 - one reader for both
+
+
+def test_wires_workflow_reads_when_app_built(
+    tmp_path: Path, manual_tickers: dict[str, Any]
+) -> None:
+    app = _build(
+        _session_settings(tmp_path),
+        tmp_path,
+        tickers=manual_tickers,
+        session_driver=InMemorySessionDriver(),
+    )
+
+    with TestClient(app):
+        assert isinstance(app.state.ports.workflow_reads, ReadWorkflows)
+
+
+def test_reads_hub_workflows_when_hub_has_a_pack(tmp_path: Path) -> None:
+    pack = tmp_path / "workflows" / "mine"
+    pack.mkdir(parents=True)
+    (pack / "ship.yaml").write_text(
+        "version: 1\nname: ship\nrevision: 1\nnodes:\n  - {id: a, type: shell, command: [x]}\n"
+    )
+
+    files = list(workflow_source_of(str(tmp_path)).workflow_files())
+
+    read = [item for item in files if isinstance(item, WorkflowFile)]
+    hub_files = [item for item in read if item.origin == "hub"]
+    assert [(item.file, item.origin) for item in hub_files] == [("workflows/mine/ship.yaml", "hub")]
+    # The rest are the shipped packs (issue-to-pr), shown under <builtin>/, never as the hub's.
+    assert all(
+        item.origin == "builtin" and item.file.startswith("<builtin>/")
+        for item in read
+        if item not in hub_files
+    )
+
+
+class _OneHub:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def project_hubs(self) -> list[tuple[str, str]]:
+        return [("demo", str(self.path))]
+
+
+class _UnreadableRegistry:
+    def project_hubs(self) -> list[tuple[str, str]]:
+        raise HubRegistryError("hubs.json is not JSON")
+
+
+# AGH-429 (AC-429.5): hub paths never run the doctor.
+def test_names_hub_path_from_project_hubs_when_project_registered(tmp_path: Path) -> None:
+    paths = composition._HubPaths()
+    paths.hubs = _OneHub(tmp_path)
+
+    assert paths("demo") == str(tmp_path)
+    assert paths("other") is None
+
+
+# AGH-429 (AC-429.5): hub paths never run the doctor.
+def test_names_no_hub_path_when_unbound_or_registry_unreadable() -> None:
+    paths = composition._HubPaths()
+    assert paths("demo") is None
+
+    paths.hubs = _UnreadableRegistry()
+    assert paths("demo") is None
+
+
+def test_names_no_absolute_path_when_hub_workflows_have_problems(tmp_path: Path) -> None:
+    for pack in ("a-pack", "b-pack"):
+        (tmp_path / "workflows" / pack).mkdir(parents=True)
+        (tmp_path / "workflows" / pack / "ship.yaml").write_text("name: [")
+    reads = ReadWorkflows(_OneHub(tmp_path), workflow_source_of)
+
+    problems = reads.list_workflows(Scope()).problems
+
+    assert len(problems) == 2
+    assert all(str(tmp_path) not in f"{p.file} {p.message}" for p in problems)
+    assert all(not p.file.startswith("/") for p in problems)
+
+
+def test_ends_unfinished_sessions_when_app_starts(
+    tmp_path: Path, manual_tickers: dict[str, Any]
+) -> None:
+    settings = _session_settings(tmp_path)
+    open_event_store(settings.db_path).close()
+    with closing(open_agent_session_store(settings.db_path)) as store:
+        store.create(an_agent_session(status=AgentSessionStatus.RUNNING, last_seq=0))
+        app = _build(
+            settings, tmp_path, tickers=manual_tickers, session_driver=InMemorySessionDriver()
+        )
+
+        before = store.get(AGENT_SESSION_ID)
+        with TestClient(app):
+            after = store.get(AGENT_SESSION_ID)
+
+    assert before.status == AgentSessionStatus.RUNNING
+    assert after.status == AgentSessionStatus.ENDED
+    assert after.end_reason == EndReason.SERVER_STOPPED
+
+
+def test_names_loopback_port_when_web_url_built(tmp_path: Path) -> None:
+    assert web_url(_session_settings(tmp_path)) == "http://127.0.0.1:7420"
+
+
+@pytest.mark.parametrize(
+    ("bound", "url"),
+    [
+        ("127.0.0.2", "http://127.0.0.2:7420"),
+        ("::1", "http://[::1]:7420"),
+        ("0.0.0.0", "http://127.0.0.1:7420"),  # noqa: S104 -- the container's bind
+        ("::", "http://127.0.0.1:7420"),
+    ],
+)
+def test_names_bound_address_when_web_url_built_on_other_bind(
+    tmp_path: Path, bound: str, url: str
+) -> None:
+    assert web_url(_session_settings(tmp_path, bound_host=bound)) == url
+
+
+class _Usage:
+    def __init__(self) -> None:
+        self.asked: list[str] = []
+
+    def skill_usage(self, project: str) -> SkillUsage:
+        self.asked.append(project)
+        return a_skill_usage()
+
+
+class _Activity:
+    def project_activity(self, project: str) -> ProjectActivity:
+        raise AssertionError(project)
+
+
+def test_wires_skill_usage_when_app_built() -> None:
+    registry = InMemoryHubRegistry()
+    registry.add(HUB)
+    hub = fake_hub_of(a_skills_fixture_tree(), hub_json=_without())
+    usage = _Usage()
+    settings = ApiSettings(
+        db_path=Path("/data/agent-hub.db"),
+        registry_path=Path("/config/hubs.json"),
+        port=7420,
+        running_version=RUNNING,
+    )
+    models = hub_read_models(
+        settings,
+        registry=registry,
+        reader=FakeHubFileReader({HUB: hub}),
+        activity=_Activity(),
+        usage=usage,
+        ticket_snapshots=None,
+    )
+
+    catalog = models.skill_catalog("demo")
+
+    alpha = next(item for item in catalog.items if item.id == "skill/hub-workflow/alpha")
+    assert alpha.usage is not None
+    assert alpha.usage.count == 3
+    assert usage.asked == ["demo"]
+    assert models.settings().db_path == "/data/agent-hub.db"
+
+
+class CountingStarts:
+    """Wraps the built ``StartScheduledRuns``, counting the ticks the lifecycle runs."""
+
+    def __init__(self, starts: StartScheduledRuns) -> None:
+        self.starts = starts
+        self.ticked = threading.Event()
+        self.ticks = 0
+
+    def start_due_slots(self, now: datetime) -> StartReport:
+        self.ticks += 1
+        report = self.starts.start_due_slots(now)
+        self.ticked.set()
+        return report
+
+    def poll_events(self) -> StartReport:
+        return self.starts.poll_events()
+
+
+def test_wires_scheduler_when_sessions_on_and_none_when_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manual_tickers: dict[str, Any]
+) -> None:
+    built: list[CountingStarts] = []
+    real = composition.ScheduledStartsRuntime
+
+    def record(starts: StartScheduledRuns, **options: Any) -> Any:
+        counting = CountingStarts(starts)
+        built.append(counting)
+        return real(counting, **options)
+
+    monkeypatch.setattr(composition, "ScheduledStartsRuntime", record)
+    events = ScriptedEventSource()
+
+    with TestClient(
+        _build(
+            _session_settings(tmp_path, sessions_off=True),
+            tmp_path,
+            tickers=manual_tickers,
+            event_source=events,
+        )
+    ):
+        assert built == []
+
+    app = _build(
+        _session_settings(tmp_path),
+        tmp_path,
+        tickers=manual_tickers,
+        session_driver=InMemorySessionDriver(),
+        event_source=events,
+    )
+    with TestClient(app):
+        [counting] = built
+        # The app's lifecycle runs the scheduler: one tick at start.
+        assert counting.ticked.wait(timeout=10)
+
+    assert isinstance(counting.starts, StartScheduledRuns)
+    assert counting.ticks == 1
+
+
+# Knowledge reads (AGH-393, P-10)
+
+
+@contextmanager
+def _knowledge_app(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    environ: dict[str, str],
+    *,
+    tickers: Mapping[str, Any],
+) -> Iterator[tuple[TestClient, FakeKnowledgeCheckout]]:
+    """``build_app`` with a registered hub ``demo`` whose checkout is a fake: git never runs.
+    The app's lifespan runs while the block does, so its stores close when the block ends."""
+    hub = tmp_path / "demo-hub"
+    hub.mkdir()
+    (hub / "hub.json").write_bytes(_without())
+    checkout = FakeKnowledgeCheckout()
+    checkout.write("brain/now.md", b"# Now\n\nmarker\n")
+    monkeypatch.setattr(composition, "GitKnowledgeCheckout", lambda *_a, **_k: checkout)
+    app = build_app(
+        _session_settings(tmp_path, sessions_off=True),
+        projects_root=tmp_path / "projects",
+        web_dist=tmp_path / "web_dist",
+        brain_changes=InMemoryBrainChangeRequests(FakeBrainOrigin()),
+        environ=environ,
+        **tickers,
+    )
+    with TestClient(app, base_url="http://127.0.0.1:7420", raise_server_exceptions=False) as client:
+        registered = client.post(
+            "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": "http://127.0.0.1:7420"}
+        )
+        assert registered.status_code == 201
+        yield client, checkout
+
+
+def _git_folder(tmp_path: Path) -> str:
+    """A ``PATH`` folder holding an executable named ``git`` (never run: the checkout is a
+    fake)."""
+    folder = tmp_path / "bin"
+    folder.mkdir()
+    git = folder / "git"
+    git.write_text("#!/bin/sh\nexit 1\n")
+    git.chmod(0o755)
+    return str(folder)
+
+
+def test_opens_knowledge_index_lazily_when_first_search_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manual_tickers: dict[str, Any]
+) -> None:
+    opened: list[Path] = []
+    real_open = composition.open_knowledge_index
+
+    def counting_open(path: Path) -> Any:
+        opened.append(path)
+        if len(opened) == 1:
+            raise Fts5UnavailableError(FTS5_MISSING)
+        return real_open(path)
+
+    monkeypatch.setattr(composition, "open_knowledge_index", counting_open)
+    with _knowledge_app(
+        tmp_path, monkeypatch, {"PATH": _git_folder(tmp_path)}, tickers=manual_tickers
+    ) as (client, _):
+        built = len(opened)
+        search = "/api/v1/projects/demo/knowledge/search?q=marker"
+
+        failed = client.get(search)
+        first = client.get(search)
+        second = client.get(search)
+        backlinks = client.get("/api/v1/projects/demo/brain/backlinks?path=now.md")
+
+    assert built == 0
+    assert (failed.status_code, failed.json()["title"]) == (503, "Search unavailable")
+    assert failed.json()["detail"] == FTS5_MISSING
+    assert [response.status_code for response in (first, second, backlinks)] == [200, 200, 200]
+    assert [hit["path"] for hit in second.json()["results"]] == ["brain/now.md"]
+    assert second.json()["sync"]["read"] == 0
+    assert opened == [tmp_path / "agent-hub.db"] * 2
+
+
+def test_finds_git_per_call_when_path_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manual_tickers: dict[str, Any]
+) -> None:
+    environ: dict[str, str] = {"PATH": str(tmp_path / "empty")}
+    with _knowledge_app(tmp_path, monkeypatch, environ, tickers=manual_tickers) as (client, _):
+        missing = client.get("/api/v1/projects/demo/knowledge/search?q=marker")
+        no_backlinks = client.get("/api/v1/projects/demo/brain/backlinks?path=now.md")
+        environ["PATH"] = _git_folder(tmp_path)
+        found = client.get("/api/v1/projects/demo/knowledge/search?q=marker")
+
+    assert (missing.status_code, missing.json()["title"]) == (502, "Could not read the hub's files")
+    assert missing.json()["detail"] == "git is not on PATH; install git"
+    assert no_backlinks.status_code == 502
+    assert found.status_code == 200
+
+
+def test_answers_problem_when_lazy_index_open_fails_migration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manual_tickers: dict[str, Any]
+) -> None:
+    adapter_line = "cannot upgrade /private/path/agent-hub.db: disk image is malformed"
+
+    def failing_open(_path: Path) -> Any:
+        raise MigrationError(adapter_line)
+
+    monkeypatch.setattr(composition, "open_knowledge_index", failing_open)
+    with _knowledge_app(
+        tmp_path, monkeypatch, {"PATH": _git_folder(tmp_path)}, tickers=manual_tickers
+    ) as (client, _):
+        responses = [
+            client.get("/api/v1/projects/demo/knowledge/search?q=marker"),
+            client.get("/api/v1/projects/demo/brain/backlinks?path=now.md"),
+        ]
+
+    for response in responses:
+        assert response.status_code == 503
+        assert response.headers["content-type"] == "application/problem+json"
+        assert response.json()["title"] == "Database upgrade failed"
+        assert response.json()["detail"] == (
+            "The database could not be upgraded to the latest schema."
+        )
+        assert "/private/path" not in response.text

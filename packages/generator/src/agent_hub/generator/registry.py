@@ -1,0 +1,420 @@
+"""The classification registry: every file the generator renders, and where its text comes from.
+
+One entry per output path, sorted by path, classified as in docs/design/hub-generator.md
+§ Classification and rendering. Template sources are package data under ``templates/``, named
+without a leading dot and with a ``.tmpl`` suffix, so no tool takes a template for a live config
+file. ``hub.schema.json`` is core's shipped schema, copied verbatim: the generator holds no copy.
+So are the agent output schemas under ``plugin/hub-workflow/schemas/`` (AGH-139 D5).
+A JSON file whose value comes from the config is built in code instead (spec Q-9): its entry names
+a builder and has no source file. The built-in workflow packs are core's package data too, seeded
+byte for byte into the hub's ``workflows/`` (AGH-227), so the seed is the built-in.
+"""
+
+from collections.abc import Iterator
+from dataclasses import dataclass
+from importlib.resources import files
+from importlib.resources.abc import Traversable
+from types import MappingProxyType
+from typing import Final, NamedTuple
+
+from agent_hub.core.features.agent_outputs import OUTPUT_SCHEMA_FILES, OUTPUT_SCHEMA_PACKAGE
+from agent_hub.core.hub_config.schema import SCHEMA_FILE, SCHEMA_PACKAGE
+from agent_hub.core.hub_files.git_hooks import GIT_HOOKS_FOLDER
+from agent_hub.core.hub_files.rendered_file import Kind, Ownership
+from agent_hub.generator.built_json import (
+    managed_settings,
+    marketplace,
+    marketplace_project,
+    mcp_config,
+    project_manifest,
+    project_settings,
+)
+from agent_hub.generator.json_form import JsonBuilder
+
+_PACKAGE: Final = "agent_hub.generator"
+
+
+class TemplateSource(NamedTuple):
+    """A package data file, read with ``importlib.resources``.
+
+    ``name`` is POSIX, relative to ``package``: ``templates/AGENTS.md.tmpl``.
+    """
+
+    package: str
+    name: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class TemplateEntry:
+    """One output file of a hub: its path, where its bytes come from and its classification.
+
+    Exactly one of ``source`` (a template) and ``build`` (a JSON builder, rendered in the JSON
+    byte form) is set. ``verbatim`` sources are copied byte for byte, never substituted; a built
+    entry is never verbatim.
+    """
+
+    path: str
+    source: TemplateSource | None = None
+    build: JsonBuilder | None = None
+    kind: Kind
+    ownership: Ownership
+    module: str | None = None
+    executable: bool = False
+    verbatim: bool = False
+
+    def __post_init__(self) -> None:
+        if self.source is None and self.build is None:
+            msg = f"{self.path}: neither a source nor a builder"
+            raise ValueError(msg)
+        if self.source is not None and self.build is not None:
+            msg = f"{self.path}: both a source and a builder"
+            raise ValueError(msg)
+        if self.build is not None and self.verbatim:
+            msg = f"{self.path}: a built entry cannot be verbatim"
+            raise ValueError(msg)
+
+
+def _template(name: str) -> TemplateSource:
+    return TemplateSource(_PACKAGE, f"templates/{name}")
+
+
+def _generic_managed(path: str, template: str) -> TemplateEntry:
+    return TemplateEntry(
+        path=path, source=_template(template), kind=Kind.GENERIC, ownership=Ownership.MANAGED
+    )
+
+
+def _generic_seeded(path: str, template: str) -> TemplateEntry:
+    return TemplateEntry(
+        path=path, source=_template(template), kind=Kind.GENERIC, ownership=Ownership.SEEDED
+    )
+
+
+def _project_seeded(path: str, template: str) -> TemplateEntry:
+    return TemplateEntry(
+        path=path, source=_template(template), kind=Kind.PROJECT_OWNED, ownership=Ownership.SEEDED
+    )
+
+
+def _core_verbatim(path: str, source: TemplateSource) -> TemplateEntry:
+    """A file of core's package data, copied byte for byte: generic, managed."""
+    return TemplateEntry(
+        path=path, source=source, kind=Kind.GENERIC, ownership=Ownership.MANAGED, verbatim=True
+    )
+
+
+def _core_seeded(path: str, source: TemplateSource) -> TemplateEntry:
+    """A file of core's package data, copied byte for byte once: generic, seeded."""
+    return TemplateEntry(
+        path=path, source=source, kind=Kind.GENERIC, ownership=Ownership.SEEDED, verbatim=True
+    )
+
+
+def _project_built(path: str, build: JsonBuilder) -> TemplateEntry:
+    return TemplateEntry(
+        path=path, build=build, kind=Kind.PROJECT_OWNED, ownership=Ownership.SEEDED
+    )
+
+
+def _module_managed(path: str, template: str, module: str) -> TemplateEntry:
+    """A file of ``module`` (its closed JSON id): rendered only while ``hub.json`` selects it."""
+    return TemplateEntry(
+        path=path,
+        source=_template(template),
+        kind=Kind.MODULE,
+        ownership=Ownership.MANAGED,
+        module=module,
+    )
+
+
+def _module_entry_point(path: str, module: str) -> TemplateEntry:
+    """A module script with a `#!` line: managed, executable, from `<path>.tmpl`."""
+    return TemplateEntry(
+        path=path,
+        source=_template(f"{path}.tmpl"),
+        kind=Kind.MODULE,
+        ownership=Ownership.MANAGED,
+        module=module,
+        executable=True,
+    )
+
+
+def _module_built(
+    path: str, build: JsonBuilder, module: str, *, ownership: Ownership
+) -> TemplateEntry:
+    """A JSON file of ``module`` built from the config: rendered only while it is selected."""
+    return TemplateEntry(
+        path=path, build=build, kind=Kind.MODULE, ownership=ownership, module=module
+    )
+
+
+def _module_makefile(module: str) -> TemplateEntry:
+    """``mk/<id>.mk``: the module's make targets, which the base ``Makefile`` includes (D5)."""
+    return _module_managed(f"mk/{module}.mk", f"mk/{module}.mk.tmpl", module)
+
+
+# The project plugin's folder; `render_entries` puts the project name in its placeholder.
+_PROJECT_PLUGIN: Final = "plugin/@@{project_name}"
+# The base plugin's folder, the same in every hub, and its agents (sorted).
+_BASE_PLUGIN: Final = "plugin/hub-workflow"
+_BASE_AGENTS: Final = (
+    "architect",
+    "evaluator",
+    "planner",
+    "quality-reviewer",
+    "requirements-analyst",
+    "researcher",
+    "security-reviewer",
+    "spec-reviewer",
+    "test-writer",
+    "ux-designer",
+)
+# The base plugin's skills, one folder each (sorted).
+_BASE_SKILLS: Final = (
+    "adr",
+    "change",
+    "context-audit",
+    "create-plan",
+    "deliver",
+    "design-fit",
+    "feature",
+    "fix",
+    "handoff",
+    "implement",
+    "incident",
+    "kickoff",
+    "learn",
+    "onboard",
+    "overengineering-review",
+    "plain-language",
+    "premortem",
+    "property-based-testing",
+    "recall",
+    "refactor",
+    "release",
+    "research",
+    "retro",
+    "review",
+    "summarize",
+    "test-strength",
+    "triage",
+    "upgrade",
+    "ux-review",
+)
+# A skill's files besides `SKILL.md`, read by the skill; its folder link covers them (sorted).
+# `/onboard`'s rules (AGH-108, spec D-split); the review catalogues of `/overengineering-review`
+# and `/ux-review` (AGH-274); `/test-strength`'s mutation tools (AGH-412).
+_SKILL_SUPPORT_FILES: Final = MappingProxyType(
+    {
+        "onboard": ("reference.md",),
+        "overengineering-review": ("references/patterns.md",),
+        "test-strength": ("references/tools.md",),
+        "ux-review": ("references/checklist.md",),
+    }
+)
+# The upstream license files the base plugin's NOTICE names (sorted).
+_LICENSE_TEXTS: Final = ("Apache-2.0.txt", "MIT-compound-engineering-plugin.txt")
+
+
+# The built-in workflow packs: `<pack>/<name>.yaml`, `prompts/`, `scripts/`, `fixtures/`.
+_BUILTIN_PACKAGE: Final = "agent_hub.core"
+_BUILTIN_PACKS: Final = "workflows/builtin"
+
+
+def _pack_files(folder: Traversable, below: str = "") -> Iterator[str]:
+    """Each file under ``folder``, as a POSIX path below it (dot and cache names skipped)."""
+    for child in sorted(folder.iterdir(), key=lambda child: child.name):
+        if child.name.startswith(".") or child.name == "__pycache__":
+            continue
+        name = f"{below}{child.name}"
+        if child.is_dir():
+            yield from _pack_files(child, f"{name}/")
+        else:
+            yield name
+
+
+def _seeded_packs() -> Iterator[TemplateEntry]:
+    """``workflows/<pack>/…``: each built-in pack file, seeded as it is shipped."""
+    root = files(_BUILTIN_PACKAGE).joinpath(*_BUILTIN_PACKS.split("/"))
+    for name in _pack_files(root):
+        source = TemplateSource(_BUILTIN_PACKAGE, f"{_BUILTIN_PACKS}/{name}")
+        yield _core_seeded(f"workflows/{name}", source)
+
+
+def _entry_point(path: str) -> TemplateEntry:
+    """An entry point with a `#!` line: managed, executable, from `<path>.tmpl`."""
+    return TemplateEntry(
+        path=path,
+        source=_template(f"{path}.tmpl"),
+        kind=Kind.GENERIC,
+        ownership=Ownership.MANAGED,
+        executable=True,
+    )
+
+
+def _git_hook(name: str) -> TemplateEntry:
+    """A git hook in `.githooks/`: managed, executable, from `githooks/<name>.tmpl`."""
+    return TemplateEntry(
+        path=f"{GIT_HOOKS_FOLDER}/{name}",
+        source=_template(f"githooks/{name}.tmpl"),
+        kind=Kind.GENERIC,
+        ownership=Ownership.MANAGED,
+        executable=True,
+    )
+
+
+def _hook_entry_point(name: str) -> TemplateEntry:
+    """A base plugin hook that `hooks.json` runs."""
+    return _entry_point(f"{_BASE_PLUGIN}/hooks/{name}.py")
+
+
+REGISTRY: Final[tuple[TemplateEntry, ...]] = (
+    # Module marketplace (AGH-17 D4): the managed part from `project.*`; the project's pins go in
+    # the seeded sibling, merged after it.
+    _module_built(
+        ".claude-plugin/marketplace.json", marketplace, "marketplace", ownership=Ownership.MANAGED
+    ),
+    _module_built(
+        ".claude-plugin/marketplace.project.json",
+        marketplace_project,
+        "marketplace",
+        ownership=Ownership.SEEDED,
+    ),
+    # The rules base (spec D5); the project's own settings go in the seeded sibling.
+    TemplateEntry(
+        path=".claude/settings.json",
+        build=managed_settings,
+        kind=Kind.GENERIC,
+        ownership=Ownership.MANAGED,
+    ),
+    _project_built(".claude/settings.project.json", project_settings),
+    # The git hooks (ADR 0061), on through `core.hooksPath` (hub sync): the commit's
+    # checks on git's index, and the commit message's authorship; no download at commit time.
+    _git_hook("commit-msg"),
+    _git_hook("pre-commit"),
+    _generic_managed(".github/workflows/ci.yml", "github/workflows/ci.yml.tmpl"),
+    _generic_seeded(".gitignore", "gitignore.tmpl"),
+    # The hub's MCP server for Claude Code, `./hub mcp` (AGH-392 D-mcp-json); no seeded sibling.
+    TemplateEntry(
+        path=".mcp.json",
+        build=mcp_config,
+        kind=Kind.GENERIC,
+        ownership=Ownership.MANAGED,
+    ),
+    _generic_managed("AGENTS.md", "AGENTS.md.tmpl"),
+    _project_seeded("AGENTS.project.md", "AGENTS.project.md.tmpl"),
+    _generic_managed("CLAUDE.md", "CLAUDE.md.tmpl"),
+    _generic_managed("Makefile", "Makefile.tmpl"),
+    _project_seeded("Makefile.project", "Makefile.project.tmpl"),
+    _generic_seeded("README.md", "README.md.tmpl"),
+    # The launcher and the shim every hub command goes through (D-shim).
+    _entry_point("agent"),
+    # Each .gitkeep has its own empty source: every template file is used by exactly one entry.
+    _generic_seeded("brain/_inbox/.gitkeep", "brain/_inbox/gitkeep.tmpl"),
+    _generic_seeded("brain/auto/workspace/.gitkeep", "brain/auto/workspace/gitkeep.tmpl"),
+    _generic_seeded("brain/decisions/index.md", "brain/decisions/index.md.tmpl"),
+    _generic_seeded("brain/domain/.gitkeep", "brain/domain/gitkeep.tmpl"),
+    _generic_seeded("brain/features/.gitkeep", "brain/features/gitkeep.tmpl"),
+    _generic_seeded("brain/index.md", "brain/index.md.tmpl"),
+    _generic_seeded("brain/journal/.gitkeep", "brain/journal/gitkeep.tmpl"),
+    _generic_seeded("brain/journal/_template.md", "brain/journal/_template.md.tmpl"),
+    _generic_seeded("brain/learnings/.gitkeep", "brain/learnings/gitkeep.tmpl"),
+    _generic_seeded("brain/now.md", "brain/now.md.tmpl"),
+    _generic_seeded("brain/playbooks/.gitkeep", "brain/playbooks/gitkeep.tmpl"),
+    _generic_seeded("docs/app-repo-AGENTS.md", "docs/app-repo-AGENTS.md.tmpl"),
+    _entry_point("hub"),
+    _core_verbatim("hub.schema.json", TemplateSource(SCHEMA_PACKAGE, SCHEMA_FILE)),
+    # Each selected module's make targets (AGH-17 D5); `Makefile` includes them in id order.
+    _module_makefile("bench"),
+    _module_makefile("cloud"),
+    _module_makefile("contract-sync"),
+    _module_makefile("marketplace"),
+    _project_built(f"{_PROJECT_PLUGIN}/.claude-plugin/plugin.json", project_manifest),
+    _project_seeded(f"{_PROJECT_PLUGIN}/agents/.gitkeep", "plugin/project/agents/gitkeep.tmpl"),
+    _project_seeded(
+        f"{_PROJECT_PLUGIN}/hooks/project_guard.py", "plugin/project/hooks/project_guard.py.tmpl"
+    ),
+    _project_seeded(f"{_PROJECT_PLUGIN}/skills/.gitkeep", "plugin/project/skills/gitkeep.tmpl"),
+    # The base plugin (spec D1): its manifest has no `author` (Q-10); `render_entries` links each
+    # agent into `.claude/agents/`.
+    _generic_managed(
+        f"{_BASE_PLUGIN}/.claude-plugin/plugin.json",
+        f"{_BASE_PLUGIN}/claude-plugin/plugin.json.tmpl",
+    ),
+    # Upstream license texts, byte for byte; the NOTICE points to each.
+    *(
+        _generic_managed(f"{_BASE_PLUGIN}/LICENSES/{name}", f"{_BASE_PLUGIN}/LICENSES/{name}.tmpl")
+        for name in _LICENSE_TEXTS
+    ),
+    _generic_managed(f"{_BASE_PLUGIN}/NOTICE", f"{_BASE_PLUGIN}/NOTICE.tmpl"),
+    *(
+        _generic_managed(
+            f"{_BASE_PLUGIN}/agents/{name}.md", f"{_BASE_PLUGIN}/agents/{name}.md.tmpl"
+        )
+        for name in _BASE_AGENTS
+    ),
+    # The hooks, copied from the hub as they are (spec D4); only the entry points `hooks.json` runs
+    # are executable (Q-3): `hubhooks.py` and the reader are their shared modules. The event
+    # sensor (AGH-200 D6) also lends its send function to the guard and the Stop gate.
+    # The git commit-msg hook `.githooks/commit-msg` runs with `python3` (AGH-699 C-8, ADR 0061):
+    # not a Claude Code hook, so not executable; it reads the guard's attribution pattern.
+    _generic_managed(
+        f"{_BASE_PLUGIN}/hooks/commit_msg.py", f"{_BASE_PLUGIN}/hooks/commit_msg.py.tmpl"
+    ),
+    _hook_entry_point("event_sensor"),
+    _hook_entry_point("guard"),
+    _generic_managed(f"{_BASE_PLUGIN}/hooks/hooks.json", f"{_BASE_PLUGIN}/hooks/hooks.json.tmpl"),
+    _generic_managed(f"{_BASE_PLUGIN}/hooks/hubhooks.py", f"{_BASE_PLUGIN}/hooks/hubhooks.py.tmpl"),
+    _hook_entry_point("post_edit"),
+    _hook_entry_point("pre_compact"),
+    # The one PreToolUse hook: the guard's verdict, then the sensor's sends (AGH-621). `guard.py`
+    # stays an entry point: settings written before it still run that file.
+    _hook_entry_point("pre_tool_use"),
+    # Runs the project's guard extension in a child for `guard.py` (spec Q-2, Q-5).
+    _generic_managed(
+        f"{_BASE_PLUGIN}/hooks/project_guard_runner.py",
+        f"{_BASE_PLUGIN}/hooks/project_guard_runner.py.tmpl",
+    ),
+    # Warns on UserPromptSubmit when the prompt looks like it holds a secret (AGH-814).
+    _hook_entry_point("prompt_secret"),
+    # Names back to the model each skill the user wrote anywhere in a prompt (AGH-838).
+    _hook_entry_point("prompt_skills"),
+    # Holds a read-only agent (`mutates_checkout: false`) that changed a checkout (AGH-141).
+    _hook_entry_point("readonly_gate"),
+    _hook_entry_point("session_end"),
+    # Reminds once per session to hand off after 2 compactions or 2 days open (AGH-812).
+    _hook_entry_point("session_reminder"),
+    _hook_entry_point("session_start"),
+    # The hooks' `hub.json` reader: stdlib only, Python 3.9 (spec Q-2).
+    _generic_managed(
+        f"{_BASE_PLUGIN}/hooks/stdlib_reader.py", f"{_BASE_PLUGIN}/hooks/stdlib_reader.py.tmpl"
+    ),
+    _hook_entry_point("stop_gate"),
+    # The agent output JSON schemas the reviewers and the evaluator write to (AGH-139 S8).
+    *(
+        _core_verbatim(
+            f"{_BASE_PLUGIN}/schemas/{OUTPUT_SCHEMA_FILES[kind]}",
+            TemplateSource(OUTPUT_SCHEMA_PACKAGE, OUTPUT_SCHEMA_FILES[kind]),
+        )
+        for kind in ("eval", "eval-2", "review")
+    ),
+    # `render_entries` links each skill folder into `.claude/skills/`.
+    *(
+        _generic_managed(
+            f"{_BASE_PLUGIN}/skills/{name}/{file}", f"{_BASE_PLUGIN}/skills/{name}/{file}.tmpl"
+        )
+        for name in _BASE_SKILLS
+        for file in ("SKILL.md", *_SKILL_SUPPORT_FILES.get(name, ()))
+    ),
+    # Module cloud: git identity, fetch or clone the repos in a cloud session (spec D3).
+    _module_entry_point("scripts/cloud-setup.sh", "cloud"),
+    # Module contract-sync: export in the source repo, then import in the target (spec D1).
+    _module_entry_point("scripts/contract-sync.sh", "contract-sync"),
+    # The generic scripts the base `mine`/`retro` targets and the `recall` skill run, copied from
+    # the hub; they read `hub.json` through the hooks' reader, loaded by path (spec Q-2).
+    _entry_point("scripts/mine_transcripts.py"),
+    _entry_point("scripts/recall_transcripts.py"),
+    _entry_point("scripts/retro_metrics.py"),
+    # The built-in workflow packs, seeded once: the hub owns its copy, which discovery prefers.
+    *_seeded_packs(),
+)

@@ -1,0 +1,793 @@
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { ApiProblem } from "../../lib/api";
+import { seriousViolations } from "../../testing/axe";
+import { aCapabilities, anAgentSession, aWorkdir } from "../../testing/builders";
+import {
+  NewSessionDialog,
+  withSkill,
+  workdirText,
+  type NewSessionDialogProps,
+} from "./NewSessionDialog";
+
+const WORKTREE = aWorkdir({
+  kind: "worktree",
+  label: "agh-7-collector",
+  repo: "agent-hub",
+  skills: ["change", "review"],
+  workdir_id: "0123456789abcdef",
+  worktree: "agh-7-collector",
+});
+
+function open(overrides: Partial<NewSessionDialogProps> = {}) {
+  const props: NewSessionDialogProps = {
+    project: "agent-hub",
+    workdirs: [aWorkdir(), WORKTREE],
+    capabilities: aCapabilities(),
+    pending: false,
+    error: null,
+    onSubmit: vi.fn(),
+    onCancel: vi.fn(),
+    ...overrides,
+  };
+  const view = render(<NewSessionDialog {...props} />);
+  const name = props.forkOf ? "Fork session" : "New session";
+  return { props, view, dialog: screen.getByRole("dialog", { name }) };
+}
+
+/** The values a select offers, in order. */
+function values(select: HTMLElement) {
+  return within(select)
+    .getAllByRole("option")
+    .map((o) => o.getAttribute("value"));
+}
+
+/** Opens the model and effort menu and picks a model row. */
+async function pickModel(dialog: HTMLElement, name: string) {
+  await userEvent.click(within(dialog).getByRole("button", { name: /^Model and effort/ }));
+  await userEvent.click(screen.getByRole("menuitemradio", { name }));
+}
+
+beforeEach(() => {
+  window.localStorage.clear();
+});
+
+describe("NewSessionDialog (new-session)", () => {
+  it("offers Auto with its hint", async () => {
+    const { dialog } = open();
+    const modes = within(dialog).getByRole("combobox", { name: "Mode" });
+
+    expect(values(modes)).toEqual(["default", "acceptEdits", "plan", "auto"]);
+    await userEvent.selectOptions(modes, "auto");
+    expect(dialog).toHaveTextContent("a safety check blocks risky actions");
+  });
+
+  it("offers only the listed workdirs, the four modes and the capabilities' models", async () => {
+    const { dialog } = open();
+
+    const folder = within(dialog).getByRole("combobox", { name: "Working folder" });
+    expect(
+      within(folder)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["agent-hub-hub (hub)", "agh-7-collector (worktree of agent-hub)"]);
+    expect(within(dialog).queryByRole("textbox", { name: /path/i })).toBeNull();
+    // A built app offers Auto too, but starts in Ask before edits; never a bypass mode.
+    const modes = within(dialog).getByRole("combobox", { name: "Mode" });
+    expect(values(modes)).toEqual(["default", "acceptEdits", "plan", "auto"]);
+    expect(modes).toHaveValue("default");
+    expect(values(modes)).not.toContain("dontAsk");
+    expect(dialog).not.toHaveTextContent(/bypass/i);
+    await userEvent.click(within(dialog).getByRole("button", { name: /^Model and effort/ }));
+    expect(screen.getAllByRole("menuitemradio").map((row) => row.textContent)).toEqual([
+      "Default",
+      "Opus",
+      "Sonnet",
+      "Haiku",
+      "Other model id…",
+    ]);
+  });
+
+  it("AC-681.5 marks the current model in the model and effort menu", async () => {
+    const { dialog } = open();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: /^Model and effort/ }));
+
+    expect(screen.getByRole("menuitemradio", { name: "Default" })).toBeChecked();
+  });
+
+  it("AC-681.5 sends the effort picked and keeps it for the next new session", async () => {
+    window.localStorage.removeItem("ah.session.effort");
+    const { dialog, props, view } = open();
+    await userEvent.click(within(dialog).getByRole("button", { name: /^Model and effort/ }));
+    await userEvent.click(screen.getByRole("menuitem", { name: /Effort/ }));
+    await userEvent.click(screen.getByRole("menuitemradio", { name: /^High/ }));
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+
+    expect(props.onSubmit).toHaveBeenCalledWith(expect.objectContaining({ effort: "high" }));
+    view.unmount();
+    const next = open();
+    expect(
+      within(next.dialog).getByRole("button", { name: "Model and effort: Default, High" }),
+    ).toBeInTheDocument();
+    window.localStorage.removeItem("ah.session.effort");
+  });
+
+  it("AC-681.9 starts with Ultracode off, sends it once turned on and does not remember it", async () => {
+    const { dialog, props, view } = open();
+    await userEvent.click(within(dialog).getByRole("button", { name: /^Model and effort/ }));
+    await userEvent.click(screen.getByRole("menuitem", { name: /Effort/ }));
+    const toggle = screen.getByRole("menuitemcheckbox", { name: "Ultracode" });
+    expect(toggle).not.toBeChecked();
+
+    await userEvent.click(toggle);
+    await userEvent.keyboard("{Tab}");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+
+    expect(props.onSubmit).toHaveBeenCalledWith(expect.objectContaining({ ultracode: true }));
+    view.unmount();
+    const next = open();
+    expect(
+      within(next.dialog).getByRole("button", { name: /^Model and effort/ }),
+    ).not.toHaveTextContent("Ultracode");
+  });
+
+  it("AC-681.5 sends no effort when none was picked", async () => {
+    window.localStorage.removeItem("ah.session.effort");
+    const { dialog, props } = open();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+
+    expect(props.onSubmit).toHaveBeenCalledWith(
+      expect.not.objectContaining({ effort: expect.anything() as unknown }),
+    );
+  });
+
+  it("submits the chosen folder, mode, model and first prompt", async () => {
+    const { dialog, props } = open();
+
+    await userEvent.selectOptions(
+      within(dialog).getByRole("combobox", { name: "Working folder" }),
+      "0123456789abcdef",
+    );
+    await userEvent.selectOptions(within(dialog).getByRole("combobox", { name: "Mode" }), "plan");
+    await pickModel(dialog, "Opus");
+    await userEvent.type(
+      within(dialog).getByRole("textbox", { name: "Prompt" }),
+      "  Fix the flaky test  ",
+    );
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+
+    expect(props.onSubmit).toHaveBeenCalledWith({
+      project: "agent-hub",
+      workdir_id: "0123456789abcdef",
+      mode: "plan",
+      model: "opus",
+      prompt: "Fix the flaky test",
+      resume_session_id: null,
+      fork: false,
+    });
+  });
+
+  it("puts a /skill in front of the prompt from the folder's skills", async () => {
+    const { dialog } = open({ workdirs: [WORKTREE] });
+    const prompt = within(dialog).getByRole("textbox", { name: "Prompt" });
+
+    await userEvent.type(prompt, "the login bug");
+    const skills = within(dialog).getByRole("group", { name: "Skills" });
+    await userEvent.click(within(skills).getByRole("button", { name: "/change" }));
+    expect(prompt).toHaveValue("/change the login bug");
+    await userEvent.click(within(skills).getByRole("button", { name: "/review" }));
+
+    expect(prompt).toHaveValue("/review the login bug");
+  });
+
+  it("checks a free model id against the pattern before submitting", async () => {
+    const { dialog, props } = open();
+
+    await pickModel(dialog, "Other model id…");
+    const id = within(dialog).getByRole("textbox", { name: "Model id" });
+    await userEvent.type(id, "bad id;rm");
+    const start = within(dialog).getByRole("button", { name: "Start session" });
+    expect(id).toHaveAttribute("aria-invalid", "true");
+    expect(start).toBeDisabled();
+
+    await userEvent.clear(id);
+    await userEvent.paste("claude-sonnet-4-5[1m]");
+    await userEvent.click(start);
+
+    expect(props.onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "claude-sonnet-4-5[1m]", prompt: null }),
+    );
+  });
+
+  it("AC-421.2 AC-421.3 sends a file pasted in the card with the first prompt, which it then needs", async () => {
+    const { dialog, props } = open();
+    const prompt = within(dialog).getByRole("textbox", { name: "Prompt" });
+    const start = within(dialog).getByRole("button", { name: "Start session" });
+
+    fireEvent.paste(prompt, {
+      clipboardData: { files: [new File(["# Notes"], "notes.md", { type: "text/markdown" })] },
+    });
+    const attached = await within(dialog).findByRole("list", {
+      name: "Attached to the first prompt",
+    });
+    expect(await within(attached).findByText("notes.md")).toBeInTheDocument();
+    expect(start).toHaveAccessibleDescription("Write a prompt to send the attachments.");
+    await userEvent.type(prompt, "Follow these notes");
+    await userEvent.click(start);
+
+    expect(props.onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: "Follow these notes",
+        files: [expect.objectContaining({ name: "notes.md" })],
+      }),
+    );
+    expect(vi.mocked(props.onSubmit).mock.calls[0]?.[0]).not.toHaveProperty("screenshots");
+  });
+
+  it("AC-421.2 takes files dropped anywhere on the card and picked with Attach", async () => {
+    const { dialog, props } = open();
+    const card = within(dialog).getByRole("textbox", { name: "Prompt" }).closest(".as-composer");
+    if (!card) throw new Error("no message card");
+    const picker = dialog.querySelector<HTMLInputElement>("input[type=file]");
+    if (!picker) throw new Error("no file picker");
+    expect(picker).not.toHaveAttribute("accept");
+
+    fireEvent.drop(card, {
+      dataTransfer: {
+        files: [new File(["a,b"], "rows.csv", { type: "text/csv" })],
+        types: ["Files"],
+      },
+    });
+    fireEvent.change(picker, {
+      target: { files: [new File(["%PDF-1.7"], "brief.pdf", { type: "application/pdf" })] },
+    });
+    const attached = await within(dialog).findByRole("list", {
+      name: "Attached to the first prompt",
+    });
+    expect(await within(attached).findByText("rows.csv")).toBeInTheDocument();
+    expect(await within(attached).findByText("brief.pdf")).toBeInTheDocument();
+    expect(within(dialog).getByRole("textbox", { name: "Prompt" })).toHaveAttribute(
+      "placeholder",
+      "Say what Claude should do with the file",
+    );
+    await userEvent.type(within(dialog).getByRole("textbox", { name: "Prompt" }), "Compare them");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+
+    expect(vi.mocked(props.onSubmit).mock.calls[0]?.[0].files?.map((f) => f.name)).toEqual([
+      "rows.csv",
+      "brief.pdf",
+    ]);
+  });
+
+  it("AC-421.5 sizes the project, mode and model pills to the value they show", async () => {
+    const { dialog } = open({ projects: ["agent-hub", "ops"] });
+    const valueOf = (name: string) =>
+      within(dialog)
+        .getByRole("combobox", { name })
+        .closest("label")
+        ?.querySelector(".as-pill-value");
+
+    expect(valueOf("Project")).toHaveTextContent("agent-hub");
+    expect(valueOf("Mode")).toHaveTextContent("Ask before edits");
+    const modelPill = () => within(dialog).getByRole("button", { name: /^Model and effort/ });
+    expect(modelPill()).toHaveTextContent("Default");
+    expect(valueOf("Working folder")).toBeNull();
+    await pickModel(dialog, "Other model id…");
+    expect(modelPill()).toHaveTextContent("Other model id…");
+    expect(valueOf("Mode")).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("AC-421.4 lists the folder's skills on / and inserts the one picked; Esc closes only the menu", async () => {
+    const { dialog, props } = open({ workdirs: [WORKTREE] });
+    const prompt = within(dialog).getByRole("textbox", { name: "Prompt" });
+
+    await userEvent.type(prompt, "/");
+    const menu = within(dialog).getByRole("listbox", { name: "Commands" });
+    expect(
+      within(menu)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual([expect.stringContaining("/change"), expect.stringContaining("/review")]);
+    await userEvent.keyboard("{Escape}");
+    expect(within(dialog).queryByRole("listbox", { name: "Commands" })).toBeNull();
+    expect(props.onCancel).not.toHaveBeenCalled();
+
+    await userEvent.clear(prompt);
+    await userEvent.type(prompt, "/re{Enter}");
+    expect(prompt).toHaveValue("/review ");
+    expect(props.onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("refuses a first prompt over the byte limit", async () => {
+    const { dialog } = open({ maxPromptBytes: 1024 });
+
+    await userEvent.click(within(dialog).getByRole("textbox", { name: "Prompt" }));
+    await userEvent.paste("x".repeat(1025));
+
+    expect(within(dialog).getByText("Too long: at most 1 KiB.")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Start session" })).toBeDisabled();
+  });
+
+  it("shows progress, then the problem, and cancels on Escape when idle", async () => {
+    const { props } = open({ pending: true });
+    expect(screen.getByRole("status")).toHaveTextContent("Starting the session…");
+    expect(screen.getByRole("button", { name: "Starting…" })).toBeDisabled();
+    await userEvent.keyboard("{Escape}");
+    expect(props.onCancel).not.toHaveBeenCalled();
+  });
+
+  it("names the problem the server answered and cancels on Escape", async () => {
+    const { props } = open({
+      error: new ApiProblem({ status: 429, title: "Too many sessions", detail: "At most 4 live" }),
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Too many sessions: At most 4 live");
+    await userEvent.keyboard("{Escape}");
+    expect(props.onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("says why it cannot start when the machine has no claude", () => {
+    open({ capabilities: aCapabilities({ available: false, reason: "no claude on PATH" }) });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Sessions cannot start here: no claude on PATH.",
+    );
+    expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
+  });
+
+  it("says so when the project has no folder", () => {
+    open({ workdirs: [] });
+
+    expect(screen.getByText("No working folder found for agent-hub.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
+  });
+
+  it("keeps Tab inside the dialog (new-session a11y)", async () => {
+    const { dialog } = open();
+
+    within(dialog).getByRole("button", { name: "Close" }).focus();
+    await userEvent.tab({ shift: true });
+    expect(within(dialog).getByRole("button", { name: "Start session" })).toHaveFocus();
+    await userEvent.tab();
+    expect(within(dialog).getByRole("button", { name: "Close" })).toHaveFocus();
+    expect(await seriousViolations(dialog)).toEqual([]);
+  });
+});
+
+const SHOT = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
+const SHOT_ALT = "Screenshot of the screen you shook";
+
+describe("NewSessionDialog (shake to start a session)", () => {
+  it("AC-421.6 shake-opens: prompt focused, the screenshot attached in the card with its alt", async () => {
+    const { dialog, props } = open({ screenshot: { dataUrl: SHOT } });
+
+    const prompt = within(dialog).getByRole("textbox", { name: "Prompt" });
+    expect(prompt).toHaveFocus();
+    const attached = within(dialog).getByRole("list", { name: "Attached to the first prompt" });
+    expect(
+      within(attached).getByRole("button", { name: `Remove ${SHOT_ALT}` }),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("img", { name: "Screenshot of the screen you shook" }),
+    ).toHaveAttribute("src", SHOT);
+
+    await userEvent.type(prompt, "What is on this screen?");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+
+    expect(props.onSubmit).toHaveBeenCalledWith({
+      project: "agent-hub",
+      workdir_id: aWorkdir().workdir_id,
+      mode: "default",
+      model: "default",
+      prompt: "What is on this screen?",
+      resume_session_id: null,
+      fork: false,
+      screenshot: { media_type: "image/png", data: "iVBORw0KGgoAAAANSUhEUg==" },
+    });
+    expect(await seriousViolations(dialog)).toEqual([]);
+  });
+
+  it("AC-421.6 screenshot-removed: body has no screenshot key, and it can be attached again", async () => {
+    const { dialog, props } = open({ screenshot: { dataUrl: SHOT } });
+
+    await userEvent.click(within(dialog).getByRole("button", { name: `Remove ${SHOT_ALT}` }));
+    expect(within(dialog).queryByRole("img")).toBeNull();
+    expect(
+      within(dialog).getByRole("button", { name: "Attach the screenshot again" }),
+    ).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+
+    expect(props.onSubmit).toHaveBeenCalledTimes(1);
+    const body = vi.mocked(props.onSubmit).mock.calls[0]?.[0];
+    expect(body).not.toHaveProperty("screenshot");
+    expect(body).toMatchObject({ prompt: null });
+  });
+
+  it("AC-421.6 capture-failed: a note, no thumbnail, no screenshot", async () => {
+    const { dialog, props } = open({ screenshot: { failed: true } });
+
+    expect(within(dialog).queryByRole("button", { name: /screenshot/i })).toBeNull();
+    expect(within(dialog).getByText("No screenshot was taken")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("img")).toBeNull();
+    expect(within(dialog).getByRole("textbox", { name: "Prompt" })).toHaveFocus();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+    expect(vi.mocked(props.onSubmit).mock.calls[0]?.[0]).not.toHaveProperty("screenshot");
+  });
+
+  it("new-session-button: nothing attached, body identical to today", async () => {
+    const { dialog, props } = open();
+
+    expect(within(dialog).queryByRole("list", { name: "Attached to the first prompt" })).toBeNull();
+    expect(within(dialog).queryByRole("img")).toBeNull();
+    expect(within(dialog).getByRole("textbox", { name: "Prompt" })).toHaveFocus();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+
+    expect(props.onSubmit).toHaveBeenCalledWith({
+      project: "agent-hub",
+      workdir_id: aWorkdir().workdir_id,
+      mode: "default",
+      model: "default",
+      prompt: null,
+      resume_session_id: null,
+      fork: false,
+    });
+    expect(Object.keys(vi.mocked(props.onSubmit).mock.calls[0]?.[0] ?? {})).toEqual([
+      "project",
+      "workdir_id",
+      "mode",
+      "model",
+      "prompt",
+      "resume_session_id",
+      "fork",
+    ]);
+  });
+
+  it("AC-421.3 needs a prompt while the screenshot is attached", async () => {
+    const { dialog } = open({ screenshot: { dataUrl: SHOT } });
+    const start = within(dialog).getByRole("button", { name: "Start session" });
+    const prompt = within(dialog).getByRole("textbox", { name: "Prompt" });
+
+    expect(start).toBeDisabled();
+    expect(
+      within(dialog).getByText("The attachments go with the first prompt: write one."),
+    ).toBeInTheDocument();
+    await userEvent.type(prompt, "   ");
+    expect(start).toBeDisabled();
+    await userEvent.type(prompt, "Why?");
+    expect(start).toBeEnabled();
+    await userEvent.clear(prompt);
+    await userEvent.click(within(dialog).getByRole("button", { name: `Remove ${SHOT_ALT}` }));
+    expect(start).toBeEnabled();
+  });
+
+  it("live-edit: initial workdir and acceptEdits", () => {
+    window.localStorage.setItem("ah.sessions.workdir.agent-hub", aWorkdir().workdir_id);
+    const { dialog } = open({
+      screenshot: { dataUrl: SHOT },
+      initialWorkdirId: WORKTREE.workdir_id,
+      initialMode: "acceptEdits",
+    });
+
+    expect(within(dialog).getByRole("combobox", { name: "Working folder" })).toHaveValue(
+      WORKTREE.workdir_id,
+    );
+    expect(within(dialog).getByRole("combobox", { name: "Mode" })).toHaveValue("acceptEdits");
+    expect(within(dialog).queryByRole("note")).toBeNull();
+  });
+
+  it("live-edit-fallback: the note shows and the defaults are kept", () => {
+    const { dialog } = open({
+      screenshot: { dataUrl: SHOT },
+      initialWorkdirId: "ffffffffffffffff",
+      note: "Live reload needs make dev in a listed folder",
+    });
+
+    expect(within(dialog).getByRole("combobox", { name: "Working folder" })).toHaveValue(
+      aWorkdir().workdir_id,
+    );
+    expect(within(dialog).getByRole("combobox", { name: "Mode" })).toHaveValue("default");
+    expect(within(dialog).getByRole("note")).toHaveTextContent(
+      "Live reload needs make dev in a listed folder",
+    );
+  });
+});
+
+describe("NewSessionDialog (new-session-dialog)", () => {
+  const STORED = "ah.sessions.workdir.agent-hub";
+
+  it("AC-421.1 AC-421.5 shows Where, then the focused Prompt in a card holding the mode and the model", async () => {
+    const { dialog } = open({ projects: ["agent-hub", "ops"] });
+
+    const where = within(dialog).getByRole("group", { name: "Where" });
+    expect(within(where).getByRole("combobox", { name: "Project" })).toHaveValue("agent-hub");
+    expect(within(where).getByRole("combobox", { name: "Working folder" })).toHaveValue(
+      aWorkdir().workdir_id,
+    );
+    expect(within(dialog).getByRole("textbox", { name: "Prompt" })).toHaveFocus();
+    expect(within(dialog).getByRole("combobox", { name: "Mode" })).toHaveValue("default");
+    expect(within(dialog).getByRole("button", { name: /^Model and effort/ })).toHaveTextContent(
+      "Default",
+    );
+    expect(within(dialog).getByRole("button", { name: "Attach a file" })).toBeEnabled();
+    expect(within(dialog).queryByRole("combobox", { name: "Start from" })).toBeNull();
+    expect(within(dialog).queryByRole("checkbox", { name: /Fork/ })).toBeNull();
+
+    await userEvent.selectOptions(within(dialog).getByRole("combobox", { name: "Mode" }), "plan");
+    expect(dialog).toHaveTextContent("Claude plans first and asks you to approve the plan.");
+    expect(await seriousViolations(dialog)).toEqual([]);
+  });
+
+  it("names the project as text when there is no other to choose", () => {
+    const { dialog } = open({ projects: ["agent-hub"] });
+
+    const where = within(dialog).getByRole("group", { name: "Where" });
+    expect(within(where).queryByRole("combobox", { name: "Project" })).toBeNull();
+    expect(where).toHaveTextContent("agent-hub");
+  });
+
+  it("asks for the chosen project's folders and keeps the prompt", async () => {
+    const onProjectChange = vi.fn();
+    const { dialog, props, view } = open({ projects: ["agent-hub", "ops"], onProjectChange });
+    const prompt = within(dialog).getByRole("textbox", { name: "Prompt" });
+    await userEvent.type(prompt, "Check ops");
+
+    await userEvent.selectOptions(within(dialog).getByRole("combobox", { name: "Project" }), "ops");
+    expect(onProjectChange).toHaveBeenCalledWith("ops");
+    view.rerender(<NewSessionDialog {...props} project="ops" workdirs={undefined} />);
+    expect(within(dialog).getByText("Loading the working folders…")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Start session" })).toBeDisabled();
+
+    const ops = aWorkdir({ label: "ops-hub", workdir_id: "00000000000000aa" });
+    view.rerender(<NewSessionDialog {...props} project="ops" workdirs={[ops]} />);
+    expect(within(dialog).getByRole("combobox", { name: "Working folder" })).toHaveValue(
+      ops.workdir_id,
+    );
+    expect(prompt).toHaveValue("Check ops");
+  });
+
+  it("preselects the folder last used for the project and remembers the one started in", async () => {
+    window.localStorage.setItem(STORED, WORKTREE.workdir_id);
+    const { dialog, props } = open();
+
+    const folder = within(dialog).getByRole("combobox", { name: "Working folder" });
+    expect(folder).toHaveValue(WORKTREE.workdir_id);
+    await userEvent.selectOptions(folder, aWorkdir().workdir_id);
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+
+    expect(props.onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ workdir_id: aWorkdir().workdir_id }),
+    );
+    expect(window.localStorage.getItem(STORED)).toBe(aWorkdir().workdir_id);
+    expect(window.localStorage.getItem("ah.sessions.workdir.ops")).toBeNull();
+  });
+
+  it("keeps the stored folder when the choice changes and the dialog is cancelled", async () => {
+    window.localStorage.setItem(STORED, WORKTREE.workdir_id);
+    const { dialog, props } = open();
+
+    await userEvent.selectOptions(
+      within(dialog).getByRole("combobox", { name: "Working folder" }),
+      aWorkdir().workdir_id,
+    );
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    expect(props.onCancel).toHaveBeenCalledTimes(1);
+    expect(window.localStorage.getItem(STORED)).toBe(WORKTREE.workdir_id);
+  });
+
+  it("starts on Ctrl+Enter and Cmd+Enter, never on a plain Enter in the prompt", async () => {
+    const { dialog, props } = open();
+    const prompt = within(dialog).getByRole("textbox", { name: "Prompt" });
+
+    await userEvent.type(prompt, "one{Enter}two");
+    expect(props.onSubmit).not.toHaveBeenCalled();
+    expect(prompt).toHaveValue("one\ntwo");
+    await userEvent.keyboard("{Control>}{Enter}{/Control}");
+    expect(props.onSubmit).toHaveBeenCalledTimes(1);
+    expect(props.onSubmit).toHaveBeenCalledWith(expect.objectContaining({ prompt: "one\ntwo" }));
+    await userEvent.keyboard("{Meta>}{Enter}{/Meta}");
+    expect(props.onSubmit).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not start on Ctrl+Enter while an input method is composing", () => {
+    const { dialog, props } = open();
+
+    const prompt = within(dialog).getByRole("textbox", { name: "Prompt" });
+    fireEvent.keyDown(prompt, { key: "Enter", ctrlKey: true, isComposing: true });
+    expect(props.onSubmit).not.toHaveBeenCalled();
+    fireEvent.keyDown(prompt, { key: "Enter", ctrlKey: true });
+    expect(props.onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not start on Ctrl+Enter while Start is disabled", async () => {
+    const { dialog, props } = open({ screenshot: { dataUrl: SHOT } });
+
+    within(dialog).getByRole("textbox", { name: "Prompt" }).focus();
+    await userEvent.keyboard("{Control>}{Enter}{/Control}");
+
+    expect(props.onSubmit).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ screenshot: { dataUrl: SHOT } }, "Write a prompt to send the attachments."],
+    [{ workdirs: [] }, "No working folder to start in."],
+    [{ workdirs: undefined }, "Waiting for the working folders."],
+    [
+      { capabilities: aCapabilities({ available: false }) },
+      "Sessions cannot start on this machine.",
+    ],
+  ] satisfies [Partial<NewSessionDialogProps>, string][])(
+    "says inline why Start is disabled (%#)",
+    (overrides, reason) => {
+      const { dialog } = open(overrides);
+
+      const start = within(dialog).getByRole("button", { name: "Start session" });
+      expect(start).toBeDisabled();
+      expect(start).toHaveAccessibleDescription(reason);
+    },
+  );
+
+  it("AC-421.5 says when the model id is not valid, and drops the reason once fixed", async () => {
+    const { dialog } = open();
+    const start = within(dialog).getByRole("button", { name: "Start session" });
+    expect(start).not.toHaveAttribute("aria-describedby");
+
+    await pickModel(dialog, "Other model id…");
+    expect(start).toHaveAccessibleDescription("The model id is not valid.");
+    await userEvent.type(within(dialog).getByRole("textbox", { name: "Model id" }), "opus");
+
+    expect(start).toBeEnabled();
+    expect(start).not.toHaveAttribute("aria-describedby");
+  });
+});
+
+describe("NewSessionDialog (workdir-stale)", () => {
+  it("falls back to the first folder when the stored one is no longer listed", () => {
+    window.localStorage.setItem("ah.sessions.workdir.agent-hub", "ffffffffffffffff");
+    const { dialog } = open();
+
+    expect(within(dialog).getByRole("combobox", { name: "Working folder" })).toHaveValue(
+      aWorkdir().workdir_id,
+    );
+  });
+
+  it("falls back to the first folder when storage throws", () => {
+    const read = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    try {
+      const { dialog } = open();
+      expect(within(dialog).getByRole("combobox", { name: "Working folder" })).toHaveValue(
+        aWorkdir().workdir_id,
+      );
+    } finally {
+      read.mockRestore();
+    }
+  });
+});
+
+describe("NewSessionDialog (resume: fork)", () => {
+  const ENDED = anAgentSession({
+    status: "ended",
+    end_reason: "closed",
+    title: "Fix the flaky test",
+    workdir_id: WORKTREE.workdir_id,
+    workdir_label: "agh-7-collector",
+    mode: "plan",
+    model: "opus",
+    ended_at: "2026-10-16T09:30:00Z",
+  });
+
+  function fork(overrides: Partial<NewSessionDialogProps> = {}) {
+    return open({ forkOf: ENDED, workdirs: undefined, ...overrides });
+  }
+
+  it("resume: a fork names the target (title, folder, when it ended), not the folder picker", () => {
+    const { dialog } = fork();
+
+    const target = within(dialog).getByRole("group", { name: "Fork" });
+    expect(target).toHaveTextContent("Fix the flaky test");
+    expect(target).toHaveTextContent("agent-hub › agh-7-collector");
+    expect(target).toHaveTextContent("keeps this one unchanged");
+    expect(within(target).getByText(/Ended/).querySelector("time")).toHaveAttribute(
+      "datetime",
+      "2026-10-16T09:30:00Z",
+    );
+    expect(within(dialog).queryByRole("combobox", { name: "Working folder" })).toBeNull();
+    expect(within(dialog).getByRole("textbox", { name: "Prompt" })).toHaveFocus();
+  });
+
+  it("resume: a fork sends the target's folder and Claude session, its mode and model, and fork", async () => {
+    const { dialog, props } = fork();
+
+    await userEvent.type(within(dialog).getByRole("textbox", { name: "Prompt" }), "Go on");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+
+    expect(props.onSubmit).toHaveBeenCalledWith({
+      project: "agent-hub",
+      workdir_id: WORKTREE.workdir_id,
+      mode: "plan",
+      model: "opus",
+      prompt: "Go on",
+      resume_session_id: ENDED.claude_session_id,
+      fork: true,
+    });
+  });
+
+  it("AC-681.5 resume: a fork keeps its session's effort and Ultracode, not the remembered effort", async () => {
+    window.localStorage.setItem("ah.session.effort", "low");
+    const { dialog, props } = fork({ forkOf: { ...ENDED, effort: "max", ultracode: true } });
+
+    expect(
+      within(dialog).getByRole("button", { name: "Model and effort: Opus, Max, Ultracode" }),
+    ).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+
+    expect(props.onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ effort: "max", ultracode: true }),
+    );
+    window.localStorage.removeItem("ah.session.effort");
+  });
+
+  it("AC-681.5 resume: a fork of a session with no effort sends none", async () => {
+    window.localStorage.setItem("ah.session.effort", "low");
+    const { dialog, props } = fork({ forkOf: { ...ENDED, effort: null } });
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+
+    expect(vi.mocked(props.onSubmit).mock.calls[0]?.[0]).not.toHaveProperty("effort");
+    window.localStorage.removeItem("ah.session.effort");
+  });
+
+  it("resume: a fork keeps a model id the capabilities do not list", async () => {
+    const { dialog, props } = fork({ forkOf: { ...ENDED, model: "claude-sonnet-4-5" } });
+
+    expect(within(dialog).getByRole("textbox", { name: "Model id" })).toHaveValue(
+      "claude-sonnet-4-5",
+    );
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+    expect(vi.mocked(props.onSubmit).mock.calls[0]?.[0]).toMatchObject({
+      model: "claude-sonnet-4-5",
+    });
+  });
+
+  it("resume: forking an auto session keeps Auto, checked", async () => {
+    // ADR 0059: every app offers auto, so the fork keeps it, in plain sight.
+    const { dialog, props } = fork({ forkOf: { ...ENDED, mode: "auto" } });
+
+    const modes = within(dialog).getByRole("combobox", { name: "Mode" });
+    expect(values(modes)).toContain("auto");
+    expect(modes).toHaveValue("auto");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+    expect(vi.mocked(props.onSubmit).mock.calls[0]?.[0]).toMatchObject({ mode: "auto" });
+  });
+
+  it("resume: the Fork dialog has no serious axe violations", async () => {
+    const { dialog } = fork();
+    expect(await seriousViolations(dialog)).toEqual([]);
+  });
+
+  it("resume: a plain New session shows no fork target", () => {
+    const { dialog } = open();
+
+    expect(within(dialog).queryByRole("group", { name: "Fork" })).toBeNull();
+    expect(within(dialog).queryByRole("checkbox", { name: /Fork/ })).toBeNull();
+  });
+});
+
+describe("new-session helpers", () => {
+  it("names folders and replaces a leading /skill (new-session)", () => {
+    expect(workdirText(aWorkdir({ kind: "repo", label: "agent-hub" }))).toBe("agent-hub (repo)");
+    expect(workdirText(aWorkdir({ kind: "worktree", label: "w", repo: null }))).toBe(
+      "w (worktree)",
+    );
+    expect(withSkill("", "change")).toBe("/change ");
+    expect(withSkill("/feature do it", "change")).toBe("/change do it");
+  });
+});

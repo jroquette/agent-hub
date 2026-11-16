@@ -1,0 +1,15 @@
+--- rc (2 bytes) ---
+0
+
+--- stdout (173 bytes) ---
+{"systemMessage": "[hub readonly-gate] changed while researcher (agent ab12cd34) ran, not attributed to it (main session tool call, main session tool result):\n- api/x.py"}
+
+--- stderr (0 bytes) ---
+
+--- fs (267 bytes) ---
+D <ROOT>/home/tmp/hub-readonly-abcdef123456-ab12cd34.json
+A <ROOT>/home/tmp/hub-readonly-abcdef123456.jsonl
+| {"ts": "2026-01-15T10:30:00Z", "session_id": "abcdef123456", "agent_id": "ab12cd34", "agent_type": "researcher", "outcome": "report", "paths": ["api/x.py"]}
+
+--- calls (0 bytes) ---
+

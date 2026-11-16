@@ -1,0 +1,307 @@
+# Control plane design (Phase 2 reference)
+
+The approved UI design system of the agent-hub control plane: its principles and foundations below, and the screen
+specs in [specs/](specs/) (navigation, the data and API map, one file per Phase 2 screen, flows, responsive behaviour
+and the design's decisions). It is the UI contract of `apps/web` and the `/api/v1` read models. The specs of Phase 3
+and 4 screens (Knowledge beyond Learnings, Metrics, Workflows, Bench and Tracker) are not copied here.
+
+## Departures
+
+Phase 2 builds this design with the changes below, and the control-plane clarity pass (AGH-201) adds its own at the
+end; where a spec file says otherwise, this list wins.
+
+- **`hub web`, not `hub app` or `hub collector`.** One local process, `hub web [--port N] [--db PATH]`, serves
+  `/api/v1` and the built app on `127.0.0.1:7420` only (no host option). Every "Start it with `hub collector start`"
+  or `hub app` reads "Start it with `hub web`"; port 4317 is not used. `cli` imports the API only from its `web`
+  command, and the API never imports `cli`.
+- **Event types.** Phase 2 adds `step.start`, `step.end`, `run.end`, `learning.rejected` and `session.summary`. The
+  proposed `hook.blocked` type is dropped: a blocked Stop is a `gate.result` with `kind: stop_gate` and
+  `result: failed`, and guard-denial counts read only `tool.result` events with `status: denied`.
+- **Metadata only.** No prompt, message, reasoning, successful tool output, file content or diff is stored. Short
+  texts are kept redacted and truncated: a Bash command (500 characters), a Grep or Glob pattern (200), the first line
+  of a tool error (200) and, since AGH-201, a failed tool's error message (300, [ADR
+  0023](../../adr/0023-short-error-message.md)), a subagent type and description (80), a skill name and a SendMessage
+  recipient (80), a git branch (200), a slash-command name and a learning title (120). WebFetch keeps
+  scheme, host and path; MCP keeps server, tool and argument key names. Expandable message rows say "Content not
+  stored. agent-hub keeps metadata only; the transcript stays in Claude Code's folder on this machine." and the diff
+  pane says "Diff content is not stored in this version."
+- **Sources not connected.** OpenTelemetry, GitHub and Linear are not connected in Phase 2: the fields they own are
+  `null` in the API with `sources_missing`, and the UI shows "—" with the tooltip "<Source> is not connected in this
+  version.". Cost comes from transcript usage and a dated price table, always labelled "Estimated from transcript";
+  an unknown model gives "Cost unknown: model <id> has no price".
+  Exception (AGH-136, ADR 0025): the feature Tickets tab reads Linear server-side, read-only, when
+  `LINEAR_API_KEY` is set; without it the tab shows the plan from `features.json` with a notice.
+- **Screens in Phase 2.** Portfolio, Project overview, Approvals (read-only; retired by AGH-273, answered in the run
+  or the session), Live sessions, Sessions list (merged into one Sessions screen by
+  [ADR 0033](../../adr/0033-sessions-and-chat-interaction-model.md)), Session
+  detail (Timeline, Files, Cost and Raw events tabs; no Decisions or Context tab), Workflow runs, Run detail,
+  Features, Feature detail, Health, Knowledge › Learnings and Knowledge › Brain (both since AGH-201, no `P3` tag),
+  Settings (Hubs, Collector, Privacy, Appearance, About), Welcome and 404. Workflows ships read-only in Phase 4
+  (AGH-226: catalog, layered graph, document). Metrics, Bench, Tracker queue, Decisions and Context are hidden;
+  the other Knowledge items show only their title and "Arrives in Phase 3.".
+- **Phase 3 and 4 actions.** Where the design puts an action in a screen body (the Approvals action bar, Run detail
+  "Retry from verify", Runs list "Start run on an issue", Learnings snooze), it renders disabled with a `PhaseTag` and
+  the tooltip "Available in Phase 3/4. This version is read-only.". Overflow menus keep only Phase 2 items. No Phase
+  3 or 4 endpoint exists in the OpenAPI document, except the two learning decisions AGH-201 moved to Phase 2.
+- **Copy.** "Proposed CLI" chips are dropped for `hub web`, `hub collect --transcript` and `hub collect --runs`, and
+  kept for `./hub run <issue> --dry-run`. Welcome step 2 "Start the collector" becomes "Keep hub web running", checked
+  as "agent-hub is running at 127.0.0.1:7420 · db <path>". Empty states that name OpenTelemetry say "Cost is estimated
+  from transcripts. OpenTelemetry is not connected in this version.". Transcript column values are "local file" or
+  "—".
+- **Hook events.** The hook sensor is registered for eleven events: SessionStart, UserPromptSubmit, PreToolUse,
+  PostToolUse, PostToolUseFailure, Notification, Stop, SubagentStart, SubagentStop, PreCompact and SessionEnd. A
+  failed tool is reported by PostToolUseFailure (status `error`, the first line of the error and the short error
+  message, or "interrupted"), not PostToolUse, and a guard ask also resolves `approved` on a PostToolUseFailure with
+  its tool use id.
+- **Session fields from hooks.** `session.start` takes its trigger from the hook's `source` (adding the value `fork`);
+  the git branch comes only from the transcript, whose mapper writes `git_branch` on every event of a line that names
+  one. Events from inside a subagent carry `agent` = its agent type and the payload key `agent_id`. Stop,
+  SubagentStart, SubagentStop, PreCompact and Notification hooks other than permission prompts produce no event of
+  their own. `Session.parent_session_id` is always `null`: subagents share their session's id, and are told apart as
+  its `actors` instead.
+
+AGH-201 (control-plane clarity) changes the design further
+([event-derivations.md](../event-derivations.md), [API.md](../../API.md), ADRs 0023 and 0024):
+
+- **Session identity.** Lists, tiles and the header show the session's `label` (`ACME-1511 · /feature`, then `repo ·
+  branch`, then the short id), never the stored agent `main`; the Agent column is gone and `agent` is deprecated.
+- **Problems, not error counts.** `GET /sessions/{session_id}/problems` and the "What went wrong" panel; problem
+  kinds add `guard_ask_open` (an unanswered guard ask) and `guard_ask_declined` resolves "You declined" (E4);
+  resolution `open` ("Agent is on it") covers a problem while the session is live, so it becomes `needs_you` only once
+  the session waits, idles or ends (E5). A live tile's red edge means a needs-you problem only; `failing_notice` keeps
+  its text without the edge (E11). What the agent or the owner already dealt with folds into one line under
+  "Show N handled"; only what needs the owner stays listed (AGH-265, [agent-sessions.md](../agent-sessions.md) AC-265.6).
+- **Timeline.** Rows name the actor ("Main agent", "Subagent · <type>") and a plain verb ("Ran skill /feature",
+  "Started subagent Explore: …"); runs of Reads collapse, with a legend.
+- **Learnings.** `status` has no `snoozed` value: snooze stays a disabled P3 button. A learning adds `note_path`,
+  `state` (`proposed`, `accepted_pr_open`, `rejected_pr_open`, `in_brain`, `archived`, `resolved_elsewhere`), `summary`,
+  `note_unavailable`, `actions_unavailable`, `pr_url` and `branch`; `target` is deprecated. Accept and reject answer
+  201 `{state, pr_url, branch}`, not a Learning, and work in a temporary clone of the hub's `origin`, never a worktree
+  of the user's checkout (E8). There is no `/learnings/{id}/trace`; the trail from session to note is in the
+  learning detail (AGH-393).
+- **Brain.** `GET /projects/{project}/brain` and `GET /projects/{project}/brain/note?path=` replace the design's
+  `/brain/notes`, with backlinks through `GET /projects/{project}/brain/backlinks` (AGH-393); `brain/auto/` is never
+  listed or served. Feature detail adds Spec, Research, Plan,
+  Eval and Criteria tabs over the same note route.
+- **Security.** The strict writes need the server's own `Origin`, a same-origin fetch and a JSON body (E9,
+  `STRICT_WRITES`): the two learning POSTs, the workflow run writes (start, cancel, resume and abandon a run, and a
+  gate's decision) and the two restores (AGH-297). The launch cookie is needed by the agent-session routes (AGH-165,
+  which also need the server's own `Origin`), the same workflow run writes and the restores
+  ([API.md](../../API.md#local-security)); the CSP is unchanged. Since AGH-699 the learning POSTs are owner writes,
+  with the Hub config writes, the hub actions (platform sync, doctor fix), the Linear key and a feature's nickname:
+  strict and behind the launch cookie, and off (404 `owner-writes-off`) in the container. The owner sign-off stays an
+  item write (AGH-695): strict and behind the launch cookie, and 409 `hub_read_only` in the container.
+
+AGH-422 (the chat redesign: the Discuss panel, the reading anatomy, the composer, the chat's header and the sessions
+rail, [specs/20-chat.md](specs/20-chat.md)) records the owner's answers to its design:
+
+- **Principle 1 and the chat.** Principle 1 ("Observe, don't replace. No chat and no 'talk to the agent' box,
+  anywhere.") predates [ADR 0031](../../adr/0031-driving-claude-code-sessions-from-the-app.md) and
+  [ADR 0033](../../adr/0033-sessions-and-chat-interaction-model.md), which already put a chat in the app: the owner
+  drives the sessions he starts from it. The owner chose to do the redesign now on that basis; principle 1 reads as
+  "observe every session; drive only the ones the owner starts here, and nothing in the app talks to an agent on its
+  own" until a principle change says it in its own words.
+- **D-chat-1 · Chat shape.** The composer and the owner's turn use `radius-2xl` (16 px, new, chat only), and Send,
+  Stop and the composer's "+" are round (`radius-full`): Shape's "radii are small" and "radius-full only for status
+  badges and dots" do not apply inside the chat's composer and turns.
+- **D-chat-2 · Reading type.** The chat's prose uses the new type style `reading` (15/24) when its container is at
+  least 560 px wide; narrower it keeps `body` 14/22.
+- **D-chat-3 · Scroll-edge fade.** The transcript fades its last 24 px with a transparency `mask-image` (no colour),
+  so text passes under the floating composer: the one gradient, and it means "there is more below".
+- **Tokens.** `surface-turn` (an alias: light `gray-100`, dark `gray-200`; the owner's turn card, never a hover or a
+  selection), `radius-2xl` (16 px) and `chat-column` (768 px) join `tokens.json`.
+
+AGH-596 (the scenario page built and run on one screen, [specs/23-scenarios.md](specs/23-scenarios.md)) records two
+changes the owner validated for the whole app:
+
+- **Selects as pop-up buttons.** Every select drawn as an input (`select.ah-input`) is a macOS pop-up button: the
+  native arrow gives way to a small up-and-down chevron drawn from `text-muted`, with room on both sides so the text
+  never runs under it, and it follows the theme. Hover (`surface-hover`, a stronger border), the keyboard focus ring
+  and disabled (0.6 opacity, the default cursor) are the same everywhere it is used; under reduced motion it has no
+  transition. A screen draws no chevron of its own over it.
+- **Code in colour everywhere.** Code and files the app shows are coloured by their language through one component,
+  `HighlightedCode` (the language of a file from its extension), on the `syntax-*` tokens: a `CodeBlock` with the `$`
+  prompt reads as shell, and one with no prompt stays plain
+  ([ADR 0052](../../adr/0052-syntax-highlighting-across-the-app.md), which widens ADR 0034).
+
+AGH-614 (each screen's code loads on demand, [specs/22-first-run-and-errors.md](specs/22-first-run-and-errors.md))
+changes one rule of spec 22:
+
+- **Route loading.** Route changes keep the previous screen until the new screen's code loads and show the page
+  skeleton after 300 ms; the 2 px progress bar of spec 22 is not built.
+
+AGH-608 (`hub web` runs the doctor in the background, [specs/16-health.md](specs/16-health.md)) changes these items of
+specs 16 and 12:
+
+- **Check age.** Health's summary strip says "Checked <age> ago", the end of the last background run, where spec 16
+  shows `AsOfStamp` "Last run … (2 h ago)" (`16-health.md:21,68`); no stale variant, the age says it. The age is a
+  `<time>` with the exact time in its tooltip; before a hub's first background run ends, the strip says "The first
+  check is running". Spec 16's Stale banners (`16-health.md:174-175`) do not show: Health draws no banner, and the
+  age says how old the check is.
+- **Never ran.** Until a hub's first background run ends (a few seconds after `hub web` starts or the hub is
+  registered), nothing has passed:
+  - Health's findings area shows spec 16's Never ran `EmptyState`: "The doctor has not run on this hub yet." /
+    "Results appear here within a few seconds." It has no run-it-yourself step, since `hub web` runs the doctor. The
+    summary strip keeps the error icon, never the `done` icon, and shows no "exit 0", also when other hubs' findings
+    are listed in All projects.
+  - The Project overview header shows Portfolio's idle "Not checked" badge, not a Setup badge, with Portfolio's
+    tooltip and name, "Health: doctor has not run for this hub". Its Health checks
+    block shows spec 12's "Doctor has not run for this hub." (`12-portfolio.md:483`), without the step to run
+    `hub doctor`.
+
+AGH-613 (the Features list in one call, [specs/17-features.md](specs/17-features.md)) changes one item of spec 17:
+
+- **Shipped features leave In progress.** The Features list reads no feature's tickets: it reads only the list, where
+  AC-521.8.5 (`17-features.md:606-608`) has it read a waiting feature's tickets once to warm the Linear snapshot,
+  then read the list again. While a tab is open, `hub web`'s ticket warmer keeps each feature's Linear snapshot warm
+  (it reads a feature's tickets again when its snapshot is 14 min old), and the list's 30 s reread shows a feature
+  moving to Shipped once its tickets are all done.
+
+AGH-623 (each screen's first view in one call, [ADR 0056](../../adr/0056-screen-shaped-reads.md)) changes one rule
+of spec 22 and how the shell's facts arrive:
+
+- **Regions arrive together.** On Portfolio, Project overview, Sessions and Session detail, the regions a screen read
+  covers arrive together, from that one read. Spec 22's "Region independence" (each region loads on its own, the
+  fastest first, `22-first-run-and-errors.md:278`) holds only when the read fails or takes over 5 s: then each region
+  reads its own route, as before, and loads and fails on its own. On Project overview, Recent work draws at once what
+  the cache holds (the last overview read or the sessions route, whichever is newer) until the visit's read answers;
+  after a failed or timed-out read, those rows stay until the sessions route answers. On a visit whose project is not
+  cached (most first visits, and most returns more than 5 min after leaving: the Learnings screen and a session's chat
+  also keep the project cached), the whole page waits for the read. Otherwise Recent work waits only when the cache
+  holds neither the last overview read nor the sessions route's answer.
+- **Shell facts.** The switcher's projects, the Workflow runs item and the Features badge come from one shell read,
+  and they hide together only when its first read fails. When the scope changes, the projects and the runs item stay,
+  and the badge hides until the new scope's count arrives. When the event database cannot be read or is busy, the
+  shell read fails and the three hide together, the badge with them; the badge still counts when only the live
+  sessions cannot be read (AC-374.7, `17-features.md:213-216`).
+- **The launch cookie, one rule for the whole app (AGH-842, [ADR
+  0065](../../adr/0065-shared-launch-token-file-and-one-launch-cookie-rule.md)).** Validated in the playground (snapshot
+  `20261114T171258Z`); where a spec file says otherwise, this wins.
+  - **AC-842.1.1 One cookie for one launch.** Given two `hub web` servers started with the same `--token-file`, when
+    the browser trades the token at either one, then both accept its cookie, also after one restarts; a token file
+    that is a link, not private or holds no url-safe token, or is given in the container, makes `hub web` exit 2.
+    Tests: `test_session_token.py` (`test_reads_token_without_whitespace_when_token_file_private`,
+    `test_refuses_token_file_when_*`, `test_names_shared_cookie_after_file_when_named`), `test_web_command.py`
+    (`test_uses_file_token_and_shared_cookie_when_token_file_given`, `test_exits_two_*`), `test_agent_session_access.py`
+    (`test_reads_named_cookie_when_session_cookie_set`, `test_refuses_port_cookie_when_session_cookie_set`,
+    `test_sets_named_cookie_when_exchange_token_valid_and_session_cookie_set`), `test_live_api.py`.
+  - **AC-842.1.2 The shell says whether the browser holds the cookie.** Given the shell read, then `launch_cookie` is
+    `held` with this launch's cookie, `missing` without it and `off` in the container, with no request of its own.
+    Tests: `test_screen_reads.py` (`test_says_launch_cookie_held_*`, `…_missing_*`, `…_off_*`).
+  - **AC-842.1.3 A read-only banner.** Given `launch_cookie: missing`, then a dismissable warning banner under the top
+    bar reads "**Changes are locked in this browser.** You can read everything here. Open the link hub web printed
+    when it started (it ends with ?token=…) once in this browser."; the container (`off`) shows none. Tests:
+    `LockedBanner.test.tsx`.
+  - **AC-842.1.4 One mark for every operation that needs the cookie.** Given the OpenAPI document, then exactly the
+    operations `needs_launch_cookie` names carry `x-agent-hub-launch-cookie: true`, and `make openapi` turns them into
+    `LAUNCH_COOKIE_ROUTES`. Tests: `test_write_route_inventory.py`
+    (`test_marks_exactly_cookie_writes_when_openapi_built`,
+    `test_marks_values_read_and_agent_session_reads_when_openapi_built`), `launchCookie.test.ts` (`needsLaunchCookie`).
+  - **AC-842.1.5 A write refused before any request.** Given the page lacks the cookie, when a marked write is sent,
+    then `send()` refuses it with the lock's words and makes no request; a write that needs no cookie still goes, and
+    a 401 `agent-session-unauthorized` from a marked operation sets the page to `missing` (another 401 does not).
+    Tests: `api.test.tsx` "the launch cookie guard".
+  - **AC-842.1.6 Every control locked, with the reason.** Given the page lacks the cookie, then every control of a
+    marked operation (sign-off and owner changes, runs, gates, checks, scenarios, skills, restores, sessions, a
+    feature's status) is disabled with the lock's title and detail, from `useLaunchCookie()` over the store the shell
+    read feeds. Tests: `launchCookieControls.test.ts` (it scans the source for every marked write and fails until each
+    caller's controls read the lock) and one locked-control test per screen (`GateDecision`, `StartRun`,
+    `RunCommands`, `EvalTab`, `MarkAcPassing`, `ApproveRecord`, `ChangeRequests`, Health, Hub config, Settings,
+    Learnings, Scenarios, Studio, item history, `ownerStatus.test.tsx`).
+
+## Design system
+
+The control plane of agent-hub is an observability and governance console for teams of AI coding agents. It answers five questions: how are my projects doing (Portfolio), what are the agents doing right now (Live sessions), why did the agent do that (Session timeline), what does it know and what did it learn (Knowledge), and how should work flow and where does it get stuck (Workflows). A busy engineering lead should understand any screen in five seconds and be able to trust it.
+
+This system is the north star for the people and agents building the REST API (`/api/v1`) and the React front end. Every screen is specified, not just drawn: the sections after this one give each screen's question, layout, data mapping, states and interactions; the components are live React; the **Screens** group holds hi-fi pages with a state switcher and an annotation overlay; **Prototype** clicks through the key flows.
+
+## Product principles (they decide every design question)
+
+1. **Observe, don't replace.** No chat and no "talk to the agent" box, anywhere.
+2. **Human decides.** Agents only propose. Gates, approvals and accepted learnings are human acts, and they are the most visible things on any screen they appear on (`waiting` amber, hand icon, top of the list).
+3. **Show only what the record shows.** Reasoning is the *recorded reasoning summary*, labelled. Anything computed by agent-hub (summaries, extracted decisions, inferred ends) carries a `DerivedLabel` and a dashed outline.
+4. **Provenance everywhere.** Every brain item, learning, decision and summary line links back to its session and events (`ProvenanceBadge`, `ProvenanceLineage`).
+5. **Privacy first.** Secrets appear only as `RedactionChip` (`[redacted: github token]`), never partially and never with a reveal button. Personal memory (`brain/auto/workspace/`) is shown to others only as "present, private". Expired transcripts show `ExpiredContent`; structured events and summaries remain.
+6. **Metrics about the process, never about people.** Group by step, gate, repo, issue size or run. No per-person chart, ranking or filter exists in this system.
+7. **Read-only first.** Phase 2 is read-only. Actions from Phases 3–4 are designed now and always carry a `PhaseTag` (`P3`, `P4`) until they ship.
+
+## Content fundamentals
+
+**Voice.** Calm, precise, plain. Active voice, sentence case, no exclamation marks, no emoji, no "AI magic" words (no sparkles, no "smart", no "insights"). Verbs on buttons: "Approve plan", "Retry from verify", "Open failing moment", never "OK" or "Submit". Link text says where it goes: "3 failed runs in verify", not "See more".
+
+**Glossary.** Use these words exactly; never mix them.
+
+| Say | Meaning | Never say |
+| --- | --- | --- |
+| Project | A product with 1..N repos and a tracker (`agent-hub`, `acme-market`) | workspace, org |
+| Hub | The project's control repo (rules, brain, workflows) | — |
+| Repo | A code repository managed by the hub | project |
+| Agent | A role with instructions, tools and a model: `hub-workflow:evaluator` | bot, assistant |
+| Session | One Claude Code session of an agent | run, job, execution |
+| Workflow | A versioned sequence of steps | pipeline |
+| Run | One WorkflowRun: a workflow run (such as one issue taken to a PR) or, always qualified, a scenario run; it contains sessions | session |
+| Scenario run | One run of a scenario in one environment and mode; a WorkflowRun underneath | run (alone) |
+| Gate | An automatic check or a human approval a step must pass | — |
+| Brain · Learning · Inbox · Decision | Curated knowledge · something learned (proposed → accepted/rejected) · unreviewed proposals · a recorded choice | wiki · insight, tip |
+| Issue | A tracker item, `AGH-48` | ticket, task |
+| Doctor · finding | `hub doctor` and what it reports | lint |
+
+"Run" names a WorkflowRun only. A session is never a run. "Run" alone means a WorkflowRun; a scenario run is always qualified.
+
+**Formatting.** Ids short and mono (`5091b986`), full UUIDv7 on copy (`IdChip`). Issues as `AGH-48`, linking out. Recent times relative ("3 min ago") with the absolute time in the tooltip; tables absolute; local time by default, UTC on toggle. Durations "1 h 12 min". Money in USD: 2 decimals in summaries (`$1.27`), 4 in details (`$1.2734`); totals add up exactly. Numbers use tabular figures, thousands separators, right-aligned. Paths and commands are mono and middle-truncated (`packages/core/…/brain_memory_rule.py`) with the full value on hover (`PathText`). External content (issue text, PR comments, web pages) is labelled `ExternalLabel` and never styled as fact.
+
+## Visual foundations
+
+**Personality.** Calm, precise, trustworthy, engineering-grade: the clarity of a good issue tracker, the density of a metrics console, the trace view of a tracing tool. Not playful. No gradients as decoration, no 3D, no robot or spark imagery.
+
+**Color.** An 11-step neutral scale (`gray-50` … `gray-950`, inverted in dark so each step keeps its role) carries almost everything. In light, its ground and line steps (`gray-50` … `gray-300`) are a warm sand and its text steps stay cool; dark is cool throughout. Grounds: `bg` (app), `surface` (panels, tables, timeline), `surface-sunken` (wells, code, table header), `surface-hover`, `surface-overlay` (menus, dialogs). Text: `text`, `text-muted`, `text-subtle`, each at least 4.5:1 on every ground in both themes. Lines: `border` (hairlines, decorative), `border-strong`, `border-control` (inputs, 3:1). One accent, deep indigo `accent`, used sparingly: the primary action of a view, links, the selected nav item and `focus-ring`. Text on an accent fill is `on-accent`.
+
+**Warm sand light theme (AGH-428).** The light theme's grounds are warm off-whites instead of bright white, so long
+reading sessions do not glare; dark is unchanged. Tested in `apps/web/src/styles/tokens.test.ts`.
+
+- AC-428.1: Given the light theme, when any screen renders, then `bg`, `surface`, `surface-sunken`, `surface-hover`
+  and `surface-overlay` are warm off-whites (red ≥ green ≥ blue, never `#ffffff`), with `surface` lighter than `bg`.
+- AC-428.2: Given the warm light grounds, when text or a control sits on them, then `text`, `text-muted`,
+  `text-subtle` and `accent` still read at 4.5:1 on every ground and `border-control` at 3:1 on `surface` and `bg`
+  (`text-subtle`, `border-control` and `syntax-title` are darkened a step to keep it).
+- AC-428.3: Given the dark theme, when any screen renders, then its grounds, lines and text colours are the ones it
+  had before AGH-428.
+
+**Status is one pre-attentive channel.** Only status colors pop; everything else stays neutral. Every status is icon + label, never color alone (`StatusBadge`):
+
+| Status | Token | Icon | Meaning |
+| --- | --- | --- | --- |
+| Live / running | `live` | pulse dot | Streaming events now |
+| Waiting for you | `waiting` | hand | An open gate request or human step |
+| Done / passed | `done` | circle-check | Bluish green, off the red axis |
+| Failed / error | `failed` | circle-x | |
+| Blocked / stopped | `blocked` | octagon-x | |
+| Idle / stale | `idle` | moon / clock | No activity for 5 min; data older than its expected latency |
+| Denied by guard | `guard` | shield-x | A hook or guard refused an action |
+| Derived | dashed `text-subtle` outline | circle-dashed | Computed by agent-hub, not recorded |
+
+Each status has a `-soft` ground for badges. The only animation that loops is the live pulse (2 s, `dur-pulse`); there is no flashing, and toasts are reserved for results of the user's own actions (alarm fatigue).
+
+**Timeline events** use eight categorical marks, each at least 3:1 on `surface` in both themes and always paired with an icon and a label: `ev-prompt` (user), `ev-message` (agent message), `ev-reasoning` (recorded reasoning summary, dashed mark, italic text), `ev-tool`, `ev-gate`, `ev-decision`, `ev-learning`, `ev-lifecycle`. Errors use `failed`; guard denials use `guard` on a `guard-soft` row.
+
+**Charts** use `chart-1` … `chart-5` with direct labels instead of legends where possible, `chart-grid` for gridlines, and `chart-budget` (dashed) for limits. Bars start at zero. Small samples (n < 5) are greyed and say "Too few to compare". Every chart's title is the question it answers.
+
+**Type.** Geist for the interface, Geist Mono for ids, paths, commands, code and every number in a table (tabular figures). Base is `body` 14/20; `small` 13/18 for metadata, `caption` 12/16 for badges and column headers, `subheading` 16/24 for panel titles, `heading` 20/28 for sections, `title` 24/32 for detail headers, `display` 32/40 only for empty-state and first-run headlines. Figures: `figure` 13/20 and `figure-lg` 24/32 for KPI values. Left-align text, right-align numbers.
+
+**Space and layout.** A 4px grid (`space-1` 4 … `space-16` 64). Page padding `space-8` horizontal (`space-6` on laptops). Two densities: comfortable (`row-comfortable` 40px rows) and compact (`row-compact` 32px), set with `data-density="compact"` on any container. Shell: `sidebar` 240px (collapses to `sidebar-collapsed` 56px, default below 1360px), `topbar` 48px. Minimum target `control-sm` 24px.
+
+**Shape and depth.** Radii are small: `radius-sm` 4 (chips), `radius-md` 6 (controls), `radius-lg` 8 (cards, tiles), `radius-xl` 12 (dialogs, palette), `radius-full` only for status badges and dots. Structure comes from 1px borders; elevation (`shadow-popover`, `shadow-overlay`) is only for things that float. No colored left-border cards.
+
+**Motion.** 120–200 ms ease-out (`dur-fast`, `dur-base`, `dur-slow`, `ease-out`). Streaming insertions fade and slide 4px in 150 ms. Everything is off under `prefers-reduced-motion`.
+
+**Focus and accessibility.** WCAG 2.2 AA. Every interactive element shows a 2px solid `focus-ring` with a 2px offset (3:1 or more on every surface). Full keyboard: `g p` portfolio, `g l` live, `g s` sessions, `j/k` in lists and timelines, `/` filter, `f` follow live tail, `?` shortcut sheet, `Esc` closes. Streaming regions are polite ARIA live regions with rate-limited announcements. Nothing is conveyed by color or motion alone.
+
+## Iconography
+
+One outline set: **Lucide** (ISC licence, 24px grid, 2px stroke, round caps), drawn at `icon` 16px in rows and 14px in chips; use `lucide-react` in the app with the same names as `Icon`. Tools: Read `file-text`, Edit `file-pen`, Write `file-plus`, Bash `terminal`, Grep `text-search`, Glob `folder-search`, Agent/subagent `network`, WebFetch `globe`, MCP `plug`. Entities: project `folder-kanban`, repo `book`, session `square-terminal`, run `route`, workflow `workflow`, scenario `clipboard-list`, action `circle-play`, expect `timer`, gate `check-check`, learning `sprout`, decision `split`, brain `library`, issue `circle-dot`, PR `git-pull-request`. Guard: `shield-x` (denied), `shield-alert` (asks). No emoji, no robot or sparkle icons. agent-hub has no logo yet: the product is set as the word "agent-hub" in `subheading` weight beside a mono `ah` monogram tile in `text` on `bg`.
+
+## Using this system
+
+- Load `tokens.css` (generated from `tokens.json`), then `components/bundle.css`, React 18 and `components/bundle.js`; components are on `window.AgentHub` (`AgentHub.SessionTile`, `AgentHub.TimelineEvent`…). Hi-fi screens are on `AgentHub.screens`. Props are documented in `components/index.d.ts` and each component's README.
+- Themes: set `data-theme="light"` or `"dark"` on `<html>`; never hard-code a color, use the tokens.
+- The specification sections that follow are the contract for the API and the front end: navigation and routes, the data and API map, one section per screen, the prototype flows, responsive behaviour, and the decisions and open questions.

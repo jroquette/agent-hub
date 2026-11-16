@@ -1,0 +1,191 @@
+"""The API's own request and response bodies, its shared parameters and problem responses.
+
+Read models come from core; only what exists for HTTP alone is declared here.
+"""
+
+from typing import Annotated, Any, Literal
+
+from fastapi import Header, Query
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StringConstraints
+
+from agent_hub.core.brain.brain_path import MAX_NOTE_BYTES
+from agent_hub.core.learnings.brain_change_requests import MAX_BATCH_CHANGES
+from agent_hub.core.readmodels.filters import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT
+from agent_hub.core.readmodels.page import MAX_CURSOR_CHARS
+from agent_hub.core.skills.skill_view import ITEM_NAME, ItemKind
+
+MAX_QUERY_TEXT = 200
+MAX_TYPES = 20
+
+
+class ProblemDetails(BaseModel):
+    """An RFC 9457 problem; extension members (``errors``) are allowed."""
+
+    model_config = ConfigDict(extra="allow")
+
+    type: str = "about:blank"
+    title: str
+    status: int
+    detail: str | None = None
+    instance: str | None = None
+
+
+class HookAccepted(BaseModel):
+    """``POST /events/hooks``: how many events the envelope added and how many were known."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    appended: int = Field(ge=0)
+    duplicates: int = Field(ge=0)
+
+
+class HubCreate(BaseModel):
+    """``POST /hubs``: the absolute path of a hub to register."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    path: str = Field(min_length=1, max_length=4096)
+
+
+MAX_TARGET_CHARS = 200
+MAX_REASON_CHARS = 300
+
+
+class AcceptLearningBody(BaseModel):
+    """``POST /learnings/{learning_id}/accept``: the brain folder (or ``.md`` path) to move the
+    note to, relative to ``brain/``, and optionally the note's edited text after its frontmatter
+    (the frontmatter itself is kept; ``status`` and ``last_verified`` are set as for any accept)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    target: str = Field(min_length=1, max_length=MAX_TARGET_CHARS)
+    note_body: str | None = Field(default=None, min_length=1, max_length=MAX_NOTE_BYTES)
+
+
+class RejectLearningBody(BaseModel):
+    """``POST /learnings/{learning_id}/reject``: why, 1 to 300 characters once stripped."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    reason: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_REASON_CHARS)
+    ]
+
+
+class LearningDecisionItem(BaseModel):
+    """One decision of ``POST /learnings/decisions``: an accept with its ``target`` (and the
+    optional edited ``note_body``) or a reject with its ``reason``."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    learning_id: str = Field(min_length=1, max_length=512)
+    action: Literal["accept", "reject"]
+    target: str = Field(default="", max_length=MAX_TARGET_CHARS)
+    reason: Annotated[
+        str, StringConstraints(strip_whitespace=True, max_length=MAX_REASON_CHARS)
+    ] = ""
+    note_body: str | None = Field(default=None, min_length=1, max_length=MAX_NOTE_BYTES)
+
+
+class LearningDecisionsBody(BaseModel):
+    """``POST /learnings/decisions``: 1 to 50 decisions of one project, sent as one hub PR."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    decisions: list[LearningDecisionItem] = Field(min_length=1, max_length=MAX_BATCH_CHANGES)
+
+
+class RestoreVersionBody(BaseModel):
+    """``POST .../versions/{version_id}/restore``: ``confirm_managed`` true writes over a unit
+    ``hub.lock`` manages (S9), after the web's warning; only JSON ``true`` confirms."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    confirm_managed: StrictBool = False
+
+
+class PublishTarget(BaseModel):
+    """The item a Publish edits, by its catalog id (``kind/source/name``)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: ItemKind
+    source: Annotated[str, Field(pattern=ITEM_NAME)]
+    name: Annotated[str, Field(pattern=ITEM_NAME)]
+
+
+class PublishDraftBody(BaseModel):
+    """``POST .../skills/drafts/{draft_id}/publish``: ``target`` the item the draft edits, or
+    ``null`` for a new item (stated, never left out); ``confirm_managed`` as for a restore (S9),
+    only JSON ``true`` confirms."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    target: PublishTarget | None
+    confirm_managed: StrictBool = False
+
+
+# Every operation may answer a problem; listing the ranges keeps FastAPI's validation schema out.
+PROBLEM_RESPONSES: dict[int | str, dict[str, Any]] = {
+    "4XX": {"model": ProblemDetails, "description": "A client error, as an RFC 9457 problem"},
+    "5XX": {"model": ProblemDetails, "description": "A server error, as an RFC 9457 problem"},
+}
+
+# The problems a learning decision documents beyond the ranges (ADR 0024).
+LEARNING_ACTION_RESPONSES: dict[int | str, dict[str, Any]] = {
+    409: {
+        "model": ProblemDetails,
+        "description": "Already decided, target refused, note not on the default branch, or "
+        "actions unavailable for this hub",
+    },
+    415: {"model": ProblemDetails, "description": "The body is not application/json"},
+    502: {"model": ProblemDetails, "description": "Could not open the pull request"},
+    504: {"model": ProblemDetails, "description": "The action passed its 60 s deadline"},
+}
+
+# The problems an item write (a restore, and the publish below) documents beyond the ranges (S7,
+# D13).
+ITEM_WRITE_RESPONSES: dict[int | str, dict[str, Any]] = {
+    401: {"model": ProblemDetails, "description": "No launch cookie (open hub web's address)"},
+    409: {
+        "model": ProblemDetails,
+        "description": "Write refused, with a code: hub_read_only, no_author, link_in_path, "
+        "unit_unreadable, secret_unversioned or managed_confirmation_required",
+    },
+    415: {"model": ProblemDetails, "description": "The body is not application/json"},
+}
+
+# A Publish's problems besides a restore's (AGH-295, S7, S8, A20).
+PUBLISH_RESPONSES: dict[int | str, dict[str, Any]] = {
+    **ITEM_WRITE_RESPONSES,
+    409: {
+        "model": ProblemDetails,
+        "description": "Publish refused, with a code: hub_read_only, no_author, link_in_path, "
+        "unit_unreadable, item_exists, draft_already_published or "
+        "managed_confirmation_required",
+    },
+    404: {
+        "model": ProblemDetails,
+        "description": "Unknown project or target item, or the draft folder missing or empty",
+    },
+    413: {"model": ProblemDetails, "description": "The draft is past the bounds (limit)"},
+    # Documented as a problem (``draft_invalid``, or the body outside its shape): listing it
+    # with the problem model keeps FastAPI's validation schema out, as the ranges do.
+    422: {
+        "model": ProblemDetails,
+        "description": "The draft is not a valid item (draft_invalid), or the body is outside "
+        "its shape",
+    },
+    500: {
+        "model": ProblemDetails,
+        "description": "Write failed (write_failed: failed, rollback_failed, old_not_removed, "
+        "draft_unreadable) or published with the draft kept (draft_not_removed)",
+    },
+}
+
+ProjectParam = Annotated[str | None, Query(min_length=1, max_length=MAX_QUERY_TEXT)]
+CursorParam = Annotated[str | None, Query(max_length=MAX_CURSOR_CHARS)]
+LimitParam = Annotated[int, Query(ge=1, le=MAX_PAGE_LIMIT)]
+LastEventIdHeader = Annotated[str | None, Header(alias="Last-Event-ID", max_length=64)]
+
+DEFAULT_LIMIT = DEFAULT_PAGE_LIMIT

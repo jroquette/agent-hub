@@ -1,0 +1,21 @@
+# The check script itself fails (it cannot run): the round, and so the run, fails at once;
+# no review, no PR, no outcome.
+workflow: deliver
+inputs: {issue: DEM-1, repo: demo-api, issue_text: "```text\nid: DEM-1\n```"}
+stubs:
+  worktree:
+    output:
+      path: /ws/demo-api/.claude/worktrees/dem-1
+      branch: jdoe/dem-1
+      base: origin/trunk
+      hub: /ws/hub
+      hub_name: hub
+      check: make check
+      prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}
+      target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
+  rounds__implement: {text: Adds the change.}
+  rounds__verdict: {output: {status: done, summary: Changes the code., question: ""}}
+  rounds__check: {fail: exec_failed}
+expect: {status: failed}
+failed: [rounds__check, rounds]
+reached: [worktree, rounds, rounds__implement, rounds__verdict, rounds__check]

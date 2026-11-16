@@ -1,0 +1,449 @@
+import pytest
+from fastapi import FastAPI
+
+from agent_hub.api.app import create_app
+from agent_hub.api.openapi_paths import (
+    AC_CHECK_PATHS,
+    AGENT_SESSION_PATHS,
+    CLARITY_PATHS,
+    DISCOVERY_PATHS,
+    DOCTOR_FIX_PATHS,
+    FEATURE_NAME_PATHS,
+    GATE_PATHS,
+    ITEM_VERSION_PATHS,
+    KNOWLEDGE_PATHS,
+    LINEAR_PATHS,
+    OWNER_SIGNOFF_PATHS,
+    P2_PATHS,
+    PLATFORM_SYNC_PATHS,
+    RUN_COMMAND_PATHS,
+    SCENARIO_PATHS,
+    SCREEN_PATHS,
+    SERVED_PATHS,
+    SKILL_PATHS,
+    TICKET_FLOW_PATHS,
+    TICKET_PATHS,
+    UX_MOCKUP_PATHS,
+    WORKFLOW_PATHS,
+)
+from agent_hub.api.settings import ApiSettings
+
+
+def document_paths(app: FastAPI) -> frozenset[tuple[str, str]]:
+    """Every ``(method, path)`` of the app's OpenAPI document."""
+    paths: dict[str, dict[str, object]] = app.openapi()["paths"]
+    return frozenset((method, path) for path, item in paths.items() for method in item)
+
+
+# The spec's "API surface in P2", with the path parameters named.
+SPEC_PATHS = {
+    ("post", "/api/v1/events/hooks"),
+    ("get", "/api/v1/hubs"),
+    ("post", "/api/v1/hubs"),
+    ("delete", "/api/v1/hubs/{hub_id}"),
+    ("get", "/api/v1/projects"),
+    ("get", "/api/v1/projects/{project}"),
+    ("get", "/api/v1/projects/{project}/now"),
+    ("get", "/api/v1/projects/{project}/repos"),
+    ("get", "/api/v1/projects/{project}/config"),
+    ("put", "/api/v1/projects/{project}/config/local"),
+    ("post", "/api/v1/projects/{project}/config/environments"),
+    ("post", "/api/v1/projects/{project}/config/repos"),
+    ("get", "/api/v1/projects/{project}/env-file-keys"),
+    ("get", "/api/v1/needs-you"),
+    ("get", "/api/v1/activity"),
+    ("get", "/api/v1/search"),
+    ("get", "/api/v1/sessions"),
+    ("get", "/api/v1/sessions/{session_id}"),
+    ("get", "/api/v1/sessions/{session_id}/summary"),
+    ("get", "/api/v1/sessions/{session_id}/events"),
+    ("get", "/api/v1/sessions/{session_id}/events/stream"),
+    ("get", "/api/v1/sessions/{session_id}/files"),
+    ("get", "/api/v1/sessions/{session_id}/cost"),
+    ("get", "/api/v1/live-sessions"),
+    ("get", "/api/v1/live-sessions/stream"),
+    ("get", "/api/v1/workflow-runs"),
+    ("get", "/api/v1/workflow-runs/{run_id}"),
+    ("get", "/api/v1/workflow-runs/{run_id}/stream"),
+    ("get", "/api/v1/approvals"),
+    ("get", "/api/v1/approvals/{approval_id}"),
+    ("get", "/api/v1/learnings"),
+    ("get", "/api/v1/learnings/{learning_id}"),
+    ("get", "/api/v1/features"),
+    ("get", "/api/v1/features/{project}/{slug}"),
+    ("get", "/api/v1/doctor/findings"),
+    ("get", "/api/v1/collector/status"),
+    ("get", "/api/v1/settings"),
+    ("get", "/api/v1/events/stream"),
+}
+
+
+# The five paths control-plane clarity adds (AC-201.39), with the path parameters named.
+CLARITY_SPEC_PATHS = {
+    ("get", "/api/v1/sessions/{session_id}/problems"),
+    ("post", "/api/v1/learnings/{learning_id}/accept"),
+    ("post", "/api/v1/learnings/{learning_id}/reject"),
+    ("post", "/api/v1/learnings/decisions"),
+    ("get", "/api/v1/projects/{project}/brain"),
+    ("get", "/api/v1/projects/{project}/brain/note"),
+}
+
+
+# The one path ticket planning adds (AC-136.33).
+TICKET_SPEC_PATHS = {("get", "/api/v1/features/{project}/{slug}/tickets")}
+
+# The three paths the Skills tab adds (AC-164.11, amendment A1), and the usage report
+# (AGH-482), all GET.
+SKILL_SPEC_PATHS = {
+    ("get", "/api/v1/projects/{project}/skills"),
+    ("get", "/api/v1/projects/{project}/skills/{kind}/{source}/{name}"),
+    ("get", "/api/v1/projects/{project}/skills/{kind}/{source}/{name}/files/{file_id}"),
+    ("get", "/api/v1/skill-usage"),
+}
+
+
+def test_lists_exactly_phase_two_paths_when_document_built(api_settings: ApiSettings) -> None:
+    assert P2_PATHS == SPEC_PATHS
+    assert document_paths(create_app(api_settings)) >= P2_PATHS
+
+
+def test_lists_exactly_clarity_paths_when_document_built(api_settings: ApiSettings) -> None:
+    assert CLARITY_PATHS == CLARITY_SPEC_PATHS
+    assert document_paths(create_app(api_settings)) >= P2_PATHS | CLARITY_PATHS
+
+
+def test_lists_ticket_path_when_document_built(api_settings: ApiSettings) -> None:
+    # AC-136.33: the current paths plus the feature tickets read.
+    assert TICKET_PATHS == TICKET_SPEC_PATHS
+    assert document_paths(create_app(api_settings)) >= P2_PATHS | CLARITY_PATHS | TICKET_PATHS
+
+
+# The 17 route-method pairs agent sessions add (S3 + E11, AGH-165 P5).
+AGENT_SESSION_SPEC_PATHS = {
+    ("get", "/api/v1/agent-sessions/workdirs"),
+    ("get", "/api/v1/agent-sessions/capabilities"),
+    ("get", "/api/v1/agent-sessions/resumable"),
+    ("get", "/api/v1/agent-sessions/cloud"),
+    ("post", "/api/v1/agent-sessions/cloud"),
+    ("post", "/api/v1/agent-sessions/cloud/{cloud_id}/messages"),
+    ("get", "/api/v1/agent-sessions"),
+    ("post", "/api/v1/agent-sessions"),
+    ("get", "/api/v1/agent-sessions/{agent_session_id}"),
+    ("delete", "/api/v1/agent-sessions/{agent_session_id}"),
+    ("get", "/api/v1/agent-sessions/{agent_session_id}/events"),
+    ("get", "/api/v1/agent-sessions/{agent_session_id}/repo-changes"),
+    ("get", "/api/v1/agent-sessions/{agent_session_id}/repo-changes/commit"),
+    ("get", "/api/v1/agent-sessions/{agent_session_id}/repo-changes/file"),
+    ("get", "/api/v1/agent-sessions/{agent_session_id}/stream"),
+    ("post", "/api/v1/agent-sessions/{agent_session_id}/messages"),
+    ("post", "/api/v1/agent-sessions/{agent_session_id}/interrupt"),
+    ("post", "/api/v1/agent-sessions/{agent_session_id}/tasks/{task_id}/stop"),
+    ("post", "/api/v1/agent-sessions/{agent_session_id}/permissions/{request_id}"),
+    ("post", "/api/v1/agent-sessions/{agent_session_id}/settings"),
+    ("post", "/api/v1/agent-sessions/{agent_session_id}/close"),
+}
+
+
+# The scenario paths left AC_CHECK_PATHS for their own group (AGH-350 plan T12 12.4): the
+# union pinned here no longer holds them, so it stays as a strict xfail (E-12's rule) and
+# test_lists_scenario_paths_when_document_built pins the widened union.
+@pytest.mark.xfail(strict=True, reason="SCENARIO_PATHS is its own group since AGH-363")
+def test_lists_agent_session_paths_when_document_built(api_settings: ApiSettings) -> None:
+    # AC-165.48: today's paths plus exactly the agent-session pairs
+    # (17, then the task stop and the three repo-changes reads; the third is AC-424.10).
+    assert len(AGENT_SESSION_SPEC_PATHS) == 21
+    assert AGENT_SESSION_PATHS == AGENT_SESSION_SPEC_PATHS
+    assert SERVED_PATHS == (
+        P2_PATHS
+        | CLARITY_PATHS
+        | TICKET_PATHS
+        | SKILL_PATHS
+        | AGENT_SESSION_PATHS
+        | WORKFLOW_PATHS
+        | RUN_COMMAND_PATHS
+        | GATE_PATHS
+        | ITEM_VERSION_PATHS
+        | LINEAR_PATHS
+        | OWNER_SIGNOFF_PATHS
+        | TICKET_FLOW_PATHS
+        | FEATURE_NAME_PATHS
+        | PLATFORM_SYNC_PATHS
+        | DOCTOR_FIX_PATHS
+        | AC_CHECK_PATHS
+        | KNOWLEDGE_PATHS
+        | DISCOVERY_PATHS
+    )
+    assert document_paths(create_app(api_settings)) == SERVED_PATHS
+
+
+# The scenario paths left AC_CHECK_PATHS for their own group (AGH-350 plan T12 12.4): the
+# union pinned here no longer holds them, so it stays as a strict xfail (E-12's rule) and
+# test_lists_scenario_paths_when_document_built pins the widened union.
+@pytest.mark.xfail(strict=True, reason="SCENARIO_PATHS is its own group since AGH-363")
+def test_lists_skill_paths_when_document_built(api_settings: ApiSettings) -> None:
+    # AC-164.11: today's paths plus the three skills reads, all GET, and nothing else.
+    assert SKILL_PATHS == SKILL_SPEC_PATHS
+    assert SERVED_PATHS == (
+        P2_PATHS
+        | CLARITY_PATHS
+        | TICKET_PATHS
+        | SKILL_PATHS
+        | AGENT_SESSION_PATHS
+        | WORKFLOW_PATHS
+        | RUN_COMMAND_PATHS
+        | GATE_PATHS
+        | ITEM_VERSION_PATHS
+        | LINEAR_PATHS
+        | OWNER_SIGNOFF_PATHS
+        | TICKET_FLOW_PATHS
+        | FEATURE_NAME_PATHS
+        | PLATFORM_SYNC_PATHS
+        | DOCTOR_FIX_PATHS
+        | AC_CHECK_PATHS
+        | KNOWLEDGE_PATHS
+        | DISCOVERY_PATHS
+    )
+    assert document_paths(create_app(api_settings)) == SERVED_PATHS
+
+
+def test_lists_workflow_paths_when_document_built(api_settings: ApiSettings) -> None:
+    # AC-213.15: today's paths plus the two workflow reads, both GET, and nothing else.
+    assert {
+        ("get", "/api/v1/workflows"),
+        ("get", "/api/v1/workflows/{project}/{name}"),
+    } == WORKFLOW_PATHS
+    assert document_paths(create_app(api_settings)) == SERVED_PATHS
+
+
+def test_lists_run_command_paths_when_document_built(api_settings: ApiSettings) -> None:
+    # AC-213.19: today's paths plus the four run commands, all POST, and nothing else.
+    assert {
+        ("post", "/api/v1/workflow-runs"),
+        ("post", "/api/v1/workflow-runs/{run_id}/cancel"),
+        ("post", "/api/v1/workflow-runs/{run_id}/resume"),
+        ("post", "/api/v1/workflow-runs/{run_id}/abandon"),
+    } == RUN_COMMAND_PATHS
+    assert document_paths(create_app(api_settings)) == SERVED_PATHS
+
+
+def test_lists_ticket_flow_paths_when_document_built(api_settings: ApiSettings) -> None:
+    # two-level-flows A7, AC-2.14 (AGH-405): one ticket's records and a change request's decision.
+    assert {
+        ("get", "/api/v1/features/{project}/{slug}/tickets/{ticket}"),
+        ("post", "/api/v1/features/{project}/{slug}/change-requests/{n}/decision"),
+    } == TICKET_FLOW_PATHS
+    assert document_paths(create_app(api_settings)) == SERVED_PATHS
+
+
+def test_lists_gate_paths_when_document_built(api_settings: ApiSettings) -> None:
+    # AC-213.18: today's paths plus a workflow gate's read and its decision, and nothing else.
+    assert {
+        ("get", "/api/v1/approvals/{approval_id}/gate"),
+        ("post", "/api/v1/approvals/{approval_id}/decision"),
+    } == GATE_PATHS
+    assert document_paths(create_app(api_settings)) == SERVED_PATHS
+
+
+PUBLISH = "/api/v1/projects/{project}/skills/drafts/{draft_id}/publish"
+
+
+def test_lists_item_version_paths_when_document_built(api_settings: ApiSettings) -> None:
+    # AC-295.36 (slices 2a, 2e, 3d): today's paths plus the four history reads, the two restores
+    # and the Studio's publish, and nothing else.
+    skill = "/api/v1/projects/{project}/skills/{kind}/{source}/{name}/versions"
+    workflow = "/api/v1/workflows/{project}/{name}/versions"
+    assert {
+        ("get", skill),
+        ("get", f"{skill}/{{version_id}}"),
+        ("post", f"{skill}/{{version_id}}/restore"),
+        ("get", workflow),
+        ("get", f"{workflow}/{{version_id}}"),
+        ("post", f"{workflow}/{{version_id}}/restore"),
+        ("post", "/api/v1/projects/{project}/skills/drafts/{draft_id}/publish"),
+    } == ITEM_VERSION_PATHS
+    assert document_paths(create_app(api_settings)) == SERVED_PATHS
+
+
+def test_marks_agent_deprecated_when_document_built(api_settings: ApiSettings) -> None:
+    schemas = create_app(api_settings).openapi()["components"]["schemas"]
+
+    assert schemas["Session"]["properties"]["agent"]["deprecated"] is True
+    assert schemas["LiveTile"]["properties"]["agent"]["deprecated"] is True
+    assert schemas["Learning"]["properties"]["target"]["deprecated"] is True
+    assert "deprecated" not in schemas["Session"]["properties"]["label"]
+
+
+def test_documents_action_problems_when_document_built(api_settings: ApiSettings) -> None:
+    paths = create_app(api_settings).openapi()["paths"]
+
+    for action in ("accept", "reject"):
+        operation = paths[f"/api/v1/learnings/{{learning_id}}/{action}"]["post"]
+        assert {"201", "409", "415", "502", "504"} <= set(operation["responses"]), action
+
+
+def test_documents_item_write_problems_when_document_built(api_settings: ApiSettings) -> None:
+    paths = create_app(api_settings).openapi()["paths"]
+
+    writes = [path for method, path in ITEM_VERSION_PATHS if method == "post"]
+    assert len(writes) == 3
+    for path in writes:
+        operation = paths[path]["post"]
+        assert {"200", "401", "409", "415"} <= set(operation["responses"]), path
+    publish = paths[PUBLISH]["post"]["responses"]
+    assert {"404", "413", "422", "500"} <= set(publish)
+    for status in ("404", "413", "422", "500"):
+        schema = publish[status]["content"]["application/json"]["schema"]
+        assert schema == {"$ref": "#/components/schemas/ProblemDetails"}, status
+
+
+def test_documents_problem_responses_when_document_built(api_settings: ApiSettings) -> None:
+    document = create_app(api_settings).openapi()
+
+    for path, path_item in document["paths"].items():
+        for operation in path_item.values():
+            assert {"4XX", "5XX"} <= set(operation["responses"]), operation["operationId"]
+            # Only the publish documents its 422s (a draft_invalid problem), as a problem too.
+            assert ("422" in operation["responses"]) == (path == PUBLISH), operation["operationId"]
+    assert "HTTPValidationError" not in document["components"]["schemas"]
+
+
+def test_keeps_paths_when_screenshot_added(api_settings: ApiSettings) -> None:
+    # AC-260.15: the screenshot is a field of the create body; no path is added or removed.
+    # SERVED_PATHS is pinned path by path in test_lists_agent_session_paths_when_document_built.
+    assert document_paths(create_app(api_settings)) == SERVED_PATHS
+
+
+def test_documents_screenshot_when_create_schema_read(api_settings: ApiSettings) -> None:
+    schemas = create_app(api_settings).openapi()["components"]["schemas"]
+
+    screenshot = schemas["CreateAgentSession"]["properties"]["screenshot"]
+    refs = [option.get("$ref") for option in screenshot["anyOf"]]
+    assert "#/components/schemas/Screenshot" in refs
+    # Pydantic writes a one-value Literal as ``const`` (the plan said ``enum: ["image/png"]``).
+    assert schemas["Screenshot"]["properties"]["media_type"]["const"] == "image/png"
+
+
+def test_lists_knowledge_paths_when_document_built(api_settings: ApiSettings) -> None:
+    # AGH-393: the knowledge search and a note's backlinks, both GET, and nothing else.
+    knowledge = set(KNOWLEDGE_PATHS)
+    assert knowledge == {
+        ("get", "/api/v1/projects/{project}/knowledge/search"),
+        ("get", "/api/v1/projects/{project}/brain/backlinks"),
+    }
+    assert document_paths(create_app(api_settings)) >= knowledge
+
+
+def test_lists_discovery_paths_when_document_built(api_settings: ApiSettings) -> None:
+    # ADR 0046: start, list, read and discard a project's environment discoveries.
+    discoveries = "/api/v1/projects/{project}/environment-discoveries"
+    assert {
+        ("post", discoveries),
+        ("get", discoveries),
+        ("get", f"{discoveries}/{{discovery_id}}"),
+        ("delete", f"{discoveries}/{{discovery_id}}"),
+    } == DISCOVERY_PATHS
+    assert document_paths(create_app(api_settings)) == SERVED_PATHS
+
+
+# The nine route-method pairs the scenarios add (AGH-350 plan T12, AC-350.30), and the scenario
+# builder's three (validate, the action library, save).
+SCENARIO_SPEC_PATHS = {
+    ("post", "/api/v1/projects/{project}/scenarios/validate"),
+    ("get", "/api/v1/projects/{project}/actions"),
+    ("put", "/api/v1/scenarios/{project}/{name}"),
+    ("delete", "/api/v1/scenarios/{project}/{name}"),
+    ("get", "/api/v1/scenarios/{project}/{name}/proposal"),
+    ("post", "/api/v1/scenarios/{project}/{name}/proposal/dismiss"),
+    ("post", "/api/v1/projects/{project}/actions"),
+    ("put", "/api/v1/projects/{project}/actions/{pack}/{name}"),
+    ("get", "/api/v1/scenarios"),
+    ("get", "/api/v1/scenarios/{project}/{name}"),
+    ("post", "/api/v1/scenarios/{project}/{name}/plan"),
+    ("post", "/api/v1/scenarios/{project}/{name}/runs"),
+    ("get", "/api/v1/scenario-runs/{run_id}"),
+    ("post", "/api/v1/scenario-runs/{run_id}/investigation"),
+    ("post", "/api/v1/scenario-runs/{run_id}/answer"),
+    ("post", "/api/v1/scenario-runs/{run_id}/findings/{finding_id}/issue"),
+    ("post", "/api/v1/scenario-runs/{run_id}/findings/{finding_id}/inbox"),
+    # Debugging a run (its breakpoints, Step, Continue, its values) and migrate (ADR 0049).
+    ("put", "/api/v1/scenario-runs/{run_id}/breakpoints"),
+    ("post", "/api/v1/scenario-runs/{run_id}/step"),
+    ("post", "/api/v1/scenario-runs/{run_id}/continue"),
+    ("get", "/api/v1/scenario-runs/{run_id}/values"),
+    ("post", "/api/v1/scenarios/{project}/{name}/migrate"),
+}
+
+
+def test_lists_scenario_paths_when_document_built(api_settings: ApiSettings) -> None:
+    # Today's groups, the scenarios' own one last, and nothing else.
+    assert SCENARIO_PATHS == SCENARIO_SPEC_PATHS
+    assert {("post", "/api/v1/features/{project}/{slug}/acs/{ac}/check-runs")} == AC_CHECK_PATHS
+    assert SERVED_PATHS == (
+        P2_PATHS
+        | CLARITY_PATHS
+        | TICKET_PATHS
+        | SKILL_PATHS
+        | AGENT_SESSION_PATHS
+        | WORKFLOW_PATHS
+        | RUN_COMMAND_PATHS
+        | GATE_PATHS
+        | ITEM_VERSION_PATHS
+        | LINEAR_PATHS
+        | OWNER_SIGNOFF_PATHS
+        | TICKET_FLOW_PATHS
+        | FEATURE_NAME_PATHS
+        | PLATFORM_SYNC_PATHS
+        | DOCTOR_FIX_PATHS
+        | AC_CHECK_PATHS
+        | KNOWLEDGE_PATHS
+        | DISCOVERY_PATHS
+        | SCENARIO_PATHS
+        | SCREEN_PATHS
+        | UX_MOCKUP_PATHS
+    )
+    assert document_paths(create_app(api_settings)) == SERVED_PATHS
+
+
+# The screen reads (ADR 0056), one GET per screen under /api/v1/screens/; each screen read adds
+# its path here.
+SCREEN_SPEC_PATHS = {
+    ("get", "/api/v1/screens/shell"),
+    ("get", "/api/v1/screens/portfolio"),
+    ("get", "/api/v1/screens/project-overview/{project}"),
+    ("get", "/api/v1/screens/sessions"),
+    ("get", "/api/v1/screens/session-detail/{session_id}"),
+}
+
+
+def test_lists_screen_paths_when_document_built(api_settings: ApiSettings) -> None:
+    assert SCREEN_PATHS == SCREEN_SPEC_PATHS
+    assert SCREEN_PATHS <= SERVED_PATHS
+    assert document_paths(create_app(api_settings)) == SERVED_PATHS
+
+
+def test_lists_ux_mockup_path_when_document_built(api_settings: ApiSettings) -> None:
+    assert {
+        ("get", "/api/v1/features/{project}/{slug}/mockups/{name}"),
+        ("get", "/api/v1/features/{project}/{slug}/mockups/{name}/page"),
+    } == UX_MOCKUP_PATHS
+    assert UX_MOCKUP_PATHS <= SERVED_PATHS
+    assert document_paths(create_app(api_settings)) == SERVED_PATHS
+
+
+def test_keeps_group_pins_when_scenario_paths_grouped(api_settings: ApiSettings) -> None:
+    # What the two strict-xfailed union pins also held, which AGH-363 did not widen (the
+    # repo-changes file read, AC-424.10, is the agent-session group's 21st pair).
+    assert len(AGENT_SESSION_SPEC_PATHS) == 21
+    assert AGENT_SESSION_PATHS == AGENT_SESSION_SPEC_PATHS
+    assert SKILL_PATHS == SKILL_SPEC_PATHS
+    assert document_paths(create_app(api_settings)) >= AGENT_SESSION_PATHS | SKILL_PATHS
+
+
+def test_documents_refusal_codes_when_scenario_delete_built(api_settings: ApiSettings) -> None:
+    # AC-596.1.6: the DELETE documents its 204, 404 and 409 and the 409's codes.
+    paths = create_app(api_settings).openapi()["paths"]
+    responses = paths["/api/v1/scenarios/{project}/{name}"]["delete"]["responses"]
+
+    assert {"204", "401", "404", "409"} <= set(responses)
+    refused = responses["409"]["description"]
+    assert all(code in refused for code in ("scenario_run_in_progress", "link_in_path"))

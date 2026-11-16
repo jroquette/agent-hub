@@ -1,0 +1,184 @@
+/* A pan and zoom canvas (the workflow graph, the ticket flow): a viewport on a dot grid holding a
+ * transformed world, floating zoom controls and minimap, and an optional docked side panel. */
+
+.ah-canvas {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.ah-canvas[data-panel] {
+  grid-template-columns: minmax(0, 1fr) 320px;
+}
+@media (min-width: 1600px) {
+  .ah-canvas[data-panel] {
+    grid-template-columns: minmax(0, 1fr) 360px;
+  }
+}
+.ah-canvas-viewport {
+  position: relative;
+  overflow: hidden;
+  min-height: 0;
+  background: var(--surface-sunken);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.ah-canvas-viewport[data-dragging] {
+  cursor: grabbing;
+}
+.ah-canvas-grid {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.ah-canvas-grid circle {
+  fill: var(--border-strong);
+}
+.ah-canvas-world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  padding: 32px;
+  width: max-content;
+}
+.ah-canvas-world[data-animate] {
+  transition: transform var(--dur-base) ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ah-canvas-world[data-animate] {
+    transition: none;
+  }
+}
+/* Controls, minimap, overlay and the empty state, floating in the viewport. */
+.ah-canvas-controls {
+  position: absolute;
+  left: var(--space-3);
+  bottom: var(--space-3);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-popover);
+  cursor: default;
+}
+.ah-canvas-zoom {
+  min-width: 52px;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+.ah-canvas-sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 2px;
+  background: var(--border);
+}
+.ah-canvas-minimap {
+  position: absolute;
+  right: var(--space-3);
+  bottom: var(--space-3);
+  z-index: 3;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-popover);
+  cursor: pointer;
+}
+.ah-canvas-mini-group {
+  fill: none;
+  stroke: var(--border-strong);
+}
+.ah-canvas-mini-view {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+.ah-canvas-overlay {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  z-index: 3;
+  cursor: default;
+}
+.ah-canvas-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-6);
+  text-align: center;
+}
+
+/* The details panel: About, or the chosen step. */
+.ah-canvas-panel {
+  min-height: 0;
+  overflow: auto;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  cursor: auto;
+}
+.ah-canvas-mini-node {
+  --mini: var(--ev-lifecycle);
+  fill: var(--mini);
+  opacity: 0.8;
+}
+.ah-canvas-mini-node[data-state="ok"],
+.ah-canvas-mini-node[data-state="cached"] {
+  --mini: var(--done);
+}
+.ah-canvas-mini-node[data-state="running"] {
+  --mini: var(--live);
+}
+.ah-canvas-mini-node[data-state="waiting"] {
+  --mini: var(--waiting);
+}
+.ah-canvas-mini-node[data-state="failed"] {
+  --mini: var(--failed);
+}
+.ah-canvas-mini-node[data-state="pending"],
+.ah-canvas-mini-node[data-state="skipped"] {
+  --mini: var(--idle);
+}
+.ah-canvas-controls [aria-pressed="true"] {
+  background: var(--surface-hover);
+  color: var(--accent);
+}
+
+/* Under the laptop width the side panel overlays the canvas instead of docking. */
+@media (max-width: 1279px) {
+  .ah-canvas[data-panel] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ah-canvas[data-panel] > .ah-canvas-panel {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 4;
+    width: min(360px, 100%);
+    background: var(--surface-overlay);
+    box-shadow: var(--shadow-overlay);
+  }
+  .ah-canvas-minimap {
+    display: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .ah-canvas-grid {
+    display: none;
+  }
+}

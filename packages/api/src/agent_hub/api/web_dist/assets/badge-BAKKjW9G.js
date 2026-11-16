@@ -1,0 +1,1 @@
+var e={done:[`done`,`Done`],stopped:[`stopped`,`Stopped`],blocked:[`blocked`,`Blocked`],error:[`error`,`Error`]};function t(t){return t.status===`live`?[`live`,`Live`]:t.status===`waiting`?[`waiting`,`Waiting`]:t.status===`idle`?[`idle`,`Idle`]:t.outcome?e[t.outcome]:[`ended`,t.end_inferred?`Ended · no end event`:`Ended`]}export{t};

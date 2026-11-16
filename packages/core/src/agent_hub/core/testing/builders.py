@@ -1,0 +1,437 @@
+"""Builders of synthetic domain objects for tests; fixtures never come from real transcripts."""
+
+import copy
+import struct
+import zlib
+from collections.abc import Iterable
+from datetime import UTC, datetime
+from typing import Any, Final
+from uuid import uuid4
+
+from agent_hub.core.events.event import Event
+from agent_hub.core.item_versions.item_version import ItemVersion, UnitKind, VersionOrigin
+from agent_hub.core.item_versions.unit_hash import file_hash
+from agent_hub.core.learnings.brain_change_requests import (
+    BrainChange,
+    BrainProposal,
+    CommitAuthor,
+)
+from agent_hub.core.runner.brief import BRIEF_SECTIONS
+from agent_hub.core.testing.fakes import FakeTrackerBackend, TrackerState
+from agent_hub.core.tracker.tracker_client import Issue
+
+# The Example of docs/design/project-config.md, a synthetic project.
+_HUB_DOCUMENT: dict[str, Any] = {
+    "$schema": "./hub.schema.json",
+    "schema_version": 1,
+    "platform": {"version": "0.2.0"},
+    "project": {
+        "name": "demo",
+        "hub_repo": "acme/demo-hub",
+        "branch_prefix": "jdoe/",
+        "author_name": "Jane Doe",
+        "author_email": "jane@example.com",
+    },
+    "tracker": {"kind": "linear", "team": "DEM"},
+    "repos": [
+        {
+            "dir": "demo-api",
+            "github": "acme/demo-api",
+            "check_fast": "make check-fast",
+            "check": "make check",
+        }
+    ],
+    "guard": {"ask_before_edit": ["demo-api/docs/adr"]},
+    "modules": {"cloud": {}, "bench": {}},
+}
+
+
+def an_event(**overrides: object) -> Event:
+    """Build a valid synthetic event; ``source_id`` is unique per call unless overridden."""
+    fields: dict[str, object] = {
+        "project": "demo",
+        "session": "session-1",
+        "type": "tool.call",
+        "timestamp": datetime(2026, 9, 27, 10, 0, 0, 123456, tzinfo=UTC),
+        "source": "claude_code",
+        "source_id": f"evt-{uuid4().hex}",
+        "payload": {
+            "tool": "search",
+            "tool_use_id": "toolu_search",
+            "arg_keys": ["limit", "terms"],
+        },
+    }
+    return Event.model_validate(fields | overrides)
+
+
+def events_to_jsonl(events: Iterable[Event]) -> str:
+    """Write events as JSON Lines: one event per line, each line ending in a newline."""
+    return "".join(f"{event.model_dump_json()}\n" for event in events)
+
+
+def a_hub_document() -> dict[str, Any]:
+    """Build a valid synthetic ``hub.json`` document as plain JSON data; a fresh copy per call."""
+    return copy.deepcopy(_HUB_DOCUMENT)
+
+
+def a_two_team_document() -> dict[str, Any]:
+    """Build ``a_hub_document`` with the tracker teams ``APP`` and ``OPS``; a fresh copy."""
+    document = a_hub_document()
+    document["tracker"] = {"kind": "linear", "teams": ["APP", "OPS"]}
+    return document
+
+
+def a_second_repo() -> dict[str, Any]:
+    """Build the ``repos`` entry ``demo-web``, a repo next to ``a_hub_document``'s ``demo-api``.
+
+    Plain JSON data, a fresh copy per call: ``contract-sync`` needs two repos to name.
+    """
+    return {
+        "dir": "demo-web",
+        "github": "acme/demo-web",
+        "check_fast": "make check-fast",
+        "check": "make check",
+    }
+
+
+def a_conventions_document() -> dict[str, Any]:
+    """Build the mixed hub: ``a_hub_document`` plus ``demo-web``, with conventions; a fresh copy.
+
+    The project sets all three patterns; ``demo-api`` overrides only ``branch`` and
+    ``demo-web`` sets none.
+    """
+    document = a_hub_document()
+    document["project"]["conventions"] = {
+        "branch": "{prefix}{ISSUE}-{slug}",
+        "commit_title": "{ISSUE}: {type}({scope}): {summary}",
+        "pr_title": "{ISSUE}: {type}({scope}): {summary}",
+    }
+    document["repos"][0]["conventions"] = {"branch": "feature/{issue_lower}/{slug}"}
+    document["repos"].append(a_second_repo())
+    return document
+
+
+def a_models_document() -> dict[str, Any]:
+    """Build ``a_hub_document`` with model tiers: ``large`` and ``medium`` set, ``small`` left to
+    its default, and the researcher moved to ``large`` and the evaluator to ``small``."""
+    document = a_hub_document()
+    document["models"] = {
+        "tiers": {"medium": "sonnet", "large": "claude-opus-4-1"},
+        "agents": {"researcher": "large", "evaluator": "small"},
+    }
+    return document
+
+
+def an_environments_document() -> dict[str, Any]:
+    """Build ``a_hub_document`` with the spec's ``W``: three environments, ``demo-api``'s
+    services and the blocked words and files; a fresh copy per call (docs/design/environments.md).
+
+    ``live`` is the production one; no behaviour comes from the names.
+    """
+    document = a_hub_document()
+    document["environments"] = {
+        "local": {"access": "write", "description": "docker compose stack on this machine"},
+        "staging": {"access": "ask", "credentials": {"aws_profile": "demo-staging"}},
+        "live": {
+            "access": "read",
+            "production": True,
+            "credentials": {"aws_profile": "demo-live-ro", "env": ["DEMO_LIVE_DB_URL"]},
+        },
+    }
+    document["repos"][0]["services"] = {
+        "api": {
+            "kind": "api",
+            "endpoints": {
+                "local": {"url": "http://localhost:8000"},
+                "staging": {"url": "https://api.staging.example.com"},
+                "live": {"url": "https://api.example.com"},
+            },
+        },
+        "orders": {
+            "kind": "dynamodb",
+            "endpoints": {"staging": {"resource": "demo-orders-staging"}},
+        },
+    }
+    document["guard"]["blocked_words"] = ["prod", "production"]
+    document["guard"]["blocked_words_files"] = ["config/*.json", "serverless.yml"]
+    return document
+
+
+def a_local_environments_document() -> dict[str, Any]:
+    """Build the spec's ``Lc``, a ``hub.local.json`` for ``an_environments_document``: a
+    developer's own environment, its endpoint and more blocked entries; a fresh copy per call."""
+    return {
+        "project": {"branch_prefix": "jane/"},
+        "environments": {
+            "jane-cloud": {"access": "write", "credentials": {"aws_profile": "jane-sandbox"}}
+        },
+        "repos": [
+            {
+                "dir": "demo-api",
+                "services": {
+                    "api": {"endpoints": {"jane-cloud": {"url": "https://api.jane.example.com"}}}
+                },
+            }
+        ],
+        "guard": {"blocked_words": ["demo-live"], "blocked_words_files": ["deploy/*.tfvars"]},
+    }
+
+
+def a_guard_infra() -> dict[str, list[str]]:
+    r"""Build a synthetic ``guard.infra`` value as plain JSON data; a fresh copy per call.
+
+    ``allow`` names one development environment per covered tool's usual flag, each a whole word
+    bounded by a space or tab (``(?<![^ \t])`` ... ``(?![^ \t])``; not ``\b`` or ``\s``, which
+    also match at ``.``, ``,``, ``{`` or a carriage return), and ``AWS_PROFILE`` only as a prefix at
+    the start of the part; ``prod_markers`` names the production environment and a placeholder
+    account id.
+    """
+    return {
+        "allow": [
+            r"(?<![^ \t])--profile[= ]demo-dev(?![^ \t])",
+            r"^[ \t]*AWS_PROFILE=demo-dev(?=[ \t])",
+            r"(?<![^ \t])--(kube-)?context[= ]kind-demo(?![^ \t])",
+            r"(?<![^ \t])-var-file=dev\.tfvars(?![^ \t])",
+            r"(?<![^ \t])--stack[= ]demo/dev(?![^ \t])",
+            r"(?<![^ \t])--stage[= ]dev(?![^ \t])",
+        ],
+        "prod_markers": [r"\bdemo-prod\b", r"\b999999999999\b"],
+    }
+
+
+def _hub_hook(script: str) -> dict[str, Any]:
+    return {
+        "type": "command",
+        "command": f'python3 "$CLAUDE_PROJECT_DIR/plugin/hub-workflow/hooks/{script}"',
+        "timeout": 10,
+    }
+
+
+def a_hub_settings_document() -> dict[str, Any]:
+    """Build a synthetic hub ``.claude/settings.json`` as plain JSON data; a fresh copy per call.
+
+    Besides ``hooks`` it holds ``permissions``, ``sandbox``, ``env`` and ``enabledPlugins``. The
+    hooks name four scripts as ``"$CLAUDE_PROJECT_DIR/plugin/hub-workflow/hooks/<f>.py"``, plus one
+    ``Stop`` and one ``Notification`` command with no variable (``echo done``, ``echo notified``).
+    """
+    return {
+        "permissions": {"allow": ["Bash(make:*)"], "deny": ["Read(./.env)"]},
+        "sandbox": {"enabled": True, "network": {"allowedDomains": ["example.com"]}},
+        "env": {"X": "1"},
+        "enabledPlugins": {"demo@example": True},
+        "hooks": {
+            "SessionStart": [
+                {
+                    "matcher": "startup|resume|clear|compact",
+                    "hooks": [_hub_hook("session_start.py")],
+                },
+                {"hooks": [_hub_hook("event_sensor.py")]},
+            ],
+            "PreToolUse": [{"matcher": "Bash|Read", "hooks": [_hub_hook("guard.py")]}],
+            "Stop": [
+                {
+                    "hooks": [
+                        _hub_hook("stop_gate.py"),
+                        {"type": "command", "command": "echo done"},
+                    ]
+                }
+            ],
+            "Notification": [{"hooks": [{"type": "command", "command": "echo notified"}]}],
+        },
+    }
+
+
+def an_issue(**overrides: object) -> Issue:
+    """Build a synthetic open ``DEM`` issue; ``url`` follows ``id`` unless overridden."""
+    fields: dict[str, object] = {
+        "id": "DEM-1",
+        "title": "Add a synthetic feature",
+        "description": "A synthetic description.",
+        "state": "Todo",
+        "labels": ("agent-ready",),
+    } | overrides
+    fields.setdefault("url", f"https://linear.app/demo/issue/{fields['id']}")
+    return Issue.model_validate(fields)
+
+
+def a_brief(*, omit: Iterable[str] = (), **bodies: str) -> str:
+    """Build a synthetic input brief: one ``## <Name>`` section per ``BRIEF_SECTIONS`` name.
+
+    The sections follow the canonical order.
+
+    A body is given by the name in snake case (``why_now="..."``); the default is
+    ``Synthetic <name in lower case>.``. ``omit`` drops sections by name. An unknown body key or
+    ``omit`` name raises ``ValueError``.
+    """
+    keys = {name.lower().replace(" ", "_"): name for name in BRIEF_SECTIONS}
+    omitted = set(omit)
+    unknown = sorted((set(bodies) - set(keys)) | (omitted - set(BRIEF_SECTIONS)))
+    if unknown:
+        raise ValueError(f"unknown brief sections: {', '.join(unknown)}")
+    return "".join(
+        f"## {name}\n{bodies.get(key, f'Synthetic {name.lower()}.')}\n"
+        for key, name in keys.items()
+        if name not in omitted
+    )
+
+
+# The one full brief every ``hub run`` test reads as its issue's description.
+RUN_DESCRIPTION: Final = a_brief(
+    problem="Add a synthetic change.", outcome="- touch one file\n- keep the gate green"
+)
+
+_OPEN_STATES = (
+    TrackerState(name="Todo", type="unstarted"),
+    TrackerState(name="In Progress", type="started"),
+)
+_CLOSED_STATES = (
+    TrackerState(name="Done", type="completed"),
+    TrackerState(name="Canceled", type="canceled"),
+)
+
+# (id, state, labels): ready ones in every state, a repo label, an unlabelled one, another team.
+_SEEDED_ISSUES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("DEM-1", "Todo", ("agent-ready", "demo-api")),
+    ("DEM-2", "In Progress", ("agent-ready",)),
+    ("DEM-3", "Todo", ("agent-ready", "bug")),
+    ("DEM-4", "Done", ("agent-ready",)),
+    ("DEM-5", "Canceled", ("agent-ready",)),
+    ("DEM-6", "Duplicate", ("agent-ready",)),
+    ("DEM-7", "Todo", ()),
+    ("OPS-1", "Todo", ("agent-ready",)),
+)
+
+
+# Each seeded issue's own description: DEM-2 has none; DEM-1 has several lines of Markdown.
+_SEEDED_DESCRIPTIONS: dict[str, str] = {
+    "DEM-1": (
+        "Add a synthetic feature.\n"
+        "\n"
+        "Steps:\n"
+        "\n"
+        "- read the synthetic input\n"
+        "- write the synthetic output\n"
+        "\n"
+        "```sh\n"
+        "make check\n"
+        "```\n"
+    ),
+    "DEM-2": "",
+    "DEM-3": "Fix the synthetic bug in DEM-3.",
+    "DEM-4": "Synthetic work already done in DEM-4.",
+    "DEM-5": "Synthetic work dropped in DEM-5.",
+    "DEM-6": "Synthetic duplicate of DEM-5.",
+    "DEM-7": "Synthetic issue DEM-7 with no label.",
+    "OPS-1": "Synthetic issue of another team.",
+}
+
+
+def a_seeded_tracker_backend() -> FakeTrackerBackend:
+    """Build the synthetic tracker the contract suite runs on; a fresh backend per call.
+
+    Team ``DEM`` has three open ``agent-ready`` issues (more than one fake page), ready ones in
+    Done, Canceled and Duplicate, and an open unlabelled one; team ``OPS`` has one open ready issue.
+    """
+    return FakeTrackerBackend(
+        states={
+            "DEM": (
+                *_OPEN_STATES,
+                *_CLOSED_STATES,
+                TrackerState(name="Duplicate", type="duplicate"),
+            ),
+            "OPS": (*_OPEN_STATES, *_CLOSED_STATES),
+        },
+        team_labels={"DEM": ("demo-api", "bug"), "OPS": ()},
+        workspace_labels=("agent-ready", "agent-failed"),
+        issues={
+            issue_id: an_issue(
+                id=issue_id,
+                title=f"Synthetic issue {issue_id}",
+                description=_SEEDED_DESCRIPTIONS[issue_id],
+                state=state,
+                labels=labels,
+            )
+            for issue_id, state, labels in _SEEDED_ISSUES
+        },
+    )
+
+
+def a_brain_change(**overrides: object) -> BrainChange:
+    """A synthetic accept of ``brain/_inbox/testing-x.md`` into ``brain/learnings/``."""
+    fields: dict[str, object] = {
+        "hub_path": "/home/demo/demo-hub",
+        "hub_repo": "acme/demo-hub",
+        "default_branch": "main",
+        "action": "accept",
+        "note": "_inbox/testing-x.md",
+        "destination": "learnings/testing-x.md",
+        "frontmatter": {"status": "accepted", "last_verified": "2026-10-12"},
+        "author": CommitAuthor(name="Demo Owner", email="owner@example.com"),
+        "branch": "demo/learning-accept-testing-x",
+        "title": "Accept learning: Testing x",
+        "body": "Moves brain/_inbox/testing-x.md to brain/learnings/testing-x.md.",
+        "commit_message": "docs(brain): accept learning testing-x",
+    }
+    return BrainChange.model_validate(fields | overrides)
+
+
+def a_brain_proposal(**overrides: object) -> BrainProposal:
+    """A synthetic proposal of ``brain/_inbox/2026-10-21-testing-x.md`` on
+    ``demo/learning-propose-testing-x``, its text in the inbox note layout."""
+    fields: dict[str, object] = {
+        "hub_path": "/home/demo/demo-hub",
+        "hub_repo": "acme/demo-hub",
+        "default_branch": "main",
+        "branch_prefix": "demo/",
+        "slug": "testing-x",
+        "note": "_inbox/2026-10-21-testing-x.md",
+        "text": (
+            "---\ntype: learning-proposal\nstatus: proposed\nprovenance: agent\n"
+            "target: brain/learnings/\ncreated: 2026-10-21\n---\n\n# Testing x\n\n"
+            "Run it first.\n"
+        ),
+        "author": CommitAuthor(name="Demo Owner", email="owner@example.com"),
+        "title": "Learning proposal: Testing x",
+        "body": "Adds brain/_inbox/2026-10-21-testing-x.md (provenance agent).\n\n> Run it first.",
+        "commit_message": "docs(brain): propose learning testing-x",
+    }
+    return BrainProposal.model_validate(fields | overrides)
+
+
+def an_item_version(**overrides: object) -> ItemVersion:
+    """A synthetic stored version: the first, ``external`` version of an agent file of ``demo``;
+    ``content_hash`` and ``size`` are not recomputed from an overridden ``content``."""
+    content = b"---\nname: reviewer\ndescription: Reviews a diff.\n---\nReview the diff.\n"
+    fields: dict[str, object] = {
+        "id": "0199f0a0-0000-7000-8000-000000000001",
+        "project": "demo",
+        "unit_path": "plugin/demo/agents/reviewer.md",
+        "kind": UnitKind.AGENT,
+        "seq": 1,
+        "origin": VersionOrigin.EXTERNAL,
+        "first": True,
+        "author": None,
+        "recorded_at": datetime(2026, 10, 17, 9, 0, tzinfo=UTC),
+        "content_hash": file_hash(content),
+        "size": len(content),
+        "restored_from": None,
+        "content": content,
+    }
+    return ItemVersion.model_validate(fields | overrides)
+
+
+def _png_chunk(kind: bytes, payload: bytes) -> bytes:
+    crc = zlib.crc32(kind + payload)
+    return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", crc)
+
+
+def a_png_bytes() -> bytes:
+    """A synthetic 1x1 opaque white PNG (an image sent with a message)."""
+    header = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+    pixels = zlib.compress(b"\x00\xff\xff\xff")
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", header)
+        + _png_chunk(b"IDAT", pixels)
+        + _png_chunk(b"IEND", b"")
+    )

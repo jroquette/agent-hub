@@ -1,0 +1,11 @@
+# Both lenses pass: the verdict is PASS, the run's outcome.
+workflow: review
+inputs: {issue: DEM-1, path: ../demo-api/.claude/worktrees/dem-1}
+stubs:
+  spec:
+    output: {schema: agent-hub/review/1, reviewer: spec, ticket: DEM-1, task: all, round: 1, commit: 0a1b2c3d, verdict: PASS, findings: []}
+  quality:
+    output: {schema: agent-hub/review/1, reviewer: quality, ticket: DEM-1, task: all, round: 1, commit: 0a1b2c3d, verdict: PASS, findings: []}
+  verdict: {output: {verdict: PASS, lenses: {spec: PASS, quality: PASS}}}
+expect: {status: done, outcome: PASS}
+reached: [spec, quality, verdict]

@@ -1,0 +1,715 @@
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { useEffect, useState } from "react";
+import { describe, expect, it, vi } from "vitest";
+
+import { Dialog } from "../components/Dialog";
+import { ConfirmDialog } from "../components/feedback";
+
+import { seriousViolations } from "../testing/axe";
+import {
+  aCapabilities,
+  aShellView,
+  aStreamCounts,
+  aWorkdir,
+  renderWithApi,
+} from "../testing/builders";
+import { AppShell, useShell } from "./AppShell";
+
+const routes = { "/api/v1/screens/shell": aShellView() };
+
+/** A Dialog whose buttons open the shell's palette and shortcut sheet over it. */
+function ShellLayersOver({ onClose }: { onClose: () => void }) {
+  const shell = useShell();
+  return (
+    <Dialog title="Edit" onClose={onClose}>
+      <button
+        onClick={() => {
+          shell.openPalette();
+        }}
+      >
+        Search
+      </button>
+      <button onClick={shell.openShortcuts}>Keys</button>
+    </Dialog>
+  );
+}
+
+const SHELL = "/api/v1/screens/shell";
+
+/** Holds the shell reads of `project` until the returned `release()`; `asked()` counts them. The
+ * other requests answer at once. */
+function holdShellRead(project: string): { release: () => void; asked: () => number } {
+  const answer = vi.mocked(globalThis.fetch).getMockImplementation();
+  if (!answer) throw new Error("holdShellRead: render first");
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let count = 0;
+  vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    const url = new URL(request.url);
+    if (url.pathname === SHELL && url.searchParams.get("project") === project) {
+      count += 1;
+      await held;
+    }
+    return answer(request);
+  });
+  return {
+    release: () => {
+      release();
+    },
+    asked: () => count,
+  };
+}
+
+describe("AppShell", () => {
+  it("places the sidebar, top bar and page content", () => {
+    renderWithApi(<AppShell />, { routes });
+
+    expect(screen.getByRole("navigation", { name: "Main" })).toBeInTheDocument();
+    expect(screen.getByRole("banner")).toBeInTheDocument();
+    expect(screen.getByRole("main")).toBeInTheDocument();
+  });
+
+  it("names the browser tab from the shell, after the screen it shows", async () => {
+    document.title = "stale";
+    renderWithApi(<AppShell />, { routes });
+
+    await waitFor(() => {
+      expect(document.title).toMatch(/agent-hub$/);
+    });
+  });
+
+  it("AC-40 makes two requests when it mounts: the shell read and the stream", async () => {
+    window.localStorage.clear();
+    const { calls } = renderWithApi(<AppShell />, {
+      routes: { "/api/v1/screens/shell": aShellView({ has_workflow_runs: true }) },
+    });
+    const both = ["/api/v1/events/stream", "/api/v1/screens/shell"];
+
+    await waitFor(() => {
+      expect([...calls()].sort()).toEqual(both);
+    });
+    // Once the read's facts are drawn, the shell has asked for nothing more.
+    expect(await screen.findByRole("link", { name: "Workflow runs" })).toBeInTheDocument();
+    expect([...calls()].sort()).toEqual(both);
+  });
+
+  it.each([
+    ["/sessions?scope=storefront", "storefront"],
+    // On a project's Skills the switcher shows the route's project; the badge keeps the scope.
+    ["/projects/storefront/skills?scope=agent-hub", "agent-hub"],
+  ])("asks the shell read with the badge's scope on %s", async (path, project) => {
+    window.localStorage.clear();
+    const { requests } = renderWithApi(<AppShell />, { routes, path });
+    const asked = () =>
+      requests
+        .filter((request) => new URL(request.url).pathname === "/api/v1/screens/shell")
+        .map((request) => new URL(request.url).searchParams.get("project"));
+
+    await waitFor(() => {
+      expect(asked()).toEqual([project]);
+    });
+  });
+
+  it("badges Features with the shell read's count of the features that need you", async () => {
+    renderWithApi(<AppShell />, {
+      routes: { "/api/v1/screens/shell": aShellView({ features_needing_you: 2 }) },
+    });
+    const nav = screen.getByRole("navigation", { name: "Main" });
+
+    await waitFor(() => {
+      expect(within(nav).getByRole("link", { name: /^Features/ })).toHaveAccessibleName(
+        "Features, 2 need you",
+      );
+    });
+  });
+
+  it("reads the shell's facts again every 5 s and badges Features with the new count", async () => {
+    vi.useFakeTimers();
+    try {
+      let answers = 0;
+      const { calls } = renderWithApi(<AppShell />, {
+        routes: {
+          [SHELL]: () => {
+            answers += 1;
+            return aShellView({ features_needing_you: answers === 1 ? 2 : 3 });
+          },
+        },
+      });
+      const nav = screen.getByRole("navigation", { name: "Main" });
+      const features = () => within(nav).getByRole("link", { name: /^Features/ });
+      const shellReads = () => calls().filter((path) => path === SHELL).length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(features()).toHaveAccessibleName("Features, 2 need you");
+      expect(shellReads()).toBe(1);
+
+      // The shell's 5 s poll (ADR 0056): no read before it, a second one at it.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4_900);
+      });
+      expect(shellReads()).toBe(1);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      expect(shellReads()).toBe(2);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100); // the second answer commits
+      });
+      expect(features()).toHaveAccessibleName("Features, 3 need you");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the runs item and the switcher's projects while a new scope's read is on its way", async () => {
+    window.localStorage.clear();
+    renderWithApi(<AppShell />, {
+      routes: {
+        [SHELL]: (request: Request) =>
+          aShellView({
+            projects: [
+              { name: "agent-hub", live_sessions: 1 },
+              { name: "acme-market", live_sessions: 2 },
+            ],
+            has_workflow_runs: true,
+            features_needing_you:
+              new URL(request.url).searchParams.get("project") === "acme-market" ? 1 : 2,
+          }),
+      },
+      path: "/sessions",
+    });
+    const nav = screen.getByRole("navigation", { name: "Main" });
+    const features = () => within(nav).getByRole("link", { name: /^Features/ });
+    expect(await within(nav).findByRole("link", { name: "Workflow runs" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(features()).toHaveAccessibleName("Features, 2 need you");
+    });
+    const held = holdShellRead("acme-market");
+
+    fireEvent.click(screen.getByRole("button", { name: /All projects/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^acme-market · 2 live/ }));
+    await waitFor(() => {
+      expect(held.asked()).toBeGreaterThan(0);
+    });
+
+    // The hub count, the projects and the runs flag do not depend on the scope: they stay. The
+    // badge counts All projects' features, so it is hidden until acme-market's read answers.
+    expect(within(nav).queryByRole("link", { name: "Workflow runs" })).toBeInTheDocument();
+    expect(features()).toHaveAccessibleName("Features");
+    fireEvent.click(
+      within(screen.getByRole("banner")).getByRole("button", {
+        expanded: false,
+        name: /acme-market/,
+      }),
+    );
+    expect(screen.queryByRole("button", { name: /^agent-hub · 1 live/ })).toBeInTheDocument();
+
+    held.release();
+    await waitFor(() => {
+      expect(features()).toHaveAccessibleName("Features, 1 need you");
+    });
+    window.localStorage.clear();
+  });
+
+  it("shows Workflow runs in the sidebar only once a workflow has run", async () => {
+    const { unmount } = renderWithApi(<AppShell />, {
+      routes: { "/api/v1/screens/shell": aShellView({ has_workflow_runs: false }) },
+    });
+    const nav = screen.getByRole("navigation", { name: "Main" });
+    await waitFor(() => {
+      expect(within(nav).getByRole("link", { name: "Sessions" })).toBeInTheDocument();
+    });
+    expect(within(nav).queryByRole("link", { name: "Workflow runs" })).toBeNull();
+    unmount();
+
+    renderWithApi(<AppShell />, {
+      routes: { "/api/v1/screens/shell": aShellView({ has_workflow_runs: true }) },
+    });
+
+    expect(await screen.findByRole("link", { name: "Workflow runs" })).toHaveAttribute(
+      "href",
+      "/runs",
+    );
+  });
+
+  it("shows the stream's counts as badges when they arrive", () => {
+    const { stream } = renderWithApi(<AppShell />, { routes });
+
+    act(() => {
+      stream("/api/v1/events/stream").open();
+      stream("/api/v1/events/stream").emit("counts", aStreamCounts({ live_sessions: 2 }));
+    });
+
+    expect(screen.getByRole("link", { name: "Sessions, 2 live" })).toBeInTheDocument();
+    expect(within(screen.getByRole("banner")).getByRole("status")).toHaveAttribute(
+      "data-state",
+      "connected",
+    );
+  });
+
+  it("opens the palette with Ctrl K and the shortcut sheet with ?", () => {
+    renderWithApi(<AppShell />, { routes });
+
+    fireEvent.keyDown(document.body, { key: "k", ctrlKey: true });
+    expect(screen.getByRole("dialog", { name: "Command palette" })).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Command palette" })).not.toBeInTheDocument();
+
+    fireEvent.keyDown(document.body, { key: "?" });
+    expect(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeInTheDocument();
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).not.toBeInTheDocument();
+  });
+
+  it("goes to a destination with a g sequence", () => {
+    const { router } = renderWithApi(<AppShell />, { routes });
+
+    fireEvent.keyDown(document.body, { key: "g" });
+    fireEvent.keyDown(document.body, { key: "r" });
+
+    expect(router.state.location.pathname).toBe("/runs");
+  });
+
+  it("AC-PG-38.2 opens Hub config with g c", () => {
+    const { router } = renderWithApi(<AppShell />, { routes });
+
+    fireEvent.keyDown(document.body, { key: "g" });
+    fireEvent.keyDown(document.body, { key: "c" });
+
+    // /config opens the project in scope's configuration, else the project picker.
+    expect(router.state.location.pathname).toBe("/config");
+  });
+
+  it("one-tab: g s opens Sessions and g l, kept from Live, opens its grid", () => {
+    const { router } = renderWithApi(<AppShell />, { routes });
+
+    fireEvent.keyDown(document.body, { key: "g" });
+    fireEvent.keyDown(document.body, { key: "s" });
+    expect(router.state.location.pathname).toBe("/sessions");
+    expect(router.state.location.search).toBe("");
+
+    fireEvent.keyDown(document.body, { key: "g" });
+    fireEvent.keyDown(document.body, { key: "l" });
+    expect(router.state.location.pathname).toBe("/sessions");
+    expect(router.state.location.search).toBe("?view=grid");
+  });
+
+  it("one-tab: badges the live count on Sessions when the stream's counts arrive", () => {
+    const { stream } = renderWithApi(<AppShell />, { routes });
+
+    act(() => {
+      stream("/api/v1/events/stream").open();
+      stream("/api/v1/events/stream").emit("counts", aStreamCounts({ live_sessions: 3 }));
+    });
+
+    expect(screen.getByRole("link", { name: "Sessions, 3 live" })).toHaveTextContent("3");
+  });
+
+  it("ignores single-key shortcuts while typing in a field", () => {
+    const { router } = renderWithApi(
+      <AppShell>
+        <input aria-label="filter" />
+      </AppShell>,
+      { routes },
+    );
+    const input = screen.getByRole("textbox", { name: "filter" });
+
+    fireEvent.keyDown(input, { key: "g" });
+    fireEvent.keyDown(input, { key: "s" });
+
+    expect(router.state.location.pathname).toBe("/");
+  });
+
+  it("skips a key a screen already handled", () => {
+    const { router } = renderWithApi(
+      <AppShell>
+        <button
+          type="button"
+          onKeyDown={(event) => {
+            event.preventDefault();
+          }}
+        >
+          handles its keys
+        </button>
+      </AppShell>,
+      { routes },
+    );
+    const own = screen.getByRole("button", { name: "handles its keys" });
+
+    fireEvent.keyDown(own, { key: "g" });
+    fireEvent.keyDown(own, { key: "l" });
+    fireEvent.keyDown(own, { key: "t" });
+
+    expect(router.state.location.pathname).toBe("/");
+    expect(screen.getByRole("button", { name: "UTC" })).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("opens no palette, sheet or single-key shortcut over a confirmation", () => {
+    const { router } = renderWithApi(
+      <AppShell>
+        <ConfirmDialog title="Delete this session?" confirmLabel="Delete" onCancel={vi.fn()} />
+      </AppShell>,
+      { routes },
+    );
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+
+    for (const target of [cancel, document.body]) {
+      fireEvent.keyDown(target, { key: "k", ctrlKey: true });
+      expect(screen.queryByRole("dialog", { name: "Command palette" })).not.toBeInTheDocument();
+      fireEvent.keyDown(target, { key: "?" });
+      fireEvent.keyDown(target, { key: "g" });
+      fireEvent.keyDown(target, { key: "l" });
+      fireEvent.keyDown(target, { key: "t" });
+    }
+
+    expect(screen.queryByRole("dialog", { name: "Command palette" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).not.toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/");
+    expect(screen.getByRole("button", { name: "UTC" })).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("closes only the palette over a Dialog on Escape and keeps Tab in it", async () => {
+    const onClose = vi.fn();
+    renderWithApi(
+      <AppShell>
+        <ShellLayersOver onClose={onClose} />
+      </AppShell>,
+      { routes },
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Search" }));
+    const search = screen.getByRole("combobox");
+    expect(search).toHaveFocus();
+    expect(fireEvent.keyDown(search, { key: "Tab" })).toBe(true);
+    expect(search).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Command palette" })).not.toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "k", ctrlKey: true });
+    expect(screen.queryByRole("dialog", { name: "Command palette" })).not.toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes only the shortcut sheet over a Dialog on Escape and keeps Tab in it", async () => {
+    const onClose = vi.fn();
+    renderWithApi(
+      <AppShell>
+        <ShellLayersOver onClose={onClose} />
+      </AppShell>,
+      { routes },
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Keys" }));
+    const close = screen.getByRole("button", { name: "Close (Esc)" });
+    close.focus();
+    expect(fireEvent.keyDown(close, { key: "Tab" })).toBe(true);
+    expect(close).toHaveFocus();
+    screen.getByRole("button", { name: "Keys" }).focus();
+    await userEvent.keyboard("{Escape}");
+
+    expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).not.toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("toggles UTC with t and collapses the sidebar from the top bar", () => {
+    renderWithApi(<AppShell />, { routes });
+
+    fireEvent.keyDown(document.body, { key: "t" });
+    expect(screen.getByRole("button", { name: "UTC" })).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    expect(document.querySelector(".ah-shell")).toHaveAttribute("data-collapsed", "true");
+  });
+
+  it("folds the sidebar while a page asks for the width, keeping the person's own choice", () => {
+    // The person's own choice: expanded (an earlier test collapses it).
+    window.localStorage.clear();
+    function Wide() {
+      const { compactSidebar } = useShell();
+      const [on, setOn] = useState(true);
+      useEffect(() => {
+        compactSidebar(on);
+        return () => {
+          compactSidebar(false);
+        };
+      }, [on, compactSidebar]);
+      return (
+        <button
+          type="button"
+          onClick={() => {
+            setOn(false);
+          }}
+        >
+          Leave
+        </button>
+      );
+    }
+    renderWithApi(
+      <AppShell>
+        <Wide />
+      </AppShell>,
+      { routes },
+    );
+    expect(document.querySelector(".ah-shell")).toHaveAttribute("data-collapsed", "true");
+    // The top bar's toggle says what is shown, and expands it for this visit.
+    fireEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
+    expect(document.querySelector(".ah-shell")).not.toHaveAttribute("data-collapsed");
+    expect(screen.getByRole("button", { name: "Collapse sidebar" })).toBeInTheDocument();
+    // The page no longer asks: the sidebar is as the person left it.
+    fireEvent.click(screen.getByRole("button", { name: "Leave" }));
+    expect(document.querySelector(".ah-shell")).not.toHaveAttribute("data-collapsed");
+  });
+
+  it("expands on the first click while a page asks for the width over a stored collapsed choice", () => {
+    window.localStorage.clear();
+    window.localStorage.setItem("ah.sidebar.collapsed", "1");
+    function Wide() {
+      const { compactSidebar } = useShell();
+      const [on, setOn] = useState(true);
+      useEffect(() => {
+        compactSidebar(on);
+        return () => {
+          compactSidebar(false);
+        };
+      }, [on, compactSidebar]);
+      return (
+        <button
+          type="button"
+          onClick={() => {
+            setOn(false);
+          }}
+        >
+          Leave
+        </button>
+      );
+    }
+    renderWithApi(
+      <AppShell>
+        <Wide />
+      </AppShell>,
+      { routes },
+    );
+    expect(document.querySelector(".ah-shell")).toHaveAttribute("data-collapsed", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
+    expect(document.querySelector(".ah-shell")).not.toHaveAttribute("data-collapsed");
+    expect(window.localStorage.getItem("ah.sidebar.collapsed")).toBe("1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    expect(document.querySelector(".ah-shell")).toHaveAttribute("data-collapsed", "true");
+    expect(window.localStorage.getItem("ah.sidebar.collapsed")).toBe("1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
+    // The page no longer asks: the stored collapsed choice applies again.
+    fireEvent.click(screen.getByRole("button", { name: "Leave" }));
+    expect(document.querySelector(".ah-shell")).toHaveAttribute("data-collapsed", "true");
+    expect(window.localStorage.getItem("ah.sidebar.collapsed")).toBe("1");
+    window.localStorage.clear();
+  });
+
+  it("cycles the theme from the top bar", () => {
+    window.localStorage.setItem("ah.theme", "light");
+    renderWithApi(<AppShell />, { routes });
+
+    fireEvent.click(screen.getByRole("button", { name: "Theme: light" }));
+
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(screen.getByRole("button", { name: "Theme: dark" })).toBeInTheDocument();
+    window.localStorage.clear();
+  });
+
+  it("switches the project scope from the switcher", async () => {
+    const { router } = renderWithApi(<AppShell />, { routes, path: "/sessions" });
+
+    fireEvent.click(screen.getByRole("button", { name: /All projects/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /agent-hub · 1 live/ }));
+
+    expect(router.state.location.search).toBe("?scope=agent-hub");
+    window.localStorage.clear();
+  });
+
+  it("AC-273.7: asks for the screen as a Discuss target only while the panel is open", async () => {
+    window.localStorage.removeItem("ah.discuss.open");
+    const { requests } = renderWithApi(<AppShell />, {
+      path: "/health",
+      routes: {
+        ...routes,
+        "/api/v1/agent-sessions/capabilities": aCapabilities(),
+        "/api/v1/agent-sessions/workdirs": { items: [aWorkdir()], warnings: [] },
+      },
+    });
+    const asked = () =>
+      requests.filter((r) => new URL(r.url).pathname === "/api/v1/agent-sessions/capabilities");
+    expect(asked()).toHaveLength(0);
+
+    await userEvent.click(screen.getByRole("button", { name: "Discuss" }));
+
+    expect(
+      await screen.findByRole("complementary", { name: "Discuss with Claude" }),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(asked().length).toBeGreaterThan(0);
+    });
+    window.localStorage.removeItem("ah.discuss.open");
+  });
+
+  it("has no serious or critical a11y violation", async () => {
+    const { container } = renderWithApi(<AppShell />, { routes });
+
+    expect(await seriousViolations(container)).toEqual([]);
+  });
+
+  const discussRoutes = {
+    ...routes,
+    "/api/v1/agent-sessions/capabilities": aCapabilities(),
+    "/api/v1/agent-sessions/workdirs": { items: [aWorkdir()], warnings: [] },
+  };
+
+  it("AC-422.2 has no serious or critical a11y violation with the Discuss panel open (a11y)", async () => {
+    window.localStorage.removeItem("ah.discuss.open");
+    const { container } = renderWithApi(<AppShell />, { path: "/health", routes: discussRoutes });
+    await userEvent.click(screen.getByRole("button", { name: "Discuss" }));
+    await screen.findByRole("complementary", { name: "Discuss with Claude" });
+
+    expect(screen.getByRole("separator", { name: "Resize the Discuss panel" })).toHaveAttribute(
+      "aria-controls",
+      "ah-discuss",
+    );
+    expect(await seriousViolations(container)).toEqual([]);
+    window.localStorage.removeItem("ah.discuss.open");
+  });
+
+  it("AC-422.3 closes the Discuss panel on Escape from inside it and gives focus back to Discuss", async () => {
+    window.localStorage.removeItem("ah.discuss.open");
+    renderWithApi(<AppShell />, { path: "/health", routes: discussRoutes });
+    const toggle = screen.getByRole("button", { name: "Discuss" });
+    await userEvent.click(toggle);
+    const panel = await screen.findByRole("complementary", { name: "Discuss with Claude" });
+    // AC-422.4: the toggle reads pressed, not accent-filled.
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(toggle).not.toHaveClass("ah-btn-primary");
+    within(panel).getByRole("button", { name: "Close panel" }).focus();
+
+    await userEvent.keyboard("{Escape}");
+
+    expect(screen.queryByRole("complementary", { name: "Discuss with Claude" })).toBeNull();
+    expect(toggle).toHaveFocus();
+    window.localStorage.removeItem("ah.discuss.open");
+  });
+
+  it("AC-422.3 closes the Discuss panel over the page on Escape from anywhere (below 1280 px)", async () => {
+    window.localStorage.removeItem("ah.discuss.open");
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }));
+    renderWithApi(<AppShell />, { path: "/health", routes: discussRoutes });
+    await userEvent.click(screen.getByRole("button", { name: "Discuss" }));
+    await screen.findByRole("complementary", { name: "Discuss with Claude" });
+    (document.activeElement as HTMLElement | null)?.blur();
+
+    await userEvent.keyboard("{Escape}");
+
+    expect(screen.queryByRole("complementary", { name: "Discuss with Claude" })).toBeNull();
+    vi.unstubAllGlobals();
+    window.localStorage.removeItem("ah.discuss.open");
+  });
+
+  it("AC-422.3 keeps the docked Discuss panel open on an Escape pressed on the page (from 1280 px)", async () => {
+    window.localStorage.removeItem("ah.discuss.open");
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query.includes("1280px"),
+      media: query,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }));
+    renderWithApi(<AppShell />, { path: "/health", routes: discussRoutes });
+    await userEvent.click(screen.getByRole("button", { name: "Discuss" }));
+    await screen.findByRole("complementary", { name: "Discuss with Claude" });
+    (document.activeElement as HTMLElement | null)?.blur();
+
+    await userEvent.keyboard("{Escape}");
+
+    expect(screen.getByRole("complementary", { name: "Discuss with Claude" })).toBeInTheDocument();
+    vi.unstubAllGlobals();
+    window.localStorage.removeItem("ah.discuss.open");
+  });
+});
+
+describe("AppShell scope on a project's Brain or Skills", () => {
+  const scoped = {
+    "/api/v1/screens/shell": aShellView({
+      projects: [
+        { name: "storefront", live_sessions: 1 },
+        { name: "agent-hub", live_sessions: 1 },
+      ],
+    }),
+  };
+  const switcher = () =>
+    within(screen.getByRole("banner")).getByRole("button", {
+      expanded: false,
+      name: /storefront|agent-hub|All projects/,
+    });
+
+  it("shows the project in the route, not the stored scope", () => {
+    renderWithApi(<AppShell />, {
+      routes: scoped,
+      path: "/projects/storefront/skills?scope=agent-hub",
+      route: "*",
+    });
+
+    expect(switcher()).toHaveTextContent("storefront");
+  });
+
+  it("opens the same section of the project picked in the switcher", async () => {
+    const { router } = renderWithApi(<AppShell />, {
+      routes: scoped,
+      path: "/projects/storefront/brain/now.md",
+      route: "*",
+    });
+
+    fireEvent.click(switcher());
+    fireEvent.click(await screen.findByRole("button", { name: /^agent-hub ·/ }));
+
+    expect(router.state.location.pathname).toBe("/projects/agent-hub/brain");
+  });
+
+  it("opens the section's project index when All projects is picked", async () => {
+    const { router } = renderWithApi(<AppShell />, {
+      routes: scoped,
+      path: "/projects/storefront/skills",
+      route: "*",
+    });
+
+    fireEvent.click(switcher());
+    fireEvent.click(await screen.findByRole("button", { name: /^All projects/ }));
+
+    expect(router.state.location.pathname).toBe("/knowledge/skills");
+  });
+  it("hides the top bar's Discuss on a scenario run's page, which has its own chat", () => {
+    const { unmount } = renderWithApi(<AppShell />, { routes, path: "/scenarios" });
+    expect(
+      within(screen.getByRole("banner")).getByRole("button", { name: /Discuss/ }),
+    ).toBeInTheDocument();
+    unmount();
+
+    renderWithApi(<AppShell />, {
+      routes,
+      path: "/scenarios/demo/order-lifecycle/runs/3f2a91c0",
+    });
+
+    expect(
+      within(screen.getByRole("banner")).queryByRole("button", { name: /Discuss/ }),
+    ).toBeNull();
+  });
+});

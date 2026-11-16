@@ -1,0 +1,168 @@
+"""``ClaudeSdkSessionDriver`` honours ``SessionDriverContract`` against the stub CLI (AC-165.2)."""
+
+import json
+from pathlib import Path
+
+import pytest
+
+from agent_hub.claude_sessions.sdk_driver import PROTOCOL_EXIT_CODE, ClaudeSdkSessionDriver
+from agent_hub.claude_sessions.testing.scenarios import (
+    Scenario,
+    TextStep,
+    read_records,
+    simple_turn,
+)
+from agent_hub.core.agent_sessions.driver import (
+    DriverError,
+    DriverEvent,
+    DriverImage,
+    Exited,
+    InitEvent,
+    StartSpec,
+    TurnResult,
+)
+from agent_hub.core.agent_sessions.errors import SessionsUnavailableError
+from agent_hub.core.testing.builders import a_png_bytes
+from agent_hub.core.testing.session_driver_contract import ContractScenario, SessionDriverContract
+
+from .conftest import stub_environ, stub_scenario
+
+pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture
+def session_driver(tmp_path: Path, scenario: ContractScenario) -> ClaudeSdkSessionDriver:
+    environ = stub_environ(tmp_path, stub_scenario(scenario.replies))
+    return ClaudeSdkSessionDriver(environ=environ, lister=lambda _directory, _limit: [])
+
+
+class TestClaudeSdkSessionDriver(SessionDriverContract):
+    pytestmark = pytest.mark.anyio
+
+
+async def _all(driver: ClaudeSdkSessionDriver, spec: StartSpec, text: str) -> list[DriverEvent]:
+    handle = await driver.start(spec)
+    await driver.send(handle, text)
+    return [event async for event in driver.events(handle)]
+
+
+async def test_fails_session_when_message_oversize(tmp_path: Path) -> None:
+    cwd = tmp_path / "work"
+    cwd.mkdir()
+    scenario = Scenario(replies={"big": [TextStep(text="x" * 20_000)]})
+    driver = ClaudeSdkSessionDriver(
+        environ=stub_environ(tmp_path, scenario), lister=lambda _d, _l: [], max_buffer_size=4096
+    )
+
+    events = await _all(driver, StartSpec(cwd=str(cwd), mode="default"), "big")
+
+    assert isinstance(events[0], InitEvent)
+    assert events[-2:] == [
+        DriverError(message="claude sent a message over 4096 bytes or not JSON"),
+        Exited(code=PROTOCOL_EXIT_CODE),
+    ]
+    assert "x" * 100 not in str(events)
+
+
+async def test_passes_spec_to_cli_when_started(tmp_path: Path) -> None:
+    cwd = tmp_path / "work"
+    cwd.mkdir()
+    environ = stub_environ(tmp_path, Scenario(replies={"hi": [TextStep(text="ok")]}))
+    driver = ClaudeSdkSessionDriver(environ=environ, lister=lambda _d, _l: [])
+    spec = StartSpec(
+        cwd=str(cwd),
+        mode="plan",
+        model="haiku",
+        session_id="44444444-4444-4444-8444-444444444444",
+        environment_extra={"AGENT_HUB_WEB_URL": "http://127.0.0.1:7420"},
+    )
+
+    handle = await driver.start(spec)
+    await driver.send(handle, "hi")
+    events = driver.events(handle)
+    init = await anext(events)
+    await driver.close(handle)
+
+    [start] = [
+        r
+        for r in read_records(Path(environ["STUB_CLAUDE_RECORD"]))
+        if r.event == "start" and "-v" not in r.args
+    ]
+    assert start.argv0 == str(tmp_path / "bin" / "claude")
+    assert {"--permission-mode", "plan", "--model", "haiku"} <= set(start.args)
+    assert "--session-id=44444444-4444-4444-8444-444444444444" in start.args
+    assert "AGENT_HUB_WEB_URL" in start.env_keys
+    assert init == InitEvent(
+        session_id="44444444-4444-4444-8444-444444444444",
+        model="haiku",
+        slash_commands=("compact", "review"),
+    )
+
+
+async def test_sends_effort_and_ultracode_to_cli_when_started_and_changed(tmp_path: Path) -> None:
+    """AC-681.1, AC-681.2, AC-681.9: the start carries ``--effort`` and the Ultracode setting; a
+    change goes as ``apply_flag_settings``, which the CLI applies from its next request."""
+    cwd = tmp_path / "work"
+    cwd.mkdir()
+    environ = stub_environ(tmp_path, Scenario(replies={"hi": simple_turn()}))
+    driver = ClaudeSdkSessionDriver(environ=environ, lister=lambda _d, _l: [])
+
+    handle = await driver.start(
+        StartSpec(cwd=str(cwd), mode="default", effort="high", ultracode=True)
+    )
+    await driver.set_effort(handle, "max")
+    await driver.set_ultracode(handle, on=False)
+    await driver.send(handle, "hi")
+    async for event in driver.events(handle):
+        if isinstance(event, TurnResult):
+            break
+    await driver.close(handle)
+
+    records = read_records(Path(environ["STUB_CLAUDE_RECORD"]))
+    [start] = [r for r in records if r.event == "start" and "-v" not in r.args]
+    effort = start.args.index("--effort")
+    settings = start.args.index("--settings")
+    assert start.args[effort + 1] == "high"
+    assert json.loads(start.args[settings + 1]) == {"ultracode": True}
+    applied = [r.data for r in records if r.subtype == "apply_flag_settings"]
+    assert [entry.get("settings") for entry in applied] == [
+        {"effortLevel": "max"},
+        {"ultracode": False},
+    ]
+
+
+async def test_refuses_start_when_claude_missing(tmp_path: Path) -> None:
+    driver = ClaudeSdkSessionDriver(environ={"PATH": str(tmp_path)})
+
+    with pytest.raises(SessionsUnavailableError):
+        await driver.start(StartSpec(cwd=str(tmp_path), mode="default"))
+    capabilities = await driver.capabilities()
+
+    assert not capabilities.available
+
+
+async def test_passes_image_to_cli_when_message_carries_image(tmp_path: Path) -> None:
+    cwd = tmp_path / "work"
+    cwd.mkdir()
+    environ = stub_environ(tmp_path, Scenario(replies={"What is this?": simple_turn("A page.")}))
+    driver = ClaudeSdkSessionDriver(environ=environ, lister=lambda _d, _l: [])
+    png = a_png_bytes()
+
+    handle = await driver.start(StartSpec(cwd=str(cwd), mode="default"))
+    await driver.send(
+        handle, "What is this?", images=(DriverImage(media_type="image/png", data=png),)
+    )
+    async for event in driver.events(handle):
+        if isinstance(event, TurnResult):
+            break
+    await driver.send(handle, "What is this?")
+    async for event in driver.events(handle):
+        if isinstance(event, TurnResult):
+            break
+    await driver.close(handle)
+
+    users = [r for r in read_records(Path(environ["STUB_CLAUDE_RECORD"])) if r.event == "user"]
+    assert [(r.data, r.images) for r in users] == [
+        ({"text": "What is this?"}, [{"media_type": "image/png", "bytes": len(png)}]),
+        ({"text": "What is this?"}, None),
+    ]

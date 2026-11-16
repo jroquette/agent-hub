@@ -1,0 +1,41 @@
+version: 1
+name: joins
+description: Every trigger rule over two parallel branches, and an all_done report.
+revision: 1
+returns: report
+outcome_field: delivery
+nodes:
+  - id: lint
+    type: shell
+    command: [make, lint]
+  - id: test
+    type: shell
+    command: [make, test]
+  - id: all-green
+    type: shell
+    command: [echo, all green]
+    depends_on: [lint, test]
+  - id: any-green
+    type: shell
+    command: [echo, one green]
+    depends_on: [lint, test]
+    trigger_rule: one_success
+  - id: none-red
+    type: shell
+    command: [echo, none red]
+    depends_on: [lint, test]
+    trigger_rule: none_failed_min_one_success
+  - id: after-all-green
+    type: shell
+    command: [echo, downstream]
+    depends_on: [all-green]
+  - id: report
+    type: shell
+    command: [hub, step, report]
+    depends_on: [all-green, any-green, none-red, after-all-green]
+    trigger_rule: all_done
+    output_format:
+      type: object
+      properties:
+        delivery: {type: string, enum: [delivered, failed]}
+      required: [delivery]

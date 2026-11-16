@@ -1,0 +1,18 @@
+# Origin has no tag for the version yet: no hub branch is made, no PR opens, the run ends untagged.
+workflow: release-pin
+inputs: {issue: DEM-9, repo: demo-api, version: 0.21.0, sha: 0a1b2c3d4e5f60718293a4b5c6d7e8f901234567}
+stubs:
+  worktree:
+    output:
+      path: /ws/demo-api/.claude/worktrees/dem-9
+      branch: jdoe/dem-9
+      base: origin/trunk
+      hub: /ws/hub
+      hub_name: hub
+      check: make check
+      prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}
+      target: {path: /ws/demo-api/.claude/worktrees/dem-9, branch: jdoe/dem-9, base: origin/trunk}
+  verify: {output: {ok: false, found: false, annotated: false, peeled: "", reason: no tag v0.21.0 on origin yet}}
+  report: {output: {outcome: untagged, version: 0.21.0, pr: "", pin_pr: "", reason: the run's outcome}}
+expect: {status: done, outcome: untagged}
+reached: [worktree, verify, report]

@@ -1,0 +1,1022 @@
+"""``hub brief``: the session brief, against the hub's brief characterization (AC-15.5, AC-15.6).
+
+Ten of the eleven goldens in ``golden/brief/`` are hub
+``tests/characterization/golden/brief/*.golden`` at hub commit ``8eaebae``, byte for byte, but for
+one divergence (AGH-46): a failing CI line names the repo's branch, so six of them read ``failing
+on trunk`` where the hub's read ``failing on main``, their stdout byte count one higher. The
+eleventh, ``ci_timeout``, is AGH-605's own case, from no hub characterization. ``brief_workspace``
+rebuilds that commit's synthetic workspace (nothing is copied from the hub's brain).
+"""
+
+import datetime
+import json
+import os
+import shutil
+import stat
+import time
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+from unittest import mock
+
+import pytest
+from typer.testing import CliRunner, Result
+
+from agent_hub.cli import brief_command
+from agent_hub.cli.main import app
+from agent_hub.core.testing.builders import (
+    a_local_environments_document,
+    an_environments_document,
+)
+from agent_hub.core.testing.workflow_fakes import FakeClock
+from agent_hub.core.workspace.digest import MAX_FIELD, MAX_ITEMS, Digest, digest_lines
+
+# The conftest's workspace (tests cannot import a conftest in importlib mode).
+type Workspace = Any
+
+# The conftest's BRIEF_GH rules for api and web (the hub's calls match none).
+BRIEF_PRS = (
+    "#41 Add login endpoint\n"
+    "#40 Refactor the session storage layer so that every adapter shares one connection pool"
+    " and retry policy\n"
+    "#38 Fix pagination\n#37 Bump dependencies\n#35 Fifth PR is never shown\n"
+)
+BRIEF_RULES: list[dict[str, Any]] = [
+    {"argv_has": ["pr", "acme/api"], "stdout": BRIEF_PRS},
+    {"argv_has": ["run", "acme/api"], "stdout": "lint\nbuild\nlint\n"},
+    {"argv_has": ["acme/web"], "stdout": ""},
+]
+# How long each fake call waits at the barrier for the others; the barrier tests raise the
+# brief's deadline to BARRIER_DEADLINE, so only the barrier, not a loaded runner, can fail them.
+BARRIER_WAIT = 4.0
+BARRIER_DEADLINE = 10.0
+# The hung-gh tests check what the brief prints, not the 2 s value: they raise the deadline to
+# HUNG_GH_DEADLINE so every call that answers does so in time on a loaded runner.
+HUNG_GH_DEADLINE = 5.0
+# api's gh run list never answers within the deadline; its other calls answer as in BRIEF_RULES.
+CI_TIMEOUT_RULES: list[dict[str, Any]] = [
+    BRIEF_RULES[0],
+    {"argv_has": ["run", "acme/api"], "stdout": "never shown\n", "delay": 120},
+    BRIEF_RULES[2],
+]
+
+
+def test_rebuilds_hub_workspace_when_brief_fixture_built(brief_workspace: Workspace) -> None:
+    web = brief_workspace.ws / "web"
+    api = brief_workspace.ws / "api"
+
+    assert brief_workspace.git("rev-parse", "--short", "HEAD", cwd=web) == "dd68590"
+    assert brief_workspace.git("branch", "--show-current", cwd=web) == ""
+    assert brief_workspace.git("rev-list", "--count", "HEAD..origin/trunk", cwd=api) == "1"
+    status = brief_workspace.git("status", "--porcelain", cwd=api)
+    assert [line.split()[-1] for line in status.splitlines()] == ["README.md", "notes.txt"]
+    hub = brief_workspace.hub
+    assert brief_workspace.git("status", "--porcelain", cwd=hub) == ""
+    assert brief_workspace.git("rev-list", "--count", "HEAD..origin/trunk", cwd=hub) == "0"
+    assert not (brief_workspace.ws / "ui").exists()
+
+
+GOLDEN = Path(__file__).parent / "golden" / "brief"
+TODAY = datetime.date(2026, 1, 15)
+LONG_NOW = "---\nlast_verified: 2026-01-14\n---\n# Now\n" + "".join(
+    f"- item {index:03d}: " + "keep the brief short and current " * 3 + "\n"
+    for index in range(1, 61)
+)
+FRESH_NOW = "---\nlast_verified: 2026-01-12\n---\n# Now\nShip the collector.\nThen the CLI.\n"
+JOURNAL = "brain/journal/2026/01/"
+# Each case of hub tests/characterization/test_brief.py: the hub changes, the argv, the gh rules.
+CASES: dict[str, dict[str, Any]] = {
+    "fresh_network": {},
+    "no_network": {"argv": ("--no-network",)},
+    "stale_now": {"changes": {"brain/now.md": FRESH_NOW.replace("2026-01-12", "2026-01-11")}},
+    "undated_now": {
+        "changes": {"brain/now.md": FRESH_NOW.replace("last_verified: 2026-01-12", "type: now")}
+    },
+    "missing_now_no_journal": {
+        "changes": {
+            "brain/now.md": None,
+            f"{JOURNAL}14.md": None,
+            f"{JOURNAL}13.md": None,
+            f"{JOURNAL}10.md": None,
+            f"{JOURNAL}06.md": None,
+            f"{JOURNAL}07.md": "## Eight days ago\n",
+        }
+    },
+    "now_without_heading": {
+        "changes": {
+            "brain/now.md": (
+                "---\nlast_verified: 2026-01-12\n---\nFirst content line.\nSecond content line.\n"
+            )
+        }
+    },
+    "truncated": {"changes": {"brain/now.md": LONG_NOW}},
+    "gh_failing": {"answers": [{"stderr": "HTTP 503\n", "rc": 1}]},
+    "ci_timeout": {"answers": CI_TIMEOUT_RULES, "deadline": HUNG_GH_DEADLINE},
+    "journal_week_edge": {
+        "changes": {
+            f"{JOURNAL}14.md": None,
+            f"{JOURNAL}13.md": None,
+            f"{JOURNAL}10.md": None,
+            f"{JOURNAL}06.md": None,
+            f"{JOURNAL}08.md": "## Exactly seven days ago\n",
+            f"{JOURNAL}07.md": "## Eight days ago\n",
+        }
+    },
+}
+PINNED_COMMAND = (
+    "uvx --from git+https://github.com/jroquette/agent-hub@v0.0.1"
+    "#subdirectory=packages/agent-hub hub"
+)
+
+
+@pytest.fixture(autouse=True)
+def frozen_today(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Today is the hub goldens' frozen day; the cwd that ``run_brief`` changes is restored."""
+    monkeypatch.setattr(brief_command, "today", lambda: TODAY)
+    monkeypatch.chdir(Path.cwd())
+
+
+def run_brief(workspace: Workspace, *args: str, cwd: Path | None = None, **env: str) -> Result:
+    os.chdir(cwd or workspace.hub)
+    return CliRunner().invoke(app, ["brief", *args], env=env or None)
+
+
+def sorted_lines(data: bytes) -> list[bytes]:
+    return sorted(data.splitlines())
+
+
+def golden_of(case: str, golden_sections: Callable[[Path], dict[str, bytes]]) -> dict[str, bytes]:
+    return golden_sections(GOLDEN / f"{case}.golden")
+
+
+@pytest.mark.parametrize("case", list(CASES))
+def test_matches_golden_when_case_runs(
+    brief_workspace: Workspace,
+    golden_sections: Callable[[Path], dict[str, bytes]],
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    case: str,
+) -> None:
+    monkeypatch.chdir(brief_workspace.hub)
+    setup = CASES[case]
+    if "changes" in setup:
+        brief_workspace.commit_hub(setup["changes"])
+    if "answers" in setup:
+        brief_workspace.answer(setup["answers"])
+    if "deadline" in setup:
+        monkeypatch.setattr(brief_command, "BRIEF_DEADLINE", setup["deadline"])
+    golden = golden_of(case, golden_sections)
+
+    result = run_brief(brief_workspace, *setup.get("argv", ()))
+
+    assert result.exit_code == int(golden["rc"]), result.output
+    assert result.stdout_bytes == golden["stdout"]
+    assert result.stderr_bytes == golden["stderr"]
+    # The calls run concurrently (plan E4): their order is not kept, each call is.
+    assert sorted_lines(brief_workspace.calls()) == sorted_lines(golden["calls"])
+
+
+def test_prints_reader_lines_when_hub_json_invalid(
+    brief_workspace: Workspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(brief_workspace.hub)
+    document = json.loads((brief_workspace.hub / "hub.json").read_text())
+    del document["tracker"]
+    brief_workspace.commit_hub({"hub.json": json.dumps(document, indent=2) + "\n"})
+
+    result = run_brief(brief_workspace)
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    lines = result.stderr.splitlines()
+    assert lines
+    assert all(line.startswith("hub.json: ") for line in lines), lines
+    assert any("tracker" in line for line in lines), lines
+    assert brief_workspace.calls() == b""
+
+
+def test_prints_local_lines_when_local_file_invalid(
+    brief_workspace: Workspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(brief_workspace.hub)
+    (brief_workspace.hub / "hub.local.json").write_text('{"doctor": {}}', encoding="utf-8")
+
+    result = run_brief(brief_workspace)
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    lines = result.stderr.splitlines()
+    assert len(lines) == 1, lines
+    assert lines[0].startswith("hub.local.json: doctor: set only in hub.json"), lines
+    assert brief_workspace.calls() == b""
+
+
+def test_refuses_when_pin_differs(
+    brief_workspace: Workspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(brief_workspace.hub)
+    document = json.loads((brief_workspace.hub / "hub.json").read_text())
+    document["platform"]["version"] = "0.0.1"
+    brief_workspace.commit_hub({"hub.json": json.dumps(document, indent=2) + "\n"})
+
+    result = run_brief(brief_workspace)
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert PINNED_COMMAND in result.stderr
+    assert brief_workspace.calls() == b""
+
+
+def test_exits_two_when_not_a_hub(brief_workspace: Workspace) -> None:
+    elsewhere = brief_workspace.root / "elsewhere"
+
+    result = run_brief(brief_workspace, cwd=elsewhere)
+
+    assert result.exit_code == 2
+    assert result.stderr == (
+        f"{elsewhere}: not a hub: no hub.json in this folder"
+        " (hub brief runs in the hub folder or through ./hub)\n"
+    )
+    assert brief_workspace.calls() == b""
+
+
+def test_uses_agent_hub_root_when_run_elsewhere(
+    brief_workspace: Workspace, golden_sections: Callable[[Path], dict[str, bytes]]
+) -> None:
+    golden = golden_of("fresh_network", golden_sections)
+
+    result = run_brief(
+        brief_workspace,
+        cwd=brief_workspace.root / "elsewhere",
+        AGENT_HUB_ROOT=str(brief_workspace.hub),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout_bytes == golden["stdout"]
+    # gh runs in the hub whatever the caller's folder (plan E12).
+    assert sorted_lines(brief_workspace.calls()) == sorted_lines(golden["calls"])
+
+
+def test_keeps_repo_order_when_gh_answers_out_of_order(brief_workspace: Workspace) -> None:
+    # The hub answers last, then api, then web: the reverse of the output order.
+    brief_workspace.answer(
+        [
+            {"argv_has": ["pr", "acme/demo-hub"], "stdout": "#9 Hub change\n", "delay": 0.6},
+            {"argv_has": ["run", "acme/demo-hub"], "stdout": "hub-ci\n", "delay": 0.6},
+            *({**rule, "delay": 0.3} for rule in BRIEF_RULES[:2]),
+            {"argv_has": ["pr", "acme/web"], "stdout": "#7 Web change\n"},
+            {"argv_has": ["run", "acme/web"], "stdout": "web-ci\n"},
+        ]
+    )
+
+    result = run_brief(brief_workspace)
+
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    repos = lines[lines.index("## Repos") + 1 : lines.index("## Repos") + 9]
+    assert repos == [
+        "- hub: trunk, 0 changed file(s), 0 behind origin/trunk",
+        "  open PRs: #9 Hub change",
+        "  ⚠ failing on trunk: hub-ci",
+        "- api: trunk, 2 changed file(s), 1 behind origin/trunk",
+        "  open PRs: #41 Add login endpoint | #40 Refactor the session storage layer so that"
+        " every adapter shares on | #38 Fix pagination | #37 Bump dependencies",
+        "  ⚠ failing on trunk: build, lint",
+        "- web: detached@dd68590, 0 changed file(s), ? behind origin/trunk",
+        "  open PRs: #7 Web change",
+    ]
+
+
+def test_names_each_repo_branch_when_repo_sets_one(brief_workspace: Workspace) -> None:
+    api = brief_workspace.ws / "api"
+    brief_workspace.git(
+        "push", "-q", "origin", "refs/remotes/origin/trunk:refs/heads/master", cwd=api
+    )
+    brief_workspace.git("fetch", "-q", "origin", cwd=api)
+    document = json.loads((brief_workspace.hub / "hub.json").read_text())
+    document["repos"][0]["default_branch"] = "master"
+    brief_workspace.commit_hub({"hub.json": json.dumps(document, indent=2) + "\n"})
+    brief_workspace.answer([{"argv_has": ["run"], "stdout": "ci\n"}])
+
+    result = run_brief(brief_workspace)
+
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    assert lines[lines.index("## Repos") + 1 : lines.index("## Repos") + 8] == [
+        "- hub: trunk, 0 changed file(s), 0 behind origin/trunk",
+        "  ⚠ failing on trunk: ci",
+        "- api: trunk, 2 changed file(s), 1 behind origin/master",
+        "  ⚠ failing on master: ci",
+        "- web: detached@dd68590, 0 changed file(s), ? behind origin/trunk",
+        "  ⚠ failing on trunk: ci",
+        "- ui: not found",
+    ]
+    calls = [json.loads(line)["argv"] for line in brief_workspace.calls().splitlines()]
+    branches = sorted(
+        (argv[argv.index("-R") + 1], argv[argv.index("--branch") + 1])
+        for argv in calls
+        if argv[1] == "run"
+    )
+    assert branches == [("acme/api", "master"), ("acme/demo-hub", "trunk"), ("acme/web", "trunk")]
+
+
+def test_runs_gh_concurrently_when_network_on(
+    brief_workspace: Workspace,
+    golden_sections: Callable[[Path], dict[str, bytes]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Every call waits at a barrier for all six: made one after another, the first would give up.
+    monkeypatch.setattr(brief_command, "BRIEF_DEADLINE", BARRIER_DEADLINE)
+    folder = brief_workspace.root / "elsewhere" / "barrier"
+    folder.mkdir()
+    barrier = {"dir": str(folder), "count": 6, "wait": BARRIER_WAIT}
+    brief_workspace.answer(
+        [
+            {"argv_has": ["acme/demo-hub"], "rc": 1, "barrier": barrier},
+            *({**rule, "barrier": barrier} for rule in BRIEF_RULES),
+        ]
+    )
+
+    result = run_brief(brief_workspace)
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout_bytes == golden_of("fresh_network", golden_sections)["stdout"]
+    assert len(list(folder.iterdir())) == 6
+
+
+def test_runs_git_and_gh_together_when_network_on(
+    brief_workspace: Workspace,
+    golden_sections: Callable[[Path], dict[str, bytes]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Each repo's git branch and gh pr list need nothing else: all six wait at one barrier, so
+    # a git phase before the gh phase (or one call after another) leaves them short of six.
+    monkeypatch.setattr(brief_command, "BRIEF_DEADLINE", BARRIER_DEADLINE)
+    folder = brief_workspace.root / "elsewhere" / "barrier"
+    folder.mkdir()
+    barrier = {"dir": str(folder), "count": 6, "wait": BARRIER_WAIT}
+    brief_workspace.install_git([{"argv_has": ["branch", "--show-current"], "barrier": barrier}])
+    brief_workspace.answer(
+        [
+            {"argv_has": ["pr", "acme/demo-hub"], "rc": 1, "barrier": barrier},
+            {**BRIEF_RULES[0], "barrier": barrier},
+            BRIEF_RULES[1],
+            {"argv_has": ["pr", "acme/web"], "stdout": "", "barrier": barrier},
+            BRIEF_RULES[2],
+        ]
+    )
+    assert list(folder.iterdir()) == []
+
+    result = run_brief(brief_workspace)
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout_bytes == golden_of("fresh_network", golden_sections)["stdout"]
+    assert len(list(folder.iterdir())) == 6
+
+
+@pytest.mark.serial
+def test_shows_ci_unknown_when_gh_run_list_times_out(brief_workspace: Workspace) -> None:
+    brief_workspace.answer(CI_TIMEOUT_RULES)
+    started = time.monotonic()
+
+    result = run_brief(brief_workspace)
+
+    elapsed = time.monotonic() - started
+    assert result.exit_code == 0, result.output
+    assert elapsed < brief_command.BRIEF_DEADLINE + 1, elapsed
+    lines = result.stdout.splitlines()
+    api = lines.index("- api: trunk, 2 changed file(s), 1 behind origin/trunk")
+    assert lines[api + 2] == "  CI: unknown (timeout)"
+
+
+@pytest.mark.serial
+def test_kills_gh_child_when_gh_run_list_times_out(brief_workspace: Workspace) -> None:
+    pid_file = brief_workspace.root / "elsewhere" / "gh-pid"
+    brief_workspace.answer(
+        [BRIEF_RULES[0], {**CI_TIMEOUT_RULES[1], "pid_file": str(pid_file)}, BRIEF_RULES[2]]
+    )
+
+    started = time.monotonic()
+    result = run_brief(brief_workspace)
+    elapsed = time.monotonic() - started
+
+    assert result.exit_code == 0, result.output
+    # A child left running would hold the brief until the fake's long sleep ends.
+    assert elapsed < brief_command.BRIEF_DEADLINE + 1, elapsed
+    pid = int(pid_file.read_text())
+    end = time.monotonic() + 2
+    while time.monotonic() < end and process_exists(pid):
+        time.sleep(0.05)
+    assert not process_exists(pid)
+
+
+def process_exists(pid: int) -> bool:
+    """Whether ``pid`` still runs (or waits, unreaped, for its parent)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+class TestNetwork:
+    def test_calls_no_gh_when_no_network(
+        self, brief_workspace: Workspace, golden_sections: Callable[[Path], dict[str, bytes]]
+    ) -> None:
+        result = run_brief(brief_workspace, "--no-network")
+
+        assert result.exit_code == 0, result.output
+        assert result.stdout_bytes == golden_of("no_network", golden_sections)["stdout"]
+        assert brief_workspace.calls() == b""
+
+    def test_prints_no_pr_line_when_gh_missing(
+        self,
+        brief_workspace: Workspace,
+        golden_sections: Callable[[Path], dict[str, bytes]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        bin_dir = brief_workspace.root / "bin"
+        (bin_dir / "gh").unlink()
+        # The workspace's own folder alone on PATH, with a git that runs the real one: a gh the
+        # system has (GitHub's runners ship /usr/bin/gh) must not stand in for the missing one.
+        brief_workspace.install_git([])
+        monkeypatch.setenv("PATH", str(bin_dir))
+        assert shutil.which("gh") is None
+
+        result = run_brief(brief_workspace)
+
+        assert result.exit_code == 0, result.output
+        assert result.stdout_bytes == golden_of("no_network", golden_sections)["stdout"]
+        assert brief_workspace.calls() == b""
+
+
+def test_writes_nothing_when_brief_runs(
+    brief_workspace: Workspace, tree_digest: Callable[[Path], dict[str, Any]]
+) -> None:
+    write_digest(brief_workspace, digest_input())
+    indexes = sorted(brief_workspace.ws.glob("*/.git/index"))
+    assert len(indexes) == 3
+    before = tree_digest(brief_workspace.ws)
+    stamps = [index.stat().st_mtime_ns for index in indexes]
+
+    result = run_brief(brief_workspace)
+
+    assert result.exit_code == 0, result.output
+    assert tree_digest(brief_workspace.ws) == before
+    assert [index.stat().st_mtime_ns for index in indexes] == stamps
+
+
+CACHE = ".hub-cache"
+
+
+def cache_lines(gitignore: Path) -> list[str]:
+    """The rules of ``gitignore``: its lines but blank ones and comments."""
+    lines = gitignore.read_text(encoding="utf-8").splitlines()
+    return [line for line in lines if line.strip() and not line.startswith("#")]
+
+
+def test_writes_cache_when_write_cache_given(
+    brief_workspace: Workspace, golden_sections: Callable[[Path], dict[str, bytes]]
+) -> None:
+    hub = brief_workspace.hub
+    assert not (hub / CACHE).exists()
+    assert brief_workspace.git("status", "--porcelain", cwd=hub) == ""
+    before = time.time()
+
+    result = run_brief(brief_workspace, "--write-cache")
+
+    after = time.time()
+    assert result.exit_code == 0, result.output
+    cache = hub / CACHE / "brief.json"
+    assert stat.S_ISREG(cache.lstat().st_mode)
+    assert stat.S_IMODE(cache.stat().st_mode) == 0o600
+    document = json.loads(cache.read_bytes())
+    assert sorted(document) == ["brief", "made_at"]
+    assert document["brief"] == golden_of("fresh_network", golden_sections)["stdout"].decode()
+    assert before <= document["made_at"] <= after
+    assert cache_lines(hub / CACHE / ".gitignore") == ["*"]
+    assert brief_workspace.git("status", "--porcelain", cwd=hub) == ""
+
+
+def test_repairs_ignore_rule_when_gitignore_is_empty(brief_workspace: Workspace) -> None:
+    # A run killed between creating .gitignore and writing it leaves it empty: the next one
+    # writes the rule whole, which also hides a killed run's temp.
+    hub = brief_workspace.hub
+    (hub / CACHE).mkdir()
+    (hub / CACHE / ".gitignore").write_bytes(b"")
+    (hub / CACHE / ".gitignore.hub-tmp-0000").write_bytes(b"")
+
+    result = run_brief(brief_workspace, "--no-network", "--write-cache")
+
+    assert result.exit_code == 0, result.output
+    assert cache_lines(hub / CACHE / ".gitignore") == ["*"]
+    assert stat.S_IMODE((hub / CACHE / ".gitignore").stat().st_mode) == 0o644
+    assert brief_workspace.git("status", "--porcelain", cwd=hub) == ""
+
+
+def test_refuses_cache_folder_when_it_is_a_link(brief_workspace: Workspace) -> None:
+    target = brief_workspace.root / "elsewhere" / "planted"
+    target.mkdir()
+    (brief_workspace.hub / CACHE).symlink_to(target)
+    assert list(target.iterdir()) == []
+
+    result = run_brief(brief_workspace, "--no-network", "--write-cache")
+
+    assert list(target.iterdir()) == []
+    assert (brief_workspace.hub / CACHE).is_symlink()
+    assert result.exit_code == 1, result.output
+    assert CACHE in result.stderr
+
+
+def test_replaces_cache_atomically_when_written_twice(brief_workspace: Workspace) -> None:
+    cache = brief_workspace.hub / CACHE / "brief.json"
+    first = run_brief(brief_workspace, "--no-network", "--write-cache")
+    assert first.exit_code == 0, first.output
+    old = json.loads(cache.read_bytes())
+    assert "Ship the cache." not in old["brief"]
+    brief_workspace.commit_hub(
+        {"brain/now.md": FRESH_NOW.replace("Ship the collector.", "Ship the cache.")}
+    )
+
+    # A reader that opened the first cache keeps a whole document: the file is replaced, not
+    # rewritten in place.
+    with cache.open("rb") as reader:
+        second = run_brief(brief_workspace, "--no-network", "--write-cache")
+        held = json.loads(reader.read())
+
+    assert second.exit_code == 0, second.output
+    assert held == old
+    new = json.loads(cache.read_bytes())
+    assert "Ship the cache." in new["brief"]
+    assert new["made_at"] >= old["made_at"]
+    assert stat.S_IMODE(cache.stat().st_mode) == 0o600
+    assert sorted(path.name for path in cache.parent.iterdir()) == [".gitignore", "brief.json"]
+
+
+def test_warns_undated_when_last_verified_invalid(brief_workspace: Workspace) -> None:
+    now = FRESH_NOW.replace("2026-01-12", "2026-02-30")
+    brief_workspace.commit_hub({"brain/now.md": now})
+
+    result = run_brief(brief_workspace, "--no-network")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines()[3].startswith("> ⚠ now.md is undated: ")
+
+
+def test_replaces_bytes_when_now_not_utf8(brief_workspace: Workspace) -> None:
+    now = FRESH_NOW.encode().replace(b"Then the CLI.", b"Then the \xff CLI.")
+    brief_workspace.commit_hub({"brain/now.md": now})
+
+    result = run_brief(brief_workspace, "--no-network")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines()[4] == "Then the � CLI."
+
+
+def test_keeps_journal_when_file_not_utf8(brief_workspace: Workspace) -> None:
+    brief_workspace.commit_hub({f"{JOURNAL}13.md": b"## Fixed the \xff loader\n"})
+
+    result = run_brief(brief_workspace, "--no-network")
+
+    assert result.exit_code == 0, result.output
+    assert "- 2026-01-13: Fixed the � loader" in result.stdout.splitlines()
+
+
+def test_says_missing_when_now_is_folder(brief_workspace: Workspace) -> None:
+    now = brief_workspace.hub / "brain" / "now.md"
+    now.unlink()
+    now.mkdir()
+
+    result = run_brief(brief_workspace, "--no-network")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines()[2:5] == ["## Now", "(brain/now.md missing)", ""]
+
+
+def test_says_not_found_when_git_is_link(brief_workspace: Workspace) -> None:
+    api = brief_workspace.ws / "api"
+    (api / ".git").rename(brief_workspace.root / "elsewhere" / "api.git")
+    (api / ".git").symlink_to(brief_workspace.root / "elsewhere" / "api.git")
+
+    result = run_brief(brief_workspace, "--no-network")
+
+    assert result.exit_code == 0, result.output
+    assert "- api: not found" in result.stdout.splitlines()
+
+
+def test_ignores_git_dir_when_caller_sets_it(
+    brief_workspace: Workspace,
+    golden_sections: Callable[[Path], dict[str, bytes]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A decoy repo on another branch: read through GIT_DIR, every line would name it.
+    decoy = brief_workspace.root / "elsewhere" / "decoy"
+    decoy.mkdir()
+    brief_workspace.git("init", "-q", "-b", "decoy", cwd=decoy)
+    monkeypatch.setenv("GIT_DIR", str(decoy / ".git"))
+
+    result = run_brief(brief_workspace, "--no-network")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout_bytes == golden_of("no_network", golden_sections)["stdout"]
+
+
+@pytest.mark.serial
+def test_prints_git_state_when_gh_hangs(
+    brief_workspace: Workspace,
+    golden_sections: Callable[[Path], dict[str, bytes]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Every gh call hangs far past the deadline: the git state stays, each CI is unknown.
+    monkeypatch.setattr(brief_command, "BRIEF_DEADLINE", HUNG_GH_DEADLINE)
+    brief_workspace.answer([{"stdout": "#1 never shown\n", "delay": 120}])
+    started = time.monotonic()
+
+    result = run_brief(brief_workspace)
+
+    assert result.exit_code == 0, result.output
+    expected = with_ci_timeouts(golden_of("no_network", golden_sections)["stdout"])
+    assert result.stdout_bytes == expected
+    assert len(brief_workspace.calls().splitlines()) == 6
+    assert time.monotonic() - started < brief_command.BRIEF_DEADLINE + 2
+
+
+@pytest.mark.serial
+def test_prints_git_state_when_hung_gh_fills_workers(
+    brief_workspace: Workspace,
+    golden_sections: Callable[[Path], dict[str, bytes]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Two workers and three hung gh pr list calls: a git call queued behind gh would get no time.
+    monkeypatch.setattr(brief_command, "MAX_WORKERS", 2)
+    monkeypatch.setattr(brief_command, "BRIEF_DEADLINE", HUNG_GH_DEADLINE)
+    brief_workspace.answer([{"stdout": "#1 never shown\n", "delay": 120}])
+
+    result = run_brief(brief_workspace)
+
+    assert result.exit_code == 0, result.output
+    expected = with_ci_timeouts(golden_of("no_network", golden_sections)["stdout"])
+    assert result.stdout_bytes == expected
+
+
+def with_ci_timeouts(stdout: bytes) -> bytes:
+    """``stdout`` with ``CI: unknown (timeout)`` under each found repo of its Repos section."""
+    lines: list[str] = []
+    in_repos = False
+    for line in stdout.decode().split("\n"):
+        lines.append(line)
+        in_repos = line == "## Repos" or (in_repos and line != "")
+        if in_repos and line.startswith("- ") and not line.endswith(": not found"):
+            lines.append("  CI: unknown (timeout)")
+    return "\n".join(lines).encode()
+
+
+def test_skips_git_calls_when_deadline_spent(
+    brief_workspace: Workspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No time left for git: each value is left out, as for a git that fails.
+    monkeypatch.setattr(brief_command, "BRIEF_DEADLINE", 0)
+
+    result = run_brief(brief_workspace, "--no-network")
+
+    assert result.exit_code == 0, result.output
+    repos = result.stdout.splitlines()
+    assert "- hub: detached@, 0 changed file(s), ? behind origin/trunk" in repos
+    assert "- api: detached@, 0 changed file(s), ? behind origin/trunk" in repos
+
+
+def test_strips_control_characters_when_gh_prints_them(brief_workspace: Workspace) -> None:
+    title = "#5 \x1b[31mRed\x1b[0m title\x07 done\x9b\x7f\n"
+    brief_workspace.answer([{"argv_has": ["pr", "acme/api"], "stdout": title}])
+
+    result = run_brief(brief_workspace)
+
+    assert result.exit_code == 0, result.output
+    assert "  open PRs: #5 [31mRed[0m title done" in result.stdout.splitlines()
+
+
+def test_keeps_children_in_caller_group_when_brief_runs(brief_workspace: Workspace) -> None:
+    # The SessionStart hook kills its call's process group on its deadline: gh must be in it.
+    group_file = brief_workspace.root / "elsewhere" / "gh-group"
+    brief_workspace.answer([{"argv_has": ["pr", "acme/api"], "group_file": str(group_file)}])
+
+    result = run_brief(brief_workspace)
+
+    assert result.exit_code == 0, result.output
+    assert group_file.read_text() == str(os.getpgrp())
+
+
+def test_keeps_git_in_caller_group_when_brief_runs(
+    brief_workspace: Workspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The SessionStart hook kills its call's process group on its deadline: git must be in it.
+    real_run_child = brief_command.run_child
+    options: list[dict[str, Any]] = []
+
+    def spy(argv: list[str], **given: Any) -> Any:
+        options.append(given)
+        return real_run_child(argv, **given)
+
+    monkeypatch.setattr(brief_command, "run_child", spy)
+
+    result = run_brief(brief_workspace, "--no-network")
+
+    assert result.exit_code == 0, result.output
+    assert len(options) == 10  # three checkouts, the detached one asks for its short HEAD
+    assert all(given["own_session"] is False for given in options)
+
+
+# The spec's W and Lc on the brief workspace's repo ``api`` (AC-277.8).
+ENVIRONMENTS_BLOCK = [
+    "## Environments",
+    "- `local` (write, hub.json): docker compose stack on this machine",
+    "- `staging` (ask, hub.json); credentials: AWS profile `demo-staging`",
+    "- `live` (read, PRODUCTION, hub.json); credentials: AWS profile `demo-live-ro`,"
+    " variables `DEMO_LIVE_DB_URL`",
+    "- `jane-cloud` (write, hub.local.json); credentials: AWS profile `jane-sandbox`",
+    "Endpoints:",
+    "- `api/api` on `local`: `http://localhost:8000`",
+    "- `api/api` on `staging`: `https://api.staging.example.com`",
+    "- `api/api` on `live`: `https://api.example.com`",
+    "- `api/api` on `jane-cloud`: `https://api.jane.example.com`",
+    "- `api/orders` on `staging`: resource `demo-orders-staging`",
+    "Blocked words (the guard denies them): `prod`, `production`, `demo-live`",
+]
+# A synthetic value in a credential variable: the brief names the variable, never its value.
+CREDENTIAL_VALUE = "postgres://demo-reader@db.example.com/demo"
+
+
+def commit_environments(workspace: Workspace, local: dict[str, Any]) -> None:
+    """Commit the hub's ``hub.json`` with ``W`` on ``api`` and ``local`` as ``hub.local.json``."""
+    document = json.loads((workspace.hub / "hub.json").read_text())
+    environments = an_environments_document()
+    document["environments"] = environments["environments"]
+    document["repos"][0]["services"] = environments["repos"][0]["services"]
+    document["guard"] = {"blocked_words": environments["guard"]["blocked_words"]}
+    workspace.commit_hub(
+        {
+            "hub.json": json.dumps(document, indent=2) + "\n",
+            "hub.local.json": json.dumps(local, indent=2) + "\n",
+        }
+    )
+
+
+def environments_block(stdout: str) -> list[str]:
+    """The lines from ``## Environments`` to the footer's blank line, which ends the brief."""
+    lines = stdout.splitlines()
+    start = lines.index("## Environments")
+    assert lines[start - 1] == "", lines
+    assert lines[start - 2].startswith("- ui: "), lines
+    end = len(lines) - 3
+    assert lines[end:] == [
+        "",
+        "Linear: n/a (connector not configured for scripts).",
+        "More: brain/index.md (pull only what the task needs).",
+    ]
+    return lines[start:end]
+
+
+def test_prints_environments_block_when_files_declare_them(brief_workspace: Workspace) -> None:
+    local = a_local_environments_document()
+    local["repos"][0]["dir"] = "api"
+    commit_environments(brief_workspace, local)
+
+    result = run_brief(brief_workspace, "--no-network", DEMO_LIVE_DB_URL=CREDENTIAL_VALUE)
+
+    assert result.exit_code == 0, result.output
+    assert environments_block(result.stdout) == ENVIRONMENTS_BLOCK
+    assert CREDENTIAL_VALUE not in result.output
+    assert "demo-reader" not in result.output
+
+
+def test_shows_tightened_access_when_local_tightens(brief_workspace: Workspace) -> None:
+    # AC-277.28: the effective access, with the file it comes from.
+    commit_environments(brief_workspace, {"environments": {"staging": {"access": "read"}}})
+
+    result = run_brief(brief_workspace, "--no-network")
+
+    assert result.exit_code == 0, result.output
+    assert environments_block(result.stdout) == [
+        *ENVIRONMENTS_BLOCK[:2],
+        "- `staging` (read, hub.local.json); credentials: AWS profile `demo-staging`",
+        ENVIRONMENTS_BLOCK[3],
+        *ENVIRONMENTS_BLOCK[5:9],
+        ENVIRONMENTS_BLOCK[10],
+        "Blocked words (the guard denies them): `prod`, `production`",
+    ]
+
+
+# The owner digest in the brief (AGH-811, AC-29): ``hub digest`` writes the cache, the brief
+# shows ``digest_lines(digest, limit=3)`` under ``## Waiting on you``.
+DIGEST_NOW = datetime.datetime(2026, 1, 15, 9, 0, tzinfo=datetime.UTC)
+DIGEST_LIMIT = 3
+# The clock ``hub digest`` builds the digest at.
+DIGEST_CLOCK = "agent_hub.cli.digest_command.SystemClock"
+DIGEST_HEADING = "## Waiting on you"
+BRIEF_FOOTER = [
+    "",
+    "Linear: n/a (connector not configured for scripts).",
+    "More: brain/index.md (pull only what the task needs).",
+]
+
+
+def _hours_ago(hours: float) -> str:
+    return (DIGEST_NOW - datetime.timedelta(hours=hours)).isoformat()
+
+
+def digest_input(*, empty: bool = False) -> dict[str, Any]:
+    """The session's file: one waiting session, one ticket no one is on, one ready PR."""
+    if empty:
+        return {"version": 1, "read_at": _hours_ago(0.1), "tickets": [], "prs": []}
+    return {
+        "version": 1,
+        "read_at": _hours_ago(0.1),
+        "tickets": [
+            {
+                "id": "DEM-2",
+                "title": "Sign-up page",
+                "state": "In Progress",
+                "url": "https://linear.example/DEM/issue/DEM-2",
+                "claim": {
+                    "session": "s-cloud",
+                    "link": "https://claude.example/code/s-cloud",
+                    "live": True,
+                    "question": "Ship the new copy?",
+                    "asked_at": _hours_ago(3),
+                    "title": "DEM-2 sign-up",
+                },
+            },
+            {
+                "id": "DEM-3",
+                "title": "Password reset",
+                "state": "In Review",
+                "url": "https://linear.example/DEM/issue/DEM-3",
+                "claim": None,
+            },
+        ],
+        "prs": [
+            {
+                "repo": "acme/web",
+                "number": 7,
+                "title": "Fix footer links",
+                "url": "https://github.example/acme/web/pull/7",
+                "branch": "fix/footer",
+                "draft": False,
+                "updated_at": _hours_ago(48),
+                "mergeable_state": "clean",
+                "checks": {"success": 4},
+                "unresolved_threads": 0,
+            }
+        ],
+    }
+
+
+def write_digest(workspace: Workspace, document: dict[str, Any]) -> tuple[Result, Digest]:
+    """Run ``hub digest --input`` in the hub at ``DIGEST_NOW``; its result and the cached digest."""
+    path = workspace.root / "elsewhere" / "digest-input.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+    os.chdir(workspace.hub)
+    with mock.patch(DIGEST_CLOCK, lambda: FakeClock(DIGEST_NOW)):
+        result = CliRunner().invoke(
+            app,
+            ["digest", "--input", str(path)],
+            env={"AGENT_HUB_ROOT": str(workspace.hub), "COLUMNS": "200"},
+        )
+    assert result.exit_code == 0, result.output
+    cache = workspace.hub / CACHE / "digest.json"
+    return result, Digest.model_validate_json(cache.read_bytes())
+
+
+def with_digest(stdout: bytes, lines: tuple[str, ...]) -> bytes:
+    """``stdout`` with the digest block (a blank line, the heading, ``lines``) before the footer."""
+    shown = stdout.decode().split("\n")
+    # The brief's text has no final line break; echo adds one, so the last item is empty.
+    assert shown[-4:-1] == BRIEF_FOOTER, shown
+    return "\n".join([*shown[:-4], "", DIGEST_HEADING, *lines, *shown[-4:]]).encode()
+
+
+def digest_block(stdout: str) -> list[str]:
+    """The lines under ``## Waiting on you``, after the repos and up to the footer."""
+    lines = stdout.splitlines()
+    start = lines.index(DIGEST_HEADING)
+    assert lines[start - 1] == "", lines
+    assert lines[start - 2].startswith("- ui: "), lines
+    assert lines[-3:] == BRIEF_FOOTER, lines
+    return lines[start + 1 : -3]
+
+
+def test_shows_same_sections_as_digest_when_cache_written(
+    brief_workspace: Workspace, golden_sections: Callable[[Path], dict[str, bytes]]
+) -> None:
+    printed, digest = write_digest(brief_workspace, digest_input())
+    expected = digest_lines(digest, limit=DIGEST_LIMIT)
+    assert [line for line in expected if line.endswith(":")] == [
+        "Sessions waiting on you:",
+        "Tickets no one is on:",
+        "Ready to merge:",
+    ]
+
+    result = run_brief(brief_workspace, "--no-network")
+
+    assert result.exit_code == 0, result.output
+    assert digest_block(result.stdout) == list(expected)
+    # One item a section: the brief's lines are the ones hub digest printed, section names too.
+    assert digest_block(result.stdout) == printed.stdout.splitlines()
+    no_network = golden_of("no_network", golden_sections)["stdout"]
+    assert result.stdout_bytes == with_digest(no_network, expected)
+
+
+def test_shows_one_line_when_digest_empty(brief_workspace: Workspace) -> None:
+    printed, digest = write_digest(brief_workspace, digest_input(empty=True))
+    assert printed.stdout == "Owner digest 2026-01-15: nothing waits on you.\n"
+
+    result = run_brief(brief_workspace, "--no-network")
+
+    assert result.exit_code == 0, result.output
+    assert digest_block(result.stdout) == ["Owner digest 2026-01-15: nothing waits on you."]
+    assert digest_block(result.stdout) == list(digest_lines(digest, limit=DIGEST_LIMIT))
+
+
+# The brief reads at most this many bytes of the digest cache (plan D-5).
+DIGEST_CACHE_LIMIT = brief_command.DIGEST_CACHE_LIMIT
+
+
+def spoil_digest_cache(workspace: Workspace, how: str) -> None:
+    """Leave ``.hub-cache/digest.json`` in a state the brief must take for no digest."""
+    if how == "missing":
+        return
+    cache = workspace.hub / CACHE / "digest.json"
+    _, digest = write_digest(workspace, digest_input())
+    valid = digest.model_dump_json()
+    if how == "link":
+        target = workspace.root / "elsewhere" / "planted-digest.json"
+        target.write_text(valid, encoding="utf-8")
+        cache.unlink()
+        cache.symlink_to(target)
+    elif how == "too_big":
+        # Still one valid Digest as JSON: only its size refuses it.
+        cache.write_text(valid + " " * DIGEST_CACHE_LIMIT, encoding="utf-8")
+    else:
+        cache.write_text("not json {", encoding="utf-8")
+
+
+@pytest.mark.parametrize("how", ["missing", "link", "too_big", "not_json"])
+def test_shows_no_digest_when_cache_unreadable(
+    brief_workspace: Workspace, golden_sections: Callable[[Path], dict[str, bytes]], how: str
+) -> None:
+    spoil_digest_cache(brief_workspace, how)
+
+    result = run_brief(brief_workspace, "--no-network")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout_bytes == golden_of("no_network", golden_sections)["stdout"]
+    assert DIGEST_HEADING not in result.stdout
+
+
+def largest_digest() -> Digest:
+    """The largest digest ``hub digest`` can write: every section full, every text field at its
+    bound in 4-byte UTF-8 characters, the longest ticket id."""
+    text = "\U0001f600" * MAX_FIELD
+    ticket_id = "ABCDEFGHIJ-123456789"
+    at = _hours_ago(1)
+    return Digest.model_validate(
+        {
+            "built_at": DIGEST_NOW.isoformat(),
+            "waiting": [
+                {"title": text, "ticket": ticket_id, "question": text, "link": text, "asked_at": at}
+            ]
+            * (2 * MAX_ITEMS),
+            "idle": [{"ticket": ticket_id, "title": text, "state": text, "url": text}] * MAX_ITEMS,
+            "ready": [{"repo": text, "number": 999_999_999, "title": text, "url": text}]
+            * MAX_ITEMS,
+        }
+    )
+
+
+def test_shows_digest_under_its_own_date_when_built_on_an_earlier_day(
+    brief_workspace: Workspace,
+) -> None:
+    _, built_today = write_digest(brief_workspace, digest_input())
+    earlier = built_today.model_copy(update={"built_at": DIGEST_NOW - datetime.timedelta(days=3)})
+    cache = brief_workspace.hub / CACHE / "digest.json"
+    cache.write_bytes(earlier.model_dump_json().encode())
+
+    result = run_brief(brief_workspace, "--no-network")
+
+    assert result.exit_code == 0, result.output
+    shown = digest_block(result.stdout)
+    assert shown[0] == "Owner digest 2026-01-12"
+    assert shown == list(digest_lines(earlier, limit=DIGEST_LIMIT))
+    assert "Sessions waiting on you:" in shown
+
+
+def test_shows_digest_when_cache_holds_largest_digest(brief_workspace: Workspace) -> None:
+    digest = largest_digest()
+    cache = brief_workspace.hub / CACHE / "digest.json"
+    write_digest(brief_workspace, digest_input())
+    cache.write_bytes(digest.model_dump_json().encode())
+
+    result = run_brief(brief_workspace, "--no-network")
+
+    assert result.exit_code == 0, result.output
+    assert digest_block(result.stdout) == list(digest_lines(digest, limit=DIGEST_LIMIT))

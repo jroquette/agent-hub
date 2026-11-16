@@ -1,0 +1,38 @@
+"""The sandbox exclusions the hub's own workflow needs (AGH-134).
+
+The managed ``.claude/settings.json`` turns Claude Code's sandbox on: writes stay in the
+workspace, the network goes through a filtering proxy that SSH never crosses. The hub's own
+commands that reach a remote must run outside it, so the template lists them in
+``sandbox.excludedCommands`` and ``hub doctor``'s ``sandbox.workflow`` checks they are there.
+
+Claude Code matches an entry against the literal text of a Bash call: only a call that is exactly
+that simple command escapes (no ``cd … &&``, ``;``, pipe, redirect or ``git -C``). So ``hub
+worktree``, whose own ``git fetch`` would never match, is listed by its three spellings, and
+``hub pr-watch``, whose own ``gh`` would never match either, by its two (ADR 0063), and ``hub
+claim``, whose ``ps`` check needs the host's process table, by its two (ADR 0064); a broader
+``make *`` or ``./hub *`` is never listed (a Makefile may hold deploy targets).
+
+An excluded command still goes through Claude Code's permission prompt, unless a
+``permissions.allow`` rule matches it: the managed read-only ``gh`` rules and
+``Bash(./hub pr-watch *)``. The bare ``hub pr-watch *`` spelling has no allow rule, so it still
+asks; neither ``hub claim`` spelling has one, so both ask.
+"""
+
+from typing import Final
+
+WORKFLOW_EXCLUDED_COMMANDS: Final = (
+    "gh *",
+    "git push *",
+    "git fetch *",
+    "git pull *",
+    "git clone *",
+    "git ls-remote *",
+    "./hub worktree *",
+    "hub worktree *",
+    "make worktree *",
+    "make worktree-remove *",
+    "./hub pr-watch *",
+    "hub pr-watch *",
+    "./hub claim *",
+    "hub claim *",
+)

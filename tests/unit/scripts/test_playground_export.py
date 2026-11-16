@@ -1,0 +1,1198 @@
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import time
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+import httpx
+import pytest
+
+from scripts.playground_export import (
+    NO_SESSION,
+    SCREEN_ROUTES,
+    SHELL_ROUTES,
+    Commit,
+    DemoWeb,
+    RequestsUnavailableError,
+    Session,
+    Turn,
+    area_of,
+    background,
+    build_requests,
+    capture_routes,
+    capture_screens,
+    commit_patches,
+    conductor_logs,
+    conductor_token,
+    delivering_branches,
+    demo_web,
+    equivalent_on,
+    git,
+    hub_changes,
+    owner_sessions,
+    read_session,
+    render_brief,
+    repeated_changes,
+    route_patterns,
+    routes_of,
+    run_playwright,
+    screens_of,
+    slug_of,
+    snapshot,
+    snapshot_branch,
+    uncommitted,
+    uncommitted_patch,
+)
+from scripts.seed_demo import CHAT_SESSION
+
+ROUTES_FILE = Path(__file__).resolve().parents[3] / "apps" / "web" / "src" / "routes.tsx"
+SCREENS_DIR = ROUTES_FILE.parent / "screens"
+CREATED = datetime(2026, 10, 16, 12, tzinfo=UTC)
+
+
+def _commit(sha: str, *files: str, subject: str = "feat(web): a step", body: str = "") -> Commit:
+    return Commit(sha, subject, body, CREATED, files)
+
+
+def _bash(command: str) -> dict[str, Any]:
+    return {"kind": "tool.call", "body": {"name": "Bash", "input": {"command": command}}}
+
+
+def _said(text: str, **body: Any) -> dict[str, Any]:
+    return {
+        "kind": "user.message",
+        "at": "2026-10-16T12:08:35.454Z",
+        "body": {"text": text, **body},
+    }
+
+
+def _session(title: str, *turns: Turn, folder: str = "agent-hub", **fields: Any) -> Session:
+    return Session(f"id-{title}-{len(turns)}", title, folder, CREATED, list(turns), **fields)
+
+
+def _repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git("init", "-q", "-b", "main", cwd=repo)
+    git("config", "user.email", "owner@example.com", cwd=repo)
+    git("config", "user.name", "Owner", cwd=repo)
+    (repo / ".gitattributes").write_text("dist/** linguist-generated\n", "utf-8")
+    (repo / "app.py").write_text("one\n", "utf-8")
+    git("add", "-A", cwd=repo)
+    git("commit", "-q", "-m", "chore: start", cwd=repo)
+    return repo
+
+
+@pytest.mark.parametrize(
+    ("path", "area"),
+    [
+        ("apps/web/src/screens/skills/Catalog.tsx", "skills"),
+        ("apps/web/src/screens/agent-session/model.ts", "agent-session"),
+        ("apps/web/src/shell/ShakeToSession.tsx", "shell"),
+        ("apps/web/src/components/core.tsx", "shell"),
+        ("apps/web/src/lib/devProxy.ts", "shell"),
+        ("packages/core/src/agent_hub/core/agent_sessions/driver.py", "core"),
+        ("Makefile", "repo"),
+        ("docs/adr/0036-live-playground-and-auto-mode.md", "repo"),
+    ],
+)
+def test_places_file_in_first_matching_area_when_grouped(path: str, area: str) -> None:
+    assert area_of(path) == area
+
+
+def test_lists_every_area_screen_once_when_screens_read() -> None:
+    files = ["apps/web/src/screens/skills/Catalog.tsx", "apps/web/src/screens/skills/a.ts"]
+
+    screens, removed = screens_of([*files, "packages/core/x.py"])
+
+    assert screens == ["skills/skills"]
+    assert removed == []
+
+
+def test_gives_shell_its_representative_routes_when_routes_asked() -> None:
+    assert routes_of("shell") == SHELL_ROUTES
+    assert routes_of("core") == ()
+
+
+# AGH-431 (AC-431.3): the Environments and Tickets screen folders show on their own pages.
+def test_maps_environments_and_tickets_screens_when_routes_asked() -> None:
+    assert [route.path for route in routes_of("environments")] == ["/projects/demo/environments"]
+    assert [route.path for route in routes_of("tickets")] == ["/tickets"]
+
+
+# AGH-431 (AC-431.2): every screen folder has its routes; a hidden folder is not a screen.
+def test_maps_every_screen_folder_when_routes_listed() -> None:
+    folders = {
+        path.name
+        for path in SCREENS_DIR.iterdir()
+        if path.is_dir() and not path.name.startswith(".")
+    } - {"not-found"}
+    assert folders <= set(SCREEN_ROUTES)
+
+
+def test_puts_route_in_removed_screens_when_head_routes_lack_it() -> None:
+    routes = 'children: [{ path: "sessions", element: <S /> }, { path: "*", element: <N /> }]'
+    files = ["apps/web/src/screens/approvals/index.tsx", "apps/web/src/screens/sessions-list/a.tsx"]
+
+    screens, removed = screens_of(files, route_patterns(routes))
+
+    assert screens == ["sessions-list/sessions"]
+    assert removed == ["/approvals"]
+
+
+def test_matches_param_and_index_routes_when_head_routes_read() -> None:
+    patterns = route_patterns('{ path: "projects/:project/skills", element: <K /> }')
+    files = ["apps/web/src/screens/skills/a.tsx", "apps/web/src/shell/b.tsx"]
+
+    screens, _ = screens_of(files, patterns)
+
+    assert "skills/skills" in screens
+    assert "shell/portfolio" in screens
+
+
+def test_reads_every_route_of_routes_file_when_patterns_built() -> None:
+    patterns = route_patterns(ROUTES_FILE.read_text("utf-8"))
+    assert any(pattern.fullmatch("sessions") for pattern in patterns)
+    assert not any(pattern.fullmatch("no-such-screen") for pattern in patterns)
+
+
+def test_captures_shared_screen_once_when_two_requests_show_it() -> None:
+    routes = capture_routes(["run-detail/run", "skills/skills", "run-detail/run"])
+
+    assert [route["file"] for route in routes] == ["run-detail/run", "skills/skills"]
+    assert routes[0]["follow"] == "/runs/"
+    assert "follow" not in routes[1]
+
+
+def test_opens_demo_chat_by_its_id_when_agent_session_captured() -> None:
+    [route] = capture_routes(["agent-session/chat"])
+
+    assert route == {"file": "agent-session/chat", "path": f"/agent-sessions/{CHAT_SESSION}"}
+    assert any(
+        pattern.fullmatch(route["path"].strip("/"))
+        for pattern in route_patterns(ROUTES_FILE.read_text("utf-8"))
+    )
+
+
+def test_reads_last_token_when_log_holds_several(tmp_path: Path) -> None:
+    log = tmp_path / "conductor.log"
+    log.write_text(
+        "agent-hub at http://127.0.0.1:7420/?token=first_one\nagent-hub at http://127.0.0.1:7420/?token=second-2\n",
+        "utf-8",
+    )
+    assert conductor_token(log) == "second-2"
+
+
+def test_returns_none_when_log_missing(tmp_path: Path) -> None:
+    assert conductor_token(tmp_path / "missing.log") is None
+
+
+def test_looks_in_playground_folder_under_tmpdir_when_no_log_given(tmp_path: Path) -> None:
+    folder = f"agent-hub-playground-{os.getuid()}"
+
+    assert conductor_logs(None, {"TMPDIR": str(tmp_path)})[0] == (
+        tmp_path / folder / "agent-hub-conductor.log"
+    )
+    default = Path("/tmp", folder, "agent-hub-conductor.log")  # noqa: S108
+    assert conductor_logs(None, {"TMPDIR": ""})[0] == default
+    assert conductor_logs(None, {})[0] == default
+    assert conductor_logs(tmp_path / "x.log", {}) == [tmp_path / "x.log"]
+
+
+def test_also_looks_in_darwin_user_temp_when_on_macos(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    darwin = tmp_path / "darwin"
+    monkeypatch.setattr("scripts.playground_export.sys.platform", "darwin")
+    monkeypatch.setattr(
+        "scripts.playground_export.subprocess.run",
+        lambda *_a, **_k: subprocess.CompletedProcess([], 0, stdout=f"{darwin}/\n"),
+    )
+    folder = f"agent-hub-playground-{os.getuid()}"
+
+    assert conductor_logs(None, {"TMPDIR": str(tmp_path)}) == [
+        tmp_path / folder / "agent-hub-conductor.log",
+        darwin / folder / "agent-hub-conductor.log",
+    ]
+
+
+def test_raises_requests_unavailable_when_no_log_has_token(tmp_path: Path) -> None:
+    with pytest.raises(RequestsUnavailableError, match="make playground"):
+        owner_sessions(CREATED, commits=[], logs=[tmp_path / "missing.log"])
+
+
+def test_leaves_out_main_and_own_branch_when_delivering_branches_listed() -> None:
+    refs = ["origin", "origin/HEAD", "origin/main", "origin/dev", "origin/pr-branch"]
+    assert delivering_branches(refs, "dev") == ["origin/pr-branch"]
+
+
+def test_opens_turn_per_message_and_links_its_own_commits_when_session_read() -> None:
+    first = _commit("1" * 40, subject="feat(web): add the tabs")
+    second = _commit("2" * 40, subject="feat(web): add the tabs to Brain")
+    later = _commit("3" * 40, subject="fix(web): a step")
+    events = [
+        _said("Put tabs on the page", attachments=[{"kind": "screenshot", "bytes": 10}]),
+        _bash("git log --oneline -5"),
+        _bash('git add -A && git commit -q -m "feat(web): add the tabs\n\nWhy." && git log -1'),
+        {
+            "kind": "permission.decision",
+            "body": {"decision": "allow", "answers": {"Does it look right?": "Yes, ship it"}},
+        },
+        _said("Now fix the step"),
+        _bash("git commit -F - <<'EOF'\nfix(web): a step\n\nBody.\nEOF"),
+    ]
+
+    turns, _ = read_session(events, [first, second, later])
+
+    assert [turn.message for turn in turns] == ["Put tabs on the page", "Now fix the step"]
+    assert turns[0].screenshot is True
+    assert turns[0].commits == [first.sha]
+    assert turns[0].answers == ["Does it look right? → Yes, ship it"]
+    assert turns[1].commits == [later.sha]
+
+
+HUB = Path("/hub")
+# Each item's versions: its unit and pages, an HTTP status to answer, or None for a 404.
+type Versions = tuple[str, Sequence[Sequence[dict[str, Any]]]] | int | None
+
+
+def _wrote_draft(path: str, tool: str = "Write") -> dict[str, Any]:
+    return {"kind": "tool.call", "body": {"name": tool, "input": {"file_path": path}}}
+
+
+def _version(
+    origin: str, draft_id: str | None = None, at: datetime = CREATED + timedelta(minutes=5)
+) -> dict[str, Any]:
+    return {
+        "id": f"v-{origin}-{draft_id}-{at.isoformat()}",
+        "origin": origin,
+        "draft_id": draft_id,
+        "recorded_at": at.isoformat().replace("+00:00", "Z"),
+    }
+
+
+def _conductor(  # noqa: PLR0913 - the fake's whole state, all keyword-only
+    tmp_path: Path,
+    *,
+    sessions: Mapping[str, Sequence[dict[str, Any]]],
+    catalog: Sequence[dict[str, str]] | int = (),
+    versions: Mapping[str, Versions] | None = None,
+    seen: list[str] | None = None,
+    repeat_cursor: bool = False,
+) -> tuple[list[Path], httpx.MockTransport]:
+    """A conductor serving ``sessions`` (id to events), the hub's ``catalog`` (or a status) and
+    each item's ``versions`` (``kind/source/name`` to ``Versions``), and its token's log.
+    ``repeat_cursor`` answers the same cursor on every page."""
+    log = tmp_path / "conductor.log"
+    log.write_text("hub web at http://127.0.0.1:7420/?token=synthetic-token\n", "utf-8")
+    at = CREATED.isoformat()
+    versions = versions or {}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        path, query = request.url.path, request.url.params
+        if seen is not None:
+            seen.append(str(request.url.copy_with(scheme=None, host=None, port=None)))
+        if path == "/api/v1/agent-sessions":
+            items = [
+                {"id": sid, "title": f"Ask {sid}", "workdir_label": "hub", "created_at": at}
+                for sid in sessions
+            ]
+            return httpx.Response(200, json={"items": items})
+        if path.startswith("/api/v1/agent-sessions/"):
+            sid = path.split("/")[4]
+            return httpx.Response(200, json={"items": list(sessions[sid]), "next_after": None})
+        if path == "/api/v1/projects/agent-hub/skills":
+            if isinstance(catalog, int):
+                return httpx.Response(catalog, json={"title": "Refused"})
+            return httpx.Response(200, json={"project": "agent-hub", "items": list(catalog)})
+        if path.startswith("/api/v1/projects/agent-hub/skills/") and path.endswith("/versions"):
+            item = path.removeprefix("/api/v1/projects/agent-hub/skills/").removesuffix("/versions")
+            return _versions_reply(
+                versions.get(item), int(query.get("cursor", "0")), repeat_cursor=repeat_cursor
+            )
+        return httpx.Response(200, json={})
+
+    return [log], httpx.MockTransport(handle)
+
+
+def _versions_reply(found: Versions, index: int, *, repeat_cursor: bool) -> httpx.Response:
+    """Page ``index`` of an item's versions, or the status ``found`` names."""
+    if not isinstance(found, tuple):
+        return httpx.Response(found or 404, json={"title": "Refused"})
+    unit, pages = found
+    more = index + 1 < len(pages)
+    following = "1" if repeat_cursor else str(index + 1) if more else None
+    page = {"items": list(pages[index]), "next_cursor": following}
+    return httpx.Response(200, json={**page, "unit_path": unit})
+
+
+def _item(kind: str, name: str) -> dict[str, str]:
+    return {"id": f"{kind}/hub/{name}", "kind": kind, "source": "hub", "name": name}
+
+
+def _hub_requests(
+    conductor: tuple[list[Path], httpx.MockTransport], hub_files: list[str]
+) -> dict[str, list[str]]:
+    logs, transport = conductor
+    sessions = owner_sessions(CREATED, commits=[], logs=logs, hub=HUB, transport=transport)
+    requests = build_requests(sessions, [], hub_files=hub_files, hub_root=HUB)
+    return {request.title: request.hub_files for request in requests}
+
+
+def _versions_read(seen: Sequence[str]) -> list[str]:
+    return [url for url in seen if "/versions" in url]
+
+
+def test_credits_published_files_when_session_wrote_draft(tmp_path: Path) -> None:
+    unit = "plugin/agent-hub/skills/review"
+    conductor = _conductor(
+        tmp_path,
+        sessions={
+            "s1": [
+                _said("Make a review skill"),
+                _wrote_draft(f"{HUB}/.hub-drafts/skill-abc123/SKILL.md"),
+                _wrote_draft(f"{HUB}/.hub-drafts/skill-abc123/notes.md", tool="Edit"),
+            ],
+            "s2": [_said("Only talk"), _wrote_draft(f"{HUB}/brain/_inbox/idea.md")],
+        },
+        catalog=[_item("skill", "review"), _item("agent", "planner")],
+        versions={
+            "skill/hub/review": (
+                unit,
+                [[_version("publish", "skill-abc123"), _version("external")]],
+            ),
+            "agent/hub/planner": ("agents/p.md", [[_version("publish", "agent-abc123")]]),
+        },
+    )
+    hub_files = [f"{unit}/SKILL.md", f"{unit}/notes.md", "agents/p.md", "brain/_inbox/idea.md"]
+
+    credited = _hub_requests(conductor, hub_files)
+
+    assert credited == {
+        "Ask s1": [f"{unit}/SKILL.md", f"{unit}/notes.md"],
+        "Ask s2": ["brain/_inbox/idea.md"],
+        NO_SESSION: ["agents/p.md"],
+    }
+
+
+def test_leaves_publish_unattributed_when_no_session_wrote_its_draft(tmp_path: Path) -> None:
+    conductor = _conductor(
+        tmp_path,
+        sessions={
+            "s1": [_said("Try a hook"), _wrote_draft("/hub/.hub-drafts/hook-aaa111/hooks.json")]
+        },
+        catalog=[_item("hook", "guard")],
+        versions={"hook/hub/guard": ("hooks/hooks.json", [[_version("publish", "hook-zzz999")]])},
+    )
+
+    credited = _hub_requests(conductor, ["hooks/hooks.json"])
+
+    assert credited == {"Ask s1": [], NO_SESSION: ["hooks/hooks.json"]}
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/hub/.hub-drafts/skill-abc123/../../plugin/a.md",
+        "/other/repo/.hub-drafts/skill-abc123/a.md",
+    ],
+    ids=["dot_dot", "other_root"],
+)
+def test_credits_nothing_when_draft_path_leaves_hub(tmp_path: Path, path: str) -> None:
+    seen: list[str] = []
+    conductor = _conductor(
+        tmp_path,
+        sessions={"s1": [_said("Edit"), _wrote_draft(path)]},
+        catalog=[_item("skill", "review")],
+        versions={"skill/hub/review": ("plugin/a.md", [[_version("publish", "skill-abc123")]])},
+        seen=seen,
+    )
+
+    credited = _hub_requests(conductor, ["plugin/a.md"])
+
+    assert credited == {"Ask s1": [], NO_SESSION: ["plugin/a.md"]}
+    assert not any("/skills" in url for url in seen)
+
+
+def test_credits_relative_draft_path_when_session_wrote_it(tmp_path: Path) -> None:
+    conductor = _conductor(
+        tmp_path,
+        sessions={"s1": [_said("Edit"), _wrote_draft(".hub-drafts/agent-abc123/p.md")]},
+        catalog=[_item("agent", "p")],
+        versions={"agent/hub/p": ("agents/p.md", [[_version("publish", "agent-abc123")]])},
+    )
+
+    assert _hub_requests(conductor, ["agents/p.md"]) == {"Ask s1": ["agents/p.md"]}
+
+
+def test_credits_new_hook_scripts_when_session_wrote_them_in_draft(tmp_path: Path) -> None:
+    unit = "plugin/agent-hub/hooks/hooks.json"
+    conductor = _conductor(
+        tmp_path,
+        sessions={
+            "s1": [
+                _said("Add a hook"),
+                _wrote_draft(f"{HUB}/.hub-drafts/hook-abc123/hooks.json"),
+                _wrote_draft(f"{HUB}/.hub-drafts/hook-abc123/scripts/check.sh"),
+            ]
+        },
+        catalog=[_item("hook", "check")],
+        versions={"hook/hub/check": (unit, [[_version("publish", "hook-abc123")]])},
+    )
+    scripts = ["plugin/agent-hub/scripts/check.sh", "plugin/agent-hub/scripts/other.sh"]
+
+    credited = _hub_requests(conductor, [unit, *scripts])
+
+    assert credited == {
+        "Ask s1": [unit, "plugin/agent-hub/scripts/check.sh"],
+        NO_SESSION: ["plugin/agent-hub/scripts/other.sh"],
+    }
+
+
+def test_reads_every_versions_page_when_publish_on_later_page(tmp_path: Path) -> None:
+    seen: list[str] = []
+    unit = "plugin/agent-hub/agents/planner.md"
+    conductor = _conductor(
+        tmp_path,
+        sessions={
+            "s1": [_said("Edit the planner"), _wrote_draft("/hub/.hub-drafts/agent-b2c3d4/a.md")]
+        },
+        catalog=[_item("agent", "planner"), _item("skill", "review")],
+        versions={
+            "agent/hub/planner": (
+                unit,
+                [[_version("external")], [_version("publish", "agent-b2c3d4")]],
+            )
+        },
+        seen=seen,
+    )
+
+    credited = _hub_requests(conductor, [unit])
+
+    assert credited == {"Ask s1": [unit]}
+    pages = _versions_read(seen)
+    assert len(pages) == 2
+    assert "cursor=1" in pages[1]
+    # Only the kinds of the drafts the sessions wrote are read.
+    assert not any("/skills/skill/" in url for url in seen)
+
+
+def test_stops_paging_when_cursor_repeats(tmp_path: Path) -> None:
+    seen: list[str] = []
+    conductor = _conductor(
+        tmp_path,
+        sessions={"s1": [_said("Edit"), _wrote_draft("/hub/.hub-drafts/agent-abc123/p.md")]},
+        catalog=[_item("agent", "p")],
+        versions={"agent/hub/p": ("agents/p.md", [[_version("external")]] * 2)},
+        seen=seen,
+        repeat_cursor=True,
+    )
+
+    assert _hub_requests(conductor, []) == {"Ask s1": []}
+    assert len(_versions_read(seen)) == 2
+
+
+def test_stops_paging_when_page_cap_reached(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("scripts.playground_export.MAX_VERSION_PAGES", 3)
+    seen: list[str] = []
+    conductor = _conductor(
+        tmp_path,
+        sessions={"s1": [_said("Edit"), _wrote_draft("/hub/.hub-drafts/agent-abc123/p.md")]},
+        catalog=[_item("agent", "p")],
+        versions={"agent/hub/p": ("agents/p.md", [[_version("external")]] * 10)},
+        seen=seen,
+    )
+
+    assert _hub_requests(conductor, []) == {"Ask s1": []}
+    assert len(_versions_read(seen)) == 3
+
+
+def test_stops_paging_when_versions_older_than_sessions(tmp_path: Path) -> None:
+    seen: list[str] = []
+    old = CREATED - timedelta(hours=2)
+    conductor = _conductor(
+        tmp_path,
+        sessions={"s1": [_said("Edit"), _wrote_draft("/hub/.hub-drafts/agent-abc123/p.md")]},
+        catalog=[_item("agent", "p")],
+        versions={
+            "agent/hub/p": (
+                "agents/p.md",
+                [
+                    [_version("external"), _version("external", at=old)],
+                    [_version("publish", "agent-abc123")],
+                ],
+            )
+        },
+        seen=seen,
+    )
+
+    credited = _hub_requests(conductor, ["agents/p.md"])
+
+    assert credited == {"Ask s1": [], NO_SESSION: ["agents/p.md"]}
+    assert len(_versions_read(seen)) == 1
+
+
+def test_stops_reading_items_when_every_draft_resolved(tmp_path: Path) -> None:
+    seen: list[str] = []
+    conductor = _conductor(
+        tmp_path,
+        sessions={"s1": [_said("Edit"), _wrote_draft("/hub/.hub-drafts/agent-abc123/p.md")]},
+        catalog=[_item("agent", "p"), _item("agent", "q")],
+        versions={
+            "agent/hub/p": ("agents/p.md", [[_version("publish", "agent-abc123")]]),
+            "agent/hub/q": ("agents/q.md", [[_version("external")]]),
+        },
+        seen=seen,
+    )
+
+    assert _hub_requests(conductor, ["agents/p.md"]) == {"Ask s1": ["agents/p.md"]}
+    assert [url for url in _versions_read(seen) if "/agent/hub/q/" in url] == []
+
+
+@pytest.mark.parametrize(
+    "found",
+    [("agents/p.md", [[{"id": "v1", "origin": "publish"}]]), None, 503, 500],
+    ids=["no_draft_id", "no_versions_route", "unavailable", "server_error"],
+)
+def test_credits_nothing_for_item_when_server_predates_draft_id_or_fails(
+    tmp_path: Path, found: Versions
+) -> None:
+    conductor = _conductor(
+        tmp_path,
+        sessions={
+            "s1": [
+                _said("Edit it"),
+                _wrote_draft("/hub/.hub-drafts/agent-abc123/p.md"),
+                _wrote_draft("/hub/.hub-drafts/agent-def456/q.md"),
+            ]
+        },
+        catalog=[_item("agent", "p"), _item("agent", "q")],
+        versions={
+            "agent/hub/p": found,
+            "agent/hub/q": ("agents/q.md", [[_version("publish", "agent-def456")]]),
+        },
+    )
+
+    credited = _hub_requests(conductor, ["agents/p.md", "agents/q.md"])
+
+    assert credited == {"Ask s1": ["agents/q.md"], NO_SESSION: ["agents/p.md"]}
+
+
+def test_credits_nothing_when_catalog_not_found(tmp_path: Path) -> None:
+    conductor = _conductor(
+        tmp_path,
+        sessions={"s1": [_said("Edit"), _wrote_draft("/hub/.hub-drafts/agent-abc123/p.md")]},
+        catalog=404,
+    )
+
+    assert _hub_requests(conductor, ["agents/p.md"]) == {"Ask s1": [], NO_SESSION: ["agents/p.md"]}
+
+
+def test_raises_requests_unavailable_when_catalog_fails(tmp_path: Path) -> None:
+    conductor = _conductor(
+        tmp_path,
+        sessions={"s1": [_said("Edit"), _wrote_draft("/hub/.hub-drafts/agent-abc123/p.md")]},
+        catalog=503,
+    )
+
+    with pytest.raises(RequestsUnavailableError, match="503"):
+        _hub_requests(conductor, ["agents/p.md"])
+
+
+def test_reads_no_catalog_when_no_session_wrote_draft(tmp_path: Path) -> None:
+    seen: list[str] = []
+    conductor = _conductor(
+        tmp_path,
+        sessions={"s1": [_said("Edit"), _wrote_draft("/hub/brain/a.md")]},
+        catalog=503,
+        seen=seen,
+    )
+
+    assert _hub_requests(conductor, ["brain/a.md"]) == {"Ask s1": ["brain/a.md"]}
+    assert not any("/skills" in url for url in seen)
+
+
+def test_keeps_published_folder_to_its_own_files_when_names_share_prefix() -> None:
+    session = _session("Review", Turn("t1", "Edit"), published=["plugin/x/skills/review"])
+    hub_files = ["plugin/x/skills/review/SKILL.md", "plugin/x/skills/review-two/SKILL.md"]
+
+    requests = build_requests([session], [], hub_files=hub_files, hub_root=HUB)
+
+    assert {r.title: r.hub_files for r in requests} == {
+        "Review": ["plugin/x/skills/review/SKILL.md"],
+        NO_SESSION: ["plugin/x/skills/review-two/SKILL.md"],
+    }
+
+
+def test_credits_publish_with_hub_files_only_when_requests_built(tmp_path: Path) -> None:
+    session = _session("Review", Turn("t1", "Edit"), published=["plugin/x/skills/review"])
+
+    requests = build_requests(
+        [session],
+        [],
+        hub_root=HUB,
+        in_progress=["plugin/x/skills/review/SKILL.md"],
+        checkout=tmp_path,
+    )
+
+    assert {r.title: r.in_progress for r in requests} == {
+        "Review": [],
+        NO_SESSION: ["plugin/x/skills/review/SKILL.md"],
+    }
+
+
+def test_merges_same_title_sessions_and_keeps_unclaimed_work_when_requests_built(
+    tmp_path: Path,
+) -> None:
+    commits = [
+        _commit("4" * 40, "apps/web/src/screens/skills/a.tsx"),
+        _commit("5" * 40, "Makefile"),
+    ]
+    sessions = [
+        _session("Skills layout", Turn("t1", "Make it clearer")),
+        _session("Skills layout", Turn("t2", "Go on", commits=["4" * 40])),
+        _session(
+            "Review skill",
+            Turn("t3", "Create it"),
+            folder="hub",
+            published=["plugin/p/skills/x"],
+        ),
+        _session(
+            "Chat panel",
+            Turn("t4", "Add a panel"),
+            written=[str(tmp_path / "apps/web/src/screens/agent-session/Files.tsx")],
+        ),
+    ]
+
+    requests = build_requests(
+        sessions,
+        commits,
+        also_on={"4" * 40: "origin/pr"},
+        hub_files=["plugin/p/skills/x/SKILL.md", "notes.md"],
+        hub_root=tmp_path / "hub",
+        in_progress=["apps/web/src/screens/agent-session/Files.tsx", "loose.txt"],
+        checkout=tmp_path,
+    )
+
+    titles = [request.title for request in requests]
+    assert titles == ["Skills layout", "Review skill", "Chat panel", NO_SESSION]
+    skills, review, chat, leftover = requests
+    assert [turn.message for turn in skills.turns] == ["Make it clearer", "Go on"]
+    assert len(skills.sessions) == 2
+    assert skills.commits == ["4" * 40]
+    assert skills.screens == ["skills/skills"]
+    assert skills.also_on == {"4" * 40: "origin/pr"}
+    assert review.hub_files == ["plugin/p/skills/x/SKILL.md"]
+    assert chat.in_progress == ["apps/web/src/screens/agent-session/Files.tsx"]
+    assert chat.screens == ["agent-session/chat"]
+    assert leftover.commits == ["5" * 40]
+    assert leftover.hub_files == ["notes.md"]
+    assert leftover.in_progress == ["loose.txt"]
+
+
+def test_keeps_untitled_sessions_apart_when_requests_built() -> None:
+    sessions = [_session("", Turn("t1", "First ask")), _session("", Turn("t2", "Other ask"))]
+    sessions[1].id = "other"
+
+    requests = build_requests(sessions, [])
+
+    assert [request.title for request in requests] == ["Untitled session", "Untitled session"]
+    assert [request.turns[0].message for request in requests] == ["First ask", "Other ask"]
+
+
+def test_renders_turns_answers_and_marks_when_brief_rendered() -> None:
+    commits = [_commit("6" * 40, "apps/web/src/screens/skills/a.tsx", body="Tabs per kind.")]
+    shipped = [_commit("7" * 40, "Makefile", subject="chore: already merged")]
+    turn = Turn(
+        "2026-10-16T12:08:35.454Z",
+        "Make the page clearer",
+        screenshot=True,
+        answers=["Looks right? → Yes"],
+        commits=["6" * 40, "7" * 40],
+    )
+    requests = build_requests(
+        [_session("Skills layout", turn), _session("Just talk", Turn("t", "What if?"))],
+        commits,
+        also_on={"6" * 40: "origin/pr"},
+    )
+    requests[0].patch = "requests/01-skills-layout.patch"
+
+    brief = render_brief(
+        "a" * 40,
+        "6" * 40,
+        requests=requests,
+        commits=commits,
+        shipped=shipped,
+        missing=["screens not captured: no Chromium"],
+    )
+
+    assert "## 1. Skills layout" in brief
+    assert "patch `requests/01-skills-layout.patch`" in brief
+    assert "1. 2026-10-16 12:08 UTC (with a screenshot)" in brief
+    assert "   > Make the page clearer" in brief
+    assert "   - Answered: Looks right? → Yes" in brief
+    assert "`66666666` feat(web): a step (also on origin/pr)" in brief
+    assert "`77777777` chore: already merged (also on origin/main)" in brief
+    assert "  Tabs per kind." in brief
+    assert "`screens/skills/skills.png`" in brief
+    assert "## 2. Just talk" in brief
+    assert "Nothing made yet" in brief
+    assert "- screens not captured: no Chromium" in brief
+    assert "## Already in origin/main (left out)" in brief
+
+
+def test_slugs_title_without_accents_when_patch_named() -> None:
+    assert slug_of("Revisão de UX: a tela!") == "reviso-de-ux-a-tela"
+    assert slug_of("???") == "request"
+
+
+def test_leaves_generated_files_out_when_patches_written(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    (repo / "dist").mkdir()
+    (repo / "dist" / "bundle.js").write_text("minified\n", "utf-8")
+    (repo / "app.py").write_text("two\n", "utf-8")
+    git("add", "-A", cwd=repo)
+    git("commit", "-q", "-m", "feat: change the app", cwd=repo)
+    (repo / "dist" / "bundle.js").write_text("rebuilt\n", "utf-8")
+    git("commit", "-q", "-am", "build: rebuild", cwd=repo)
+    shas = git("rev-list", "--reverse", "HEAD~2..HEAD", cwd=repo).split()
+
+    patch = commit_patches(shas, cwd=repo)
+
+    assert "Subject: [PATCH] feat: change the app" in patch
+    assert "app.py" in patch
+    assert "bundle.js" not in patch
+    assert "build: rebuild" not in patch
+
+
+def test_finds_shared_and_cherry_picked_commits_when_branch_has_them(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    base = git("rev-parse", "HEAD", cwd=repo).strip()
+    for name in ("a", "b"):
+        (repo / f"{name}.py").write_text(f"{name}\n", "utf-8")
+        git("add", "-A", cwd=repo)
+        git("commit", "-q", "-m", f"feat: {name}", cwd=repo)
+    shared, picked = git("rev-list", "--reverse", f"{base}..HEAD", cwd=repo).split()
+    git("branch", "other", shared, cwd=repo)
+    git("checkout", "-q", "other", cwd=repo)
+    git("cherry-pick", "--allow-empty", "--keep-redundant-commits", picked, cwd=repo)
+    git("commit", "-q", "--amend", "-m", "feat: b, picked", cwd=repo)
+    git("checkout", "-q", "main", cwd=repo)
+
+    assert equivalent_on("other", base, "main", cwd=repo) == {shared, picked}
+
+
+def test_patches_new_and_changed_files_but_local_ones_when_uncommitted(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    (repo / "app.py").write_text("edited\n", "utf-8")
+    (repo / "new.py").write_text("brand new\n", "utf-8")
+    (repo / "CLAUDE.local.md").write_text("mine\n", "utf-8")
+
+    paths = uncommitted(cwd=repo)
+    patch = uncommitted_patch(paths, cwd=repo)
+
+    assert paths == ["app.py", "new.py"]
+    assert "+edited" in patch
+    assert "+brand new" in patch
+    assert git("diff", "--cached", "--name-only", cwd=repo) == ""
+
+
+def test_maps_cherry_pick_merged_back_to_first_when_range_repeats_change(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    base = git("rev-parse", "HEAD", cwd=repo).strip()
+    git("checkout", "-q", "-b", "other", cwd=repo)
+    (repo / "b.py").write_text("b\n", "utf-8")
+    git("add", "-A", cwd=repo)
+    git("commit", "-q", "-m", "feat: b", cwd=repo)
+    first = git("rev-parse", "HEAD", cwd=repo).strip()
+    git("checkout", "-q", "main", cwd=repo)
+    (repo / "c.py").write_text("c\n", "utf-8")
+    git("add", "-A", cwd=repo)
+    git("commit", "-q", "-m", "feat: c", cwd=repo)
+    git("cherry-pick", first, cwd=repo)
+    git("commit", "-q", "--amend", "-m", "feat: b, picked", cwd=repo)
+    picked = git("rev-parse", "HEAD", cwd=repo).strip()
+    git("merge", "-q", "--no-edit", "other", cwd=repo)
+
+    # Both were made in the same second: either may be the first in the log.
+    [(repeat, kept)] = repeated_changes(base, "HEAD", cwd=repo).items()
+    assert {repeat, kept} == {first, picked}
+
+
+def test_counts_repeat_as_first_commit_when_requests_built() -> None:
+    commits = [_commit("8" * 40, "Makefile")]
+    turn = Turn("t", "Do it", commits=["9" * 40])
+
+    requests = build_requests([_session("Ask", turn)], commits, same_as={"9" * 40: "8" * 40})
+
+    assert requests[0].commits == ["8" * 40]
+    assert requests[0].turns[0].commits == ["8" * 40]
+
+
+def test_names_snapshot_after_branch_prefix_else_email_when_branch_named() -> None:
+    stamp = "20261016T120000Z"
+    assert snapshot_branch("roquettejh/agh-live-dev", "x@y.z", stamp) == (
+        "roquettejh/playground-snapshot/20261016T120000Z"
+    )
+    assert snapshot_branch("main", "owner@example.com", stamp) == (
+        "owner/playground-snapshot/20261016T120000Z"
+    )
+
+
+def test_commits_uncommitted_work_on_branch_and_leaves_checkout_when_snapshot_taken(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    head = git("rev-parse", "HEAD", cwd=repo).strip()
+    (repo / "app.py").write_text("edited\n", "utf-8")
+    (repo / "new.py").write_text("brand new\n", "utf-8")
+    git("config", "user.email", "someone-else@example.com", cwd=repo)
+
+    commit = snapshot(
+        "owner/playground-snapshot/s1",
+        message="chore(dev): playground snapshot s1",
+        in_progress=uncommitted(cwd=repo),
+        cwd=repo,
+    )
+
+    branch = "owner/playground-snapshot/s1"
+    assert git("rev-parse", branch, cwd=repo).strip() == commit
+    assert git("rev-parse", f"{commit}^", cwd=repo).strip() == head
+    assert git("show", f"{commit}:app.py", cwd=repo) == "edited\n"
+    assert git("show", f"{commit}:new.py", cwd=repo) == "brand new\n"
+    assert git("log", "-1", "--format=%ae", commit, cwd=repo).strip() == "owner@example.com"
+    assert git("rev-parse", "HEAD", cwd=repo).strip() == head
+    assert git("branch", "--show-current", cwd=repo).strip() == "main"
+    assert git("status", "--porcelain", cwd=repo).split("\n")[:2] == [" M app.py", "?? new.py"]
+
+
+def test_says_how_to_go_back_when_brief_has_snapshot() -> None:
+    brief = render_brief(
+        "a" * 40, "b" * 40, requests=[], commits=[], snapshot="o/playground-snapshot/s"
+    )
+    assert "`git switch -c <name> o/playground-snapshot/s`" in brief
+
+
+def test_lists_only_owner_files_when_hub_changes_read(tmp_path: Path) -> None:
+    hub = tmp_path / "hub"
+    (hub / "plugin" / "p" / "skills" / "mine").mkdir(parents=True)
+    (hub / "hub.json").write_text("{}", "utf-8")
+    (hub / "AGENTS.md").write_text("synced", "utf-8")
+    (hub / "Makefile").write_text("edited after sync", "utf-8")
+    (hub / "AGENTS.project.md").write_text("", "utf-8")
+    (hub / ".gitignore").write_text("cache/\n", "utf-8")
+    (hub / "cache").mkdir()
+    (hub / "cache" / "x.pyc").write_text("", "utf-8")
+    (hub / "plugin" / "p" / "skills" / "mine" / "SKILL.md").write_text("mine", "utf-8")
+    lock = {
+        "files": {
+            "AGENTS.md": {"ownership": "managed", "sha256": hashlib.sha256(b"synced").hexdigest()},
+            "Makefile": {"ownership": "managed", "sha256": hashlib.sha256(b"old").hexdigest()},
+            "AGENTS.project.md": {"ownership": "seeded"},
+            ".gitignore": {"ownership": "seeded"},
+            "hub.json": {"ownership": "seeded"},
+        }
+    }
+    (hub / "hub.lock").write_text(json.dumps(lock), "utf-8")
+    git("init", "-q", cwd=hub)
+
+    files = hub_changes(hub, datetime(2026, 10, 16, tzinfo=UTC))
+
+    assert files == ["Makefile", "plugin/p/skills/mine/SKILL.md"]
+
+
+def test_skips_deleted_file_when_hub_changes_read(tmp_path: Path) -> None:
+    hub = tmp_path / "hub"
+    hub.mkdir()
+    (hub / "hub.json").write_text("{}", "utf-8")
+    (hub / "Makefile").write_text("synced", "utf-8")
+    managed = {"ownership": "managed", "sha256": hashlib.sha256(b"synced").hexdigest()}
+    (hub / "hub.lock").write_text(json.dumps({"files": {"Makefile": managed}}), "utf-8")
+    git("init", "-q", cwd=hub)
+    git("add", ".", cwd=hub)
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "sync", cwd=hub)
+    (hub / "Makefile").unlink()
+
+    assert hub_changes(hub, datetime.now(UTC) + timedelta(days=1)) == []
+
+
+def test_returns_nothing_when_folder_is_no_hub(tmp_path: Path) -> None:
+    assert hub_changes(tmp_path, datetime(2026, 10, 16, tzinfo=UTC)) == []
+
+
+# AC-PG-39.2: hub-config has its own capture route, the project's config page on the demo data.
+def test_captures_hub_config_page_when_hub_config_screen_asked() -> None:
+    [route] = capture_routes(["hub-config/config"])
+
+    assert route == {"file": "hub-config/config", "path": "/projects/demo/config"}
+    assert any(
+        pattern.fullmatch(route["path"].strip("/"))
+        for pattern in route_patterns(ROUTES_FILE.read_text("utf-8"))
+    )
+
+
+def _demo_web(login: str | None, tmp_path: Path) -> DemoWeb:
+    return DemoWeb(
+        env={"PATH": "/usr/bin"},
+        web_url="http://127.0.0.1:5001",
+        api_url="http://127.0.0.1:5002",
+        login=login,
+        logs=(tmp_path / "api.log", tmp_path / "preview.log"),
+    )
+
+
+def _fake_capture(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, web: DemoWeb, *, returncode: int = 0
+) -> list[dict[str, Any]]:
+    """``capture_screens`` with no worktree, servers or Playwright: records each Playwright run."""
+    runs: list[dict[str, Any]] = []
+
+    @contextmanager
+    def checkout(scratch: Path) -> Iterator[Path]:
+        yield tmp_path / "tree"
+
+    @contextmanager
+    def served(tree: Path, work: Path) -> Iterator[DemoWeb]:
+        yield web
+
+    def playwright(
+        given: DemoWeb, web_dir: Path, spec: str, *, extra: Mapping[str, str]
+    ) -> subprocess.CompletedProcess[str]:
+        runs.append({"web": given, "web_dir": web_dir, "spec": spec, "extra": dict(extra)})
+        return subprocess.CompletedProcess(["playwright"], returncode, "captured\n", "")
+
+    monkeypatch.setattr("scripts.playground_export.head_checkout", checkout)
+    monkeypatch.setattr("scripts.playground_export.demo_web", served)
+    monkeypatch.setattr("scripts.playground_export.run_playwright", playwright)
+    return runs
+
+
+# AC-PG-39.2: the capture hands Playwright the launch-token login (AH_CAPTURE_LOGIN), so the
+# spec trades it for the session cookie before it opens the agent-session screen.
+def test_passes_launch_token_login_when_screens_captured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    login = "http://127.0.0.1:5002/?token=synthetic-launch-token"
+    runs = _fake_capture(monkeypatch, tmp_path, _demo_web(login, tmp_path))
+    out = tmp_path / "export" / "screens"
+    out.mkdir(parents=True)
+
+    reason = capture_screens(["agent-session/chat", "hub-config/config"], out)
+
+    assert reason is None
+    [run] = runs
+    assert run["spec"] == "e2e/capture.spec.ts"
+    assert run["web_dir"] == tmp_path / "tree" / "apps" / "web"
+    assert run["extra"]["AH_CAPTURE_LOGIN"] == login
+    assert run["extra"]["AH_CAPTURE_DIR"] == str(out)
+    assert json.loads(run["extra"]["AH_CAPTURE"]) == [
+        {"file": "agent-session/chat", "path": f"/agent-sessions/{CHAT_SESSION}"},
+        {"file": "hub-config/config", "path": "/projects/demo/config"},
+    ]
+    assert (out.parent / "capture.log").read_text("utf-8") == "captured\n"
+
+
+# AC-PG-39.2: without a launch token in hub web's log, no login is passed (the spec skips it).
+def test_passes_no_login_when_hub_web_printed_no_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runs = _fake_capture(monkeypatch, tmp_path, _demo_web(None, tmp_path))
+    out = tmp_path / "screens"
+    out.mkdir()
+
+    capture_screens(["hub-config/config"], out)
+
+    [run] = runs
+    assert "AH_CAPTURE_LOGIN" not in run["extra"]
+
+
+# AC-PG-39.2: a failed capture says so and keeps the servers' logs beside the screens.
+def test_keeps_server_logs_when_playwright_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    web = _demo_web("http://127.0.0.1:5002/?token=t", tmp_path)
+    for log in web.logs:
+        log.write_text(f"{log.name} output\n", "utf-8")
+    _fake_capture(monkeypatch, tmp_path, web, returncode=1)
+    out = tmp_path / "export" / "screens"
+    out.mkdir(parents=True)
+
+    reason = capture_screens(["agent-session/chat"], out)
+
+    assert reason == "Playwright failed on some screens: see capture.log"
+    assert (out.parent / "capture-api.log").read_text("utf-8") == "api.log output\n"
+    assert (out.parent / "capture-preview.log").read_text("utf-8") == "preview.log output\n"
+
+
+# AC-PG-39.2: nothing to capture, nothing started.
+def test_starts_nothing_when_no_screen_asked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runs = _fake_capture(monkeypatch, tmp_path, _demo_web(None, tmp_path))
+
+    assert capture_screens([], tmp_path) is None
+    assert runs == []
+
+
+# AC-PG-39.2: demo_web builds its login from the launch token hub web printed in its log.
+def test_builds_login_from_logged_token_when_demo_web_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ports = iter((5002, 5001))
+    commands: list[list[str]] = []
+
+    def run(command: list[str], **_options: Any) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    @contextmanager
+    def background(command: Any, *, env: Any, cwd: Path, log: Path) -> Iterator[None]:
+        if log.name == "api.log":
+            log.write_text("agent-hub at http://127.0.0.1:5002/?token=synthetic_token-1\n")
+        yield
+
+    monkeypatch.setattr("scripts.playground_export.shutil.which", lambda _name: "/usr/bin/npm")
+    monkeypatch.setattr("scripts.playground_export.free_port", lambda: next(ports))
+    monkeypatch.setattr("scripts.playground_export.wait_until_up", lambda _url: None)
+    monkeypatch.setattr("scripts.playground_export.background", background)
+    monkeypatch.setattr("scripts.playground_export.subprocess.run", run)
+    tree = tmp_path / "tree"
+    work = tmp_path / "work"
+    work.mkdir()
+
+    with demo_web(tree, work) as web:
+        assert web.login == "http://127.0.0.1:5002/?token=synthetic_token-1"
+        assert (web.api_url, web.web_url) == ("http://127.0.0.1:5002", "http://127.0.0.1:5001")
+
+    assert any("scripts.seed_demo" in command for command in commands)
+
+
+def test_starts_vite_itself_for_preview_when_demo_web_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: AGH-648. ``npm exec`` does not pass SIGTERM on to the vite it starts, so
+    ending it left a ``vite preview`` running after each visual run."""
+    started: list[tuple[list[str], Path]] = []
+
+    @contextmanager
+    def background(command: Any, *, env: Any, cwd: Path, log: Path) -> Iterator[None]:
+        started.append((list(command), cwd))
+        if log.name == "api.log":
+            log.write_text("agent-hub at http://127.0.0.1:5002/?token=synthetic_token-1\n")
+        yield
+
+    monkeypatch.setattr("scripts.playground_export.shutil.which", lambda _name: "/usr/bin/npm")
+    monkeypatch.setattr("scripts.playground_export.free_port", lambda: 5001)
+    monkeypatch.setattr("scripts.playground_export.wait_until_up", lambda _url: None)
+    monkeypatch.setattr("scripts.playground_export.background", background)
+    monkeypatch.setattr(
+        "scripts.playground_export.subprocess.run",
+        lambda command, **_options: subprocess.CompletedProcess(command, 0, "", ""),
+    )
+    tree, work = tmp_path / "tree", tmp_path / "work"
+    work.mkdir()
+    web_dir = tree / "apps" / "web"
+
+    with demo_web(tree, work):
+        pass
+
+    [(preview, cwd)] = [(command, cwd) for command, cwd in started if "preview" in command]
+    assert preview[:2] == [str(web_dir / "node_modules" / ".bin" / "vite"), "preview"]
+    assert "npm" not in " ".join(preview)
+    assert cwd == web_dir
+
+
+# A server that starts no process of its own, beating on a file until it is ended (30 s at most).
+BEATING_SERVER = """
+import sys, time
+deadline = time.monotonic() + 30
+while time.monotonic() < deadline:
+    with open(sys.argv[1], "a") as beat:
+        beat.write(".")
+    time.sleep(0.05)
+"""
+
+
+def test_ends_server_when_block_fails(tmp_path: Path) -> None:
+    beats = tmp_path / "beats"
+    command = [sys.executable, "-c", BEATING_SERVER, str(beats)]
+    deadline = time.monotonic() + 15
+
+    with (
+        pytest.raises(RuntimeError, match="the test failed"),
+        background(command, env=os.environ, cwd=tmp_path, log=tmp_path / "server.log"),
+    ):
+        while not (beats.exists() and beats.stat().st_size > 0):
+            assert time.monotonic() < deadline, "the server never started"
+            time.sleep(0.05)
+        raise RuntimeError("the test failed")
+
+    seen = beats.stat().st_size
+    time.sleep(0.5)
+    assert beats.stat().st_size == seen
+
+
+# AGH-699: hub web imports the hook spool of its XDG_STATE_HOME when it starts, so the scratch
+# hub web must not take the developer's spooled events into the demo database.
+def test_keeps_hook_spool_under_work_when_demo_web_serves_scratch_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    servers: dict[str, Mapping[str, str]] = {}
+
+    def run(command: list[str], **_options: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    @contextmanager
+    def background(command: Any, *, env: Mapping[str, str], cwd: Path, log: Path) -> Iterator[None]:
+        servers[log.name] = env
+        yield
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "developer-state"))
+    monkeypatch.setattr("scripts.playground_export.shutil.which", lambda _name: "/usr/bin/npm")
+    monkeypatch.setattr("scripts.playground_export.free_port", iter((5002, 5001)).__next__)
+    monkeypatch.setattr("scripts.playground_export.wait_until_up", lambda _url: None)
+    monkeypatch.setattr("scripts.playground_export.background", background)
+    monkeypatch.setattr("scripts.playground_export.subprocess.run", run)
+    work = tmp_path / "work"
+    work.mkdir()
+
+    with demo_web(tmp_path / "tree", work):
+        pass
+
+    assert Path(servers["api.log"]["XDG_STATE_HOME"]).parent == work
+
+
+# AC-PG-39.2: run_playwright passes the capture's variables on to Playwright's environment.
+def test_passes_capture_variables_when_playwright_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: dict[str, Any] = {}
+
+    def run(command: list[str], **options: Any) -> subprocess.CompletedProcess[str]:
+        seen.update(command=command, env=options["env"])
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr("scripts.playground_export.shutil.which", lambda _name: "/usr/bin/npm")
+    monkeypatch.setattr("scripts.playground_export.chromium_executable", lambda _env: None)
+    monkeypatch.setattr("scripts.playground_export.subprocess.run", run)
+    login = "http://127.0.0.1:5002/?token=t"
+
+    run_playwright(
+        _demo_web(login, tmp_path),
+        tmp_path / "web",
+        "e2e/capture.spec.ts",
+        extra={"AH_CAPTURE_LOGIN": login},
+    )
+
+    assert seen["env"]["AH_CAPTURE_LOGIN"] == login
+    assert seen["env"]["AGENT_HUB_WEB_URL"] == "http://127.0.0.1:5001"
+    assert "AGENT_HUB_CHROMIUM" not in seen["env"]
+    assert seen["command"][-1] == "e2e/capture.spec.ts"

@@ -1,0 +1,18 @@
+[project]
+name = "agent-hub-generator"
+version = "0.1.0"
+description = "Generator of agent-hub: renders a hub's files from its hub.json."
+license = "Apache-2.0"
+requires-python = ">=3.14"
+dependencies = ["agent-hub-core", "jsonschema>=4.26", "pyyaml>=6.0.2", "referencing>=0.28.4"]
+
+[tool.uv.sources]
+agent-hub-core = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# agent_hub is an implicit namespace package shared by every distribution.
+packages = ["src/agent_hub"]

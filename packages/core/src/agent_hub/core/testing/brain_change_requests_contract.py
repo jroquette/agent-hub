@@ -1,0 +1,448 @@
+"""The ``BrainChangeRequests`` contract suite (ADR 0024): the in-memory fake and the ``hub_git``
+adapter honour it.
+
+An implementation's ``tests/contract/`` provides two fixtures: ``brain_origin``, a
+``BrainOrigin`` probe of the hub's ``origin`` (empty default branch, no pull request), and
+``brain_change_requests``, the adapter acting on it; then it declares
+``class Test<Implementation>(BrainChangeRequestsContract)``. Checks raise ``AssertionError`` by
+hand: core ships this suite without depending on pytest. Paths given to the probe are relative
+to the hub root (``brain/_inbox/x.md``).
+"""
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Protocol
+
+from agent_hub.core.brain.brain_path import BRAIN_FOLDER
+from agent_hub.core.brain.frontmatter import split_frontmatter
+from agent_hub.core.learnings.brain_change_requests import (
+    BrainChange,
+    BrainChangeBatch,
+    BrainChangeRequests,
+    BrainProposal,
+    ChangeRequestConflictError,
+    ChangeRequestResult,
+)
+from agent_hub.core.testing.builders import a_brain_change, a_brain_proposal
+
+NOTE = "_inbox/testing-x.md"
+NOTE_TEXT = "---\ntype: learning\nstatus: proposed\n---\n# Testing x\n\nRun it first.\n"
+ACCEPTED = "learnings/testing-x.md"
+ARCHIVED = "_inbox/_archive/testing-x.md"
+OTHER_NOTE = "_inbox/other-y.md"
+OTHER_TEXT = "---\ntype: learning\nstatus: proposed\n---\n# Other y\n\nSkip it.\n"
+OTHER_ARCHIVED = "_inbox/_archive/other-y.md"
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class OriginCommit:
+    """The head commit of a branch: author and message."""
+
+    author_name: str
+    author_email: str
+    message: str
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class OpenedPullRequest:
+    """A pull request the adapter opened."""
+
+    url: str
+    head: str
+    base: str
+    title: str
+    body: str
+
+
+class BrainOrigin(Protocol):
+    """What the suite reads and seeds of the hub's ``origin``."""
+
+    @property
+    def hub_path(self) -> str:
+        """The hub checkout the changes name."""
+        ...
+
+    @property
+    def hub_repo(self) -> str:
+        """The hub's GitHub ``owner/name``."""
+        ...
+
+    @property
+    def default_branch(self) -> str:
+        """The origin's default branch."""
+        ...
+
+    def put_on_default(self, path: str, text: str) -> None:
+        """Commit ``text`` at the hub-relative ``path`` on the default branch."""
+        ...
+
+    def file_on(self, branch: str, path: str) -> str | None:
+        """The text at ``path`` on ``branch``; None when absent (or no such branch)."""
+        ...
+
+    def branch_names(self) -> frozenset[str]:
+        """The origin's branches."""
+        ...
+
+    def head_commit(self, branch: str) -> OriginCommit | None:
+        """The head commit of ``branch``; None when there is no such branch."""
+        ...
+
+    def pull_requests(self) -> tuple[OpenedPullRequest, ...]:
+        """The pull requests opened so far, in order."""
+        ...
+
+
+def _check(condition: bool, message: str) -> None:  # noqa: FBT001 -- an assertion's condition
+    if not condition:
+        raise AssertionError(message)
+
+
+def _in_brain(path: str) -> str:
+    return f"{BRAIN_FOLDER}/{path}"
+
+
+def _change(origin: BrainOrigin, **overrides: object) -> BrainChange:
+    return a_brain_change(
+        hub_path=origin.hub_path,
+        hub_repo=origin.hub_repo,
+        default_branch=origin.default_branch,
+        **overrides,
+    )
+
+
+def _proposal(origin: BrainOrigin, **overrides: object) -> BrainProposal:
+    return a_brain_proposal(
+        hub_path=origin.hub_path,
+        hub_repo=origin.hub_repo,
+        default_branch=origin.default_branch,
+        **overrides,
+    )
+
+
+def _rejection(origin: BrainOrigin) -> BrainChange:
+    return _change(
+        origin,
+        action="reject",
+        destination=ARCHIVED,
+        frontmatter={"status": "rejected", "rejected_reason": "Duplicate of x"},
+        branch="demo/learning-reject-testing-x",
+        title="Reject learning: Testing x",
+    )
+
+
+def _batch(origin: BrainOrigin) -> BrainChangeBatch:
+    """Accept ``NOTE`` and reject ``OTHER_NOTE`` in one batch."""
+    rejection = _rejection(origin).model_copy(
+        update={"note": OTHER_NOTE, "destination": OTHER_ARCHIVED}
+    )
+    accepted = _change(origin)
+    return BrainChangeBatch(
+        hub_path=origin.hub_path,
+        hub_repo=origin.hub_repo,
+        default_branch=origin.default_branch,
+        branch_prefix="demo/",
+        slug="20261029-120000",
+        changes=(accepted, rejection),
+        author=accepted.author,
+        title="Triage learnings: 1 accepted, 1 rejected",
+        body="- Accept Testing x\n- Reject Other y\n",
+        commit_message="docs(brain): triage 2 learnings",
+    )
+
+
+def _refused(
+    action: Callable[[], ChangeRequestResult], origin: BrainOrigin
+) -> ChangeRequestConflictError:
+    branches = origin.branch_names()
+    pulls = origin.pull_requests()
+    try:
+        action()
+    except ChangeRequestConflictError as error:
+        _check(bool(error.reason), "a conflict names its reason")
+        _check(origin.branch_names() == branches, "a refused change pushes no branch")
+        _check(origin.pull_requests() == pulls, "a refused change opens no pull request")
+        return error
+    raise AssertionError("expected ChangeRequestConflictError")
+
+
+class BrainChangeRequestsContract:
+    """Accept, reject and propose open one PR from one new branch and never touch the default
+    branch; a retried accept or reject adopts the open PR of a branch already pushed, a repeated
+    proposal is refused."""
+
+    def test_reports_available_when_hub_ready(
+        self, brain_change_requests: BrainChangeRequests, brain_origin: BrainOrigin
+    ) -> None:
+        _check(brain_change_requests.availability(brain_origin.hub_path) is None, "available")
+
+    def test_moves_note_on_new_branch_when_accepted(
+        self, brain_change_requests: BrainChangeRequests, brain_origin: BrainOrigin
+    ) -> None:
+        brain_origin.put_on_default(_in_brain(NOTE), NOTE_TEXT)
+        change = _change(brain_origin)
+
+        result = brain_change_requests.accept(change)
+
+        moved = brain_origin.file_on(change.branch, _in_brain(ACCEPTED))
+        _check(result.branch == change.branch, "the result names the pushed branch")
+        _check(moved is not None, "the note is at its destination on the branch")
+        fields = split_frontmatter(moved or "").fields
+        _check(fields.get("status") == "accepted", "the frontmatter is set")
+        _check(fields.get("type") == "learning", "other frontmatter fields are kept")
+        _check(brain_origin.file_on(change.branch, _in_brain(NOTE)) is None, "inbox note moved")
+        commit = brain_origin.head_commit(change.branch)
+        _check(commit is not None, "the branch has a commit")
+        _check(
+            commit is not None
+            and (commit.author_name, commit.author_email)
+            == (change.author.name, change.author.email),
+            "the commit is by the hub's author",
+        )
+        _check(
+            commit is not None and commit.message.strip() == change.commit_message,
+            "the commit message is the change's, with no trailer",
+        )
+
+    def test_writes_edited_body_with_frontmatter_when_accepted_with_edit(
+        self, brain_change_requests: BrainChangeRequests, brain_origin: BrainOrigin
+    ) -> None:
+        brain_origin.put_on_default(_in_brain(NOTE), NOTE_TEXT)
+        change = _change(brain_origin, note_body="# Testing x\n\nRun it first, then check.\n")
+
+        brain_change_requests.accept(change)
+
+        moved = split_frontmatter(brain_origin.file_on(change.branch, _in_brain(ACCEPTED)) or "")
+        _check(moved.body == "# Testing x\n\nRun it first, then check.\n", "the body is the edit")
+        _check(moved.fields.get("type") == "learning", "the frontmatter is kept")
+        _check(moved.fields.get("status") == "accepted", "the frontmatter is set")
+
+    def test_leaves_default_branch_when_accepted(
+        self, brain_change_requests: BrainChangeRequests, brain_origin: BrainOrigin
+    ) -> None:
+        brain_origin.put_on_default(_in_brain(NOTE), NOTE_TEXT)
+        before = brain_origin.head_commit(brain_origin.default_branch)
+
+        brain_change_requests.accept(_change(brain_origin))
+
+        default = brain_origin.default_branch
+        _check(brain_origin.head_commit(default) == before, "the default branch did not move")
+        _check(brain_origin.file_on(default, _in_brain(NOTE)) == NOTE_TEXT, "inbox note kept")
+        _check(brain_origin.file_on(default, _in_brain(ACCEPTED)) is None, "nothing added")
+
+    def test_opens_one_pull_request_when_accepted(
+        self, brain_change_requests: BrainChangeRequests, brain_origin: BrainOrigin
+    ) -> None:
+        brain_origin.put_on_default(_in_brain(NOTE), NOTE_TEXT)
+        change = _change(brain_origin)
+
+        result = brain_change_requests.accept(change)
+
+        pulls = brain_origin.pull_requests()
+        _check(len(pulls) == 1, "one pull request")
+        pull = pulls[0]
+        _check(pull.url == result.pr_url, "the result names the pull request")
+        _check(
+            result.pr_url.startswith(f"https://github.com/{brain_origin.hub_repo}/pull/"),
+            "the pull request is in the hub's repo",
+        )
+        _check((pull.head, pull.base) == (change.branch, brain_origin.default_branch), "refs")
+        _check((pull.title, pull.body) == (change.title, change.body), "the change's text")
+
+    def test_archives_note_with_reason_when_rejected(
+        self, brain_change_requests: BrainChangeRequests, brain_origin: BrainOrigin
+    ) -> None:
+        brain_origin.put_on_default(_in_brain(NOTE), NOTE_TEXT)
+        change = _rejection(brain_origin)
+
+        brain_change_requests.reject(change)
+
+        archived = brain_origin.file_on(change.branch, _in_brain(ARCHIVED))
+        _check(archived is not None, "the note is archived on the branch")
+        fields = split_frontmatter(archived or "").fields
+        _check(fields.get("rejected_reason") == "Duplicate of x", "the reason is recorded")
+        _check(brain_origin.file_on(change.branch, _in_brain(NOTE)) is None, "inbox note moved")
+        _check(
+            brain_origin.file_on(brain_origin.default_branch, _in_brain(NOTE)) == NOTE_TEXT,
+            "the default branch keeps the note",
+        )
+
+    def test_refuses_note_when_absent_from_default_branch(
+        self, brain_change_requests: BrainChangeRequests, brain_origin: BrainOrigin
+    ) -> None:
+        change = _change(brain_origin)
+
+        _refused(lambda: brain_change_requests.accept(change), brain_origin)
+
+    def test_refuses_destination_when_taken(
+        self, brain_change_requests: BrainChangeRequests, brain_origin: BrainOrigin
+    ) -> None:
+        brain_origin.put_on_default(_in_brain(NOTE), NOTE_TEXT)
+        brain_origin.put_on_default(_in_brain(ACCEPTED), "# Taken\n")
+        change = _change(brain_origin)
+
+        _refused(lambda: brain_change_requests.accept(change), brain_origin)
+
+    def test_adopts_open_pull_request_when_branch_exists(
+        self, brain_change_requests: BrainChangeRequests, brain_origin: BrainOrigin
+    ) -> None:
+        brain_origin.put_on_default(_in_brain(NOTE), NOTE_TEXT)
+        change = _change(brain_origin)
+        first = brain_change_requests.accept(change)
+        head = brain_origin.head_commit(change.branch)
+
+        again = brain_change_requests.accept(change)
+
+        _check(again == first, "a retry returns the pull request already open for the branch")
+        _check(len(brain_origin.pull_requests()) == 1, "a retry opens no second pull request")
+        _check(brain_origin.head_commit(change.branch) == head, "the branch is kept as it was")
+
+    def test_refuses_destination_when_under_decisions(
+        self, brain_change_requests: BrainChangeRequests, brain_origin: BrainOrigin
+    ) -> None:
+        brain_origin.put_on_default(_in_brain(NOTE), NOTE_TEXT)
+        change = _change(brain_origin, destination="decisions/testing-x.md")
+
+        _refused(lambda: brain_change_requests.accept(change), brain_origin)
+
+    def test_refuses_rejection_when_destination_not_archive(
+        self, brain_change_requests: BrainChangeRequests, brain_origin: BrainOrigin
+    ) -> None:
+        brain_origin.put_on_default(_in_brain(NOTE), NOTE_TEXT)
+        change = _rejection(brain_origin).model_copy(update={"destination": ACCEPTED})
+
+        _refused(lambda: brain_change_requests.reject(change), brain_origin)
+
+    def test_adds_one_note_on_new_branch_when_proposed(
+        self, brain_change_requests: BrainChangeRequests, brain_origin: BrainOrigin
+    ) -> None:
+        brain_origin.put_on_default(_in_brain(NOTE), NOTE_TEXT)
+        proposal = _proposal(brain_origin)
+
+        result = brain_change_requests.propose(proposal)
+
+        _check(result.branch == proposal.branch, "the result names the pushed branch")
+        added = brain_origin.file_on(proposal.branch, _in_brain(proposal.note))
+        _check(added == proposal.text, "the note on the branch is the proposal's text")
+        _check(
+            brain_origin.file_on(proposal.branch, _in_brain(NOTE)) == NOTE_TEXT,
+            "the default branch's other files are kept on the branch",
+        )
+        commit = brain_origin.head_commit(proposal.branch)
+        _check(
+            commit is not None
+            and (commit.author_name, commit.author_email)
+            == (proposal.author.name, proposal.author.email),
+            "the commit is by the hub's author",
+        )
+        _check(
+            commit is not None and commit.message.strip() == proposal.commit_message,
+            "the commit message is the proposal's, with no trailer",
+        )
+
+    def test_leaves_default_branch_when_proposed(
+        self, brain_change_requests: BrainChangeRequests, brain_origin: BrainOrigin
+    ) -> None:
+        brain_origin.put_on_default(_in_brain(NOTE), NOTE_TEXT)
+        before = brain_origin.head_commit(brain_origin.default_branch)
+        proposal = _proposal(brain_origin)
+
+        brain_change_requests.propose(proposal)
+
+        default = brain_origin.default_branch
+        _check(brain_origin.head_commit(default) == before, "the default branch did not move")
+        _check(
+            brain_origin.file_on(default, _in_brain(proposal.note)) is None,
+            "the note is not on the default branch",
+        )
+
+    def test_opens_one_pull_request_when_proposed(
+        self, brain_change_requests: BrainChangeRequests, brain_origin: BrainOrigin
+    ) -> None:
+        proposal = _proposal(brain_origin)
+
+        result = brain_change_requests.propose(proposal)
+
+        pulls = brain_origin.pull_requests()
+        _check(len(pulls) == 1, "one pull request")
+        pull = pulls[0]
+        _check(pull.url == result.pr_url, "the result names the pull request")
+        _check(
+            result.pr_url.startswith(f"https://github.com/{brain_origin.hub_repo}/pull/"),
+            "the pull request is in the hub's repo",
+        )
+        _check((pull.head, pull.base) == (proposal.branch, brain_origin.default_branch), "refs")
+        _check((pull.title, pull.body) == (proposal.title, proposal.body), "the proposal's text")
+
+    def test_refuses_proposal_when_note_on_default_branch(
+        self, brain_change_requests: BrainChangeRequests, brain_origin: BrainOrigin
+    ) -> None:
+        proposal = _proposal(brain_origin)
+        brain_origin.put_on_default(_in_brain(proposal.note), NOTE_TEXT)
+
+        error = _refused(lambda: brain_change_requests.propose(proposal), brain_origin)
+
+        _check(error.reason == f"note exists: brain/{proposal.note}", "the reason names the note")
+
+    def test_refuses_proposal_when_branch_on_origin(
+        self, brain_change_requests: BrainChangeRequests, brain_origin: BrainOrigin
+    ) -> None:
+        proposal = _proposal(brain_origin)
+        brain_change_requests.propose(proposal)
+        head = brain_origin.head_commit(proposal.branch)
+
+        error = _refused(lambda: brain_change_requests.propose(proposal), brain_origin)
+
+        _check(error.reason == f"branch exists: {proposal.branch}", "the reason names the branch")
+        _check(len(brain_origin.pull_requests()) == 1, "a repeat opens no second pull request")
+        _check(brain_origin.head_commit(proposal.branch) == head, "the branch is not adopted")
+
+    def test_applies_every_change_in_one_pull_request_when_batched(
+        self, brain_change_requests: BrainChangeRequests, brain_origin: BrainOrigin
+    ) -> None:
+        brain_origin.put_on_default(_in_brain(NOTE), NOTE_TEXT)
+        brain_origin.put_on_default(_in_brain(OTHER_NOTE), OTHER_TEXT)
+        batch = _batch(brain_origin)
+
+        result = brain_change_requests.decide_batch(batch)
+
+        branch = batch.branch
+        _check(result.branch == branch, "the result names the triage branch")
+        accepted = split_frontmatter(brain_origin.file_on(branch, _in_brain(ACCEPTED)) or "")
+        archived = split_frontmatter(brain_origin.file_on(branch, _in_brain(OTHER_ARCHIVED)) or "")
+        _check(accepted.fields.get("status") == "accepted", "the accepted note is in the brain")
+        _check(archived.fields.get("status") == "rejected", "the rejected note is archived")
+        _check(brain_origin.file_on(branch, _in_brain(NOTE)) is None, "inbox note moved")
+        _check(brain_origin.file_on(branch, _in_brain(OTHER_NOTE)) is None, "other note moved")
+        pulls = brain_origin.pull_requests()
+        _check(len(pulls) == 1, "one pull request for the whole batch")
+        _check((pulls[0].head, pulls[0].title) == (branch, batch.title), "the batch's PR")
+        commit = brain_origin.head_commit(branch)
+        _check(
+            commit is not None and commit.message.strip() == batch.commit_message,
+            "one commit with the batch's message",
+        )
+        default = brain_origin.default_branch
+        _check(brain_origin.file_on(default, _in_brain(NOTE)) == NOTE_TEXT, "default untouched")
+
+    def test_refuses_whole_batch_when_one_destination_taken(
+        self, brain_change_requests: BrainChangeRequests, brain_origin: BrainOrigin
+    ) -> None:
+        brain_origin.put_on_default(_in_brain(NOTE), NOTE_TEXT)
+        brain_origin.put_on_default(_in_brain(OTHER_NOTE), OTHER_TEXT)
+        brain_origin.put_on_default(_in_brain(OTHER_ARCHIVED), "# Taken\n")
+        batch = _batch(brain_origin)
+
+        _refused(lambda: brain_change_requests.decide_batch(batch), brain_origin)
+
+    def test_refuses_batch_when_branch_on_origin(
+        self, brain_change_requests: BrainChangeRequests, brain_origin: BrainOrigin
+    ) -> None:
+        brain_origin.put_on_default(_in_brain(NOTE), NOTE_TEXT)
+        brain_origin.put_on_default(_in_brain(OTHER_NOTE), OTHER_TEXT)
+        batch = _batch(brain_origin)
+        brain_change_requests.decide_batch(batch)
+
+        error = _refused(lambda: brain_change_requests.decide_batch(batch), brain_origin)
+
+        _check(error.reason == f"branch exists: {batch.branch}", "the reason names the branch")

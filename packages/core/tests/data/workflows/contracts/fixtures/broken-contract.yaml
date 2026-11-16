@@ -1,0 +1,8 @@
+# open-pr's stub breaks its output_format (no url): the node fails output_contract, never
+# retried on a command, and everything after it skips.
+workflow: contracts
+stubs:
+  open-pr: {output: {number: 7}}
+expect: {status: failed, outcome: null}
+failed: [open-pr]
+reached: [open-pr]

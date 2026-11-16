@@ -1,0 +1,447 @@
+from collections.abc import Mapping, Sequence
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+import agent_hub.cli.run_children as children
+from agent_hub.cli.child_process import ChildResult
+from agent_hub.cli.run_children import (
+    RunChildren,
+    RunOptions,
+    pr_view_command,
+    push_env,
+    session_env,
+)
+from agent_hub.cli.worktree_steps import worktree_task
+from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.scenarios.credentials import CredentialNames
+from agent_hub.core.testing.builders import (
+    a_conventions_document,
+    a_hub_document,
+    a_second_repo,
+    an_issue,
+)
+
+OVERRIDES = [
+    ("core.fsmonitor", "false"),
+    ("push.gpgSign", "false"),
+    ("core.hooksPath", "/dev/null"),
+]
+
+
+def pairs(env: dict[str, str]) -> list[tuple[str, str]]:
+    count = int(env["GIT_CONFIG_COUNT"])
+    return [(env[f"GIT_CONFIG_KEY_{i}"], env[f"GIT_CONFIG_VALUE_{i}"]) for i in range(count)]
+
+
+def test_adds_overrides_when_caller_sets_none() -> None:
+    token = "y" * 8
+    env = push_env({"PATH": "/bin", "LINEAR_API_KEY": "x", "GH_TOKEN": token})
+
+    assert pairs(env) == OVERRIDES
+    assert env["GH_TOKEN"] == token
+    assert "LINEAR_API_KEY" not in env
+
+
+def test_keeps_other_git_config_variables_when_overrides_added() -> None:
+    env = push_env({"GIT_CONFIG_GLOBAL": "/home/x/.gitconfig", "GIT_CONFIG_NOSYSTEM": "1"})
+
+    assert env["GIT_CONFIG_GLOBAL"] == "/home/x/.gitconfig"
+    assert env["GIT_CONFIG_NOSYSTEM"] == "1"
+
+
+def test_appends_overrides_when_caller_sets_some() -> None:
+    caller = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "user.name", "GIT_CONFIG_VALUE_0": "J"}
+
+    assert pairs(push_env(caller)) == [("user.name", "J"), *OVERRIDES]
+
+
+@pytest.mark.parametrize(
+    "count", ["", "x", "-1", "\N{SUPERSCRIPT TWO}", "\N{ARABIC-INDIC DIGIT ONE}"]
+)
+def test_replaces_count_when_caller_count_invalid(count: str) -> None:
+    env = push_env(
+        {"GIT_CONFIG_COUNT": count, "GIT_CONFIG_KEY_0": "user.name", "GIT_CONFIG_GLOBAL": "/g"}
+    )
+
+    assert pairs(env) == OVERRIDES
+    assert env["GIT_CONFIG_GLOBAL"] == "/g"
+
+
+def run_children(repo: str, *, api_branch: str | None) -> RunChildren:
+    """The children of a run on ``repo`` in a hub on ``trunk`` whose ``demo-api`` may set its
+    own branch."""
+    document = a_hub_document()
+    document["project"]["default_branch"] = "trunk"
+    document["repos"].append(a_second_repo())
+    if api_branch is not None:
+        document["repos"][0]["default_branch"] = api_branch
+    config = HubConfig.model_validate(document)
+    return RunChildren(
+        config=config, hub=Path("/ws/hub"), repo=repo, issue_id="DEM-1", branch_prefix="jdoe/"
+    )
+
+
+def field(argv: list[str], name: str) -> str:
+    """The value of the one ``-f <name>=<value>`` field of a ``gh api`` argv."""
+    (value,) = [
+        argument.split("=", 1)[1]
+        for flag, argument in zip(argv, argv[1:], strict=False)
+        if flag == "-f" and argument.startswith(f"{name}=")
+    ]
+    return value
+
+
+def base_argument(argv: list[str]) -> str:
+    return field(argv, "base")
+
+
+@pytest.mark.parametrize(("repo", "branch"), [("demo-api", "master"), ("demo-web", "trunk")])
+def test_bases_run_on_repo_branch_when_repo_sets_one(repo: str, branch: str) -> None:
+    children = run_children(repo, api_branch="master")
+
+    assert children.base == f"origin/{branch}"
+    assert base_argument(children.pr_argv(title="t")) == branch
+
+
+@pytest.mark.parametrize("repo", ["demo-api", "demo-web"])
+def test_bases_run_on_project_branch_when_repo_sets_none(repo: str) -> None:
+    children = run_children(repo, api_branch=None)
+
+    assert children.base == "origin/trunk"
+    assert base_argument(children.pr_argv(title="t")) == "trunk"
+
+
+def test_opens_and_finds_pr_through_rest_api_when_argv_built() -> None:
+    run = run_children("demo-web", api_branch=None)
+
+    assert run.pr_argv(title="feat: x") == [
+        *("gh", "api", "--method", "POST", "repos/acme/demo-web/pulls"),
+        *("-f", "title=feat: x", "-f", "head=jdoe/dem-1", "-f", "base=trunk"),
+        *("-F", "body=@-"),
+    ]
+    assert pr_view_command(github=run.github, branch=run.branch) == [
+        *("gh", "api", "--method", "GET", "repos/acme/demo-web/pulls"),
+        *("-f", "head=acme:jdoe/dem-1", "-f", "state=open"),
+        *("--jq", "[.[] | {html_url, state}]"),
+    ]
+
+
+def test_reads_and_edits_pr_body_through_rest_api_when_url_given() -> None:
+    path = children.pull_request_path("https://github.com/acme/demo-web/pull/12")
+
+    assert path == "repos/acme/demo-web/pulls/12"
+    assert children.pr_body_command(path) == ["gh", "api", "--method", "GET", path]
+    assert children.pr_edit_command(path, Path("/hub/x.body")) == [
+        *("gh", "api", "--method", "PATCH", path, "-F", "body=@/hub/x.body"),
+    ]
+
+
+def test_reads_body_from_stdin_when_body_reset_command_built() -> None:
+    path = "repos/acme/demo-web/pulls/12"
+
+    assert children.pr_body_reset_command(path) == [
+        *("gh", "api", "--method", "PATCH", path, "-F", "body=@-"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/acme/demo-web/pull/12/files",
+        "https://github.com/acme/demo-web/issues/12",
+        "https://example.com/acme/demo-web/pull/12",
+        "https://github.com/acme/demo-web/pull/0",
+        "https://github.com/acme/demo-web/pull/x",
+        "https://github.com/acme/../pull/1",
+    ],
+)
+def test_names_no_rest_path_when_url_not_a_pull_request(url: str) -> None:
+    assert children.pull_request_path(url) is None
+
+
+def test_shows_stdin_after_argv_when_dry_run_line_built() -> None:
+    line = children.would_run_line(["gh", "api"], cwd=Path("/w"), stdin="DEM-1\n\nx y")
+
+    assert line == 'would run: gh api <<< "DEM-1\\n\\nx y"   (cwd /w)'
+    assert children.would_run_line(["gh"], cwd=Path("/w"), stdin="b") == (
+        "would run: gh <<< b   (cwd /w)"
+    )
+
+
+OPTIONS = RunOptions(
+    live=False, max_turns=40, budget=3.0, model="sonnet", start="implement", effort="medium"
+)
+
+
+def session_prompt(tracker: dict[str, object], issue_id: str) -> str:
+    """The implementing session's prompt for ``issue_id`` in a hub whose tracker is ``tracker``."""
+    document = a_hub_document()
+    document["tracker"] = {"kind": "linear", **tracker}
+    children = RunChildren(
+        config=HubConfig.model_validate(document),
+        hub=Path("/ws/hub"),
+        repo="demo-api",
+        issue_id=issue_id,
+        branch_prefix="jdoe/",
+    )
+    argv = children.session_argv(an_issue(id=issue_id), OPTIONS)
+    return argv[argv.index("-p") + 1]
+
+
+def test_prefixes_prompt_with_issue_team_when_hub_lists_teams() -> None:
+    prompt = session_prompt({"teams": ["APP", "OPS"]}, "OPS-12")
+
+    assert "(OPS-N)" in prompt
+    assert "(APP-N)" not in prompt
+
+
+def test_prefixes_prompt_with_configured_spelling_when_key_lowercase() -> None:
+    prompt = session_prompt({"team": "app"}, "APP-1")
+
+    assert "(app-N)" in prompt
+    assert "(APP-N)" not in prompt
+
+
+def test_refuses_team_when_issue_matches_no_team() -> None:
+    document = a_hub_document()
+    children = RunChildren(
+        config=HubConfig.model_validate(document),
+        hub=Path("/ws/hub"),
+        repo="demo-api",
+        issue_id="OPS-1",
+        branch_prefix="jdoe/",
+    )
+
+    with pytest.raises(ValueError, match=r"^OPS-1 matches no team of hub\.json$"):
+        _ = children.team
+
+
+def children_of(document: dict[str, Any], repo: str) -> RunChildren:
+    return RunChildren(
+        config=HubConfig.model_validate(document),
+        hub=Path("/ws/hub"),
+        repo=repo,
+        issue_id="DEM-1",
+        branch_prefix="jdoe/",
+    )
+
+
+def unconfigured_two_repo_document() -> dict[str, Any]:
+    document = a_hub_document()
+    document["repos"].append(a_second_repo())
+    return document
+
+
+HUB_BRANCHES = {
+    "mixed-api": (a_conventions_document, "demo-api", "feature/dem-1"),
+    "mixed-web": (a_conventions_document, "demo-web", "jdoe/DEM-1"),
+    "unconfigured-api": (unconfigured_two_repo_document, "demo-api", "jdoe/dem-1"),
+    "unconfigured-web": (unconfigured_two_repo_document, "demo-web", "jdoe/dem-1"),
+}
+
+
+@pytest.mark.parametrize(
+    ("document", "repo", "branch"), list(HUB_BRANCHES.values()), ids=list(HUB_BRANCHES)
+)
+def test_takes_branch_from_repo_convention_when_hub_sets_conventions(
+    document: Any, repo: str, branch: str
+) -> None:
+    children = children_of(document(), repo)
+    pr_argv = children.pr_argv(title="t")
+
+    assert children.branch == branch
+    assert children.push_argv()[-1] == branch
+    assert field(pr_argv, "head") == branch
+    # pr_steps builds the view from the same target fields.
+    view = pr_view_command(github=children.github, branch=children.branch)
+    assert field(view, "head") == f"acme:{branch}"
+
+
+def accepting_runner(
+    argv: Sequence[str],
+    *,
+    cwd: Path | str,
+    env: Mapping[str, str],
+    timeout: float | None,
+    own_session: bool | None = None,
+) -> ChildResult:
+    """A git that accepts every call (``check-ref-format`` is the only one ``worktree_task``
+    makes)."""
+    del argv, cwd, env, timeout, own_session
+    return ChildResult(returncode=0, stdout=b"", stderr=b"")
+
+
+@pytest.mark.parametrize(
+    ("document", "repo", "branch"), list(HUB_BRANCHES.values()), ids=list(HUB_BRANCHES)
+)
+def test_matches_worktree_branch_when_run_and_worktree_build_it(
+    document: Any, repo: str, branch: str
+) -> None:
+    children = children_of(document(), repo)
+
+    task = worktree_task(
+        children.config,
+        name=children.slug,
+        branch_prefix=children.branch_prefix,
+        only=repo,
+        hub=children.hub,
+        git="git",
+        env={},
+        git_timeout=None,
+        runner=accepting_runner,
+    )
+
+    assert task.branches == {repo: branch}
+    assert children.branch == task.branches[repo]
+
+
+class RecordingRunner:
+    """A git that accepts every call and records each one's argv."""
+
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    def __call__(
+        self,
+        argv: Sequence[str],
+        *,
+        cwd: Path | str,
+        env: Mapping[str, str],
+        timeout: float | None,
+        own_session: bool | None = None,
+    ) -> ChildResult:
+        del cwd, env, timeout, own_session
+        self.calls.append(list(argv))
+        return ChildResult(returncode=0, stdout=b"", stderr=b"")
+
+
+def same_branch_document() -> dict[str, Any]:
+    """The mixed hub with ``demo-api``'s own ``branch`` rendering the project's."""
+    document = a_conventions_document()
+    document["repos"][0]["conventions"] = {"branch": "{prefix}{ISSUE}-{slug}"}
+    return document
+
+
+REF_CHECKS = {
+    "unconfigured": (unconfigured_two_repo_document, ["jdoe/dem-1-x"]),
+    "mixed": (a_conventions_document, ["feature/dem-1/x", "jdoe/DEM-1-x"]),
+    "same-branch": (same_branch_document, ["jdoe/DEM-1-x"]),
+}
+
+
+@pytest.mark.parametrize(("document", "branches"), list(REF_CHECKS.values()), ids=list(REF_CHECKS))
+def test_checks_each_distinct_branch_once_when_task_built(
+    document: Any, branches: list[str]
+) -> None:
+    runner = RecordingRunner()
+
+    _ = worktree_task(
+        HubConfig.model_validate(document()),
+        name="dem-1-x",
+        branch_prefix="jdoe/",
+        only=None,
+        hub=Path("/ws/hub"),
+        git="git",
+        env={},
+        git_timeout=None,
+        runner=runner,
+    )
+
+    assert runner.calls == [["git", "check-ref-format", "--branch", b] for b in branches]
+
+
+def step_four(prompt: str) -> str:
+    """The prompt's commit step, from ``4.`` to the next step."""
+    return prompt[prompt.index("\n4. ") : prompt.index("\n5. ")]
+
+
+def test_passes_commit_title_to_prompt_when_repo_sets_one() -> None:
+    children = children_of(a_conventions_document(), "demo-web")
+    argv = children.session_argv(an_issue(id="DEM-1"), OPTIONS)
+
+    step = step_four(argv[argv.index("-p") + 1])
+
+    assert children.conventions == children.config.conventions_for("demo-web")
+    assert "`{ISSUE}: {type}({scope}): {summary}`" in step
+    assert "`DEM-1: " in step
+    assert "(DEM-N)" not in step
+
+
+def test_keeps_default_commit_step_when_repo_sets_no_commit_title() -> None:
+    children = children_of(unconfigured_two_repo_document(), "demo-web")
+    argv = children.session_argv(an_issue(id="DEM-1"), OPTIONS)
+
+    step = step_four(argv[argv.index("-p") + 1])
+
+    assert "(DEM-N)" in step
+    assert "{ISSUE}" not in step
+
+
+def allowed_tools(argv: list[str]) -> list[str]:
+    return argv[argv.index("--allowedTools") + 1 : argv.index("--disallowedTools")]
+
+
+@pytest.mark.parametrize("fast_gate", [None, ""], ids=["absent", "empty"])
+def test_passes_full_gate_when_repo_has_no_fast_gate(fast_gate: str | None) -> None:
+    document = a_hub_document()
+    repo = document["repos"][0]
+    del repo["check_fast"]
+    if fast_gate is not None:
+        repo["check_fast"] = fast_gate
+    repo["check"] = "tox -e full"
+    children = children_of(document, "demo-api")
+
+    argv = children.session_argv(an_issue(id="DEM-1"), OPTIONS)
+
+    prompt = argv[argv.index("-p") + 1]
+    assert "run its full gate (`tox -e full`)" in prompt
+    assert "(``)" not in prompt
+    tools = allowed_tools(argv)
+    assert tools.count("Bash(tox:*)") == 1
+    assert "Bash(:*)" not in tools
+
+
+def test_sets_agent_hub_run_variables_when_session_env_built() -> None:
+    env = session_env(
+        {"PATH": "/bin", "AGENT_HUB_STEP": "stale", "LINEAR_API_KEY": "x"},
+        repo="demo-api",
+        issue_id="DEM-1",
+        run_id="1a2b3c4d",
+    )
+
+    assert env["AGENT_HUB_RUN_ID"] == "1a2b3c4d"
+    assert env["AGENT_HUB_STEP"] == "implement"
+    assert env["AGENT_HUB_ATTEMPT"] == "1"
+    assert env["OTEL_RESOURCE_ATTRIBUTES"] == "repo=demo-api,issue=DEM-1,agent_run=1a2b3c4d"
+    assert "LINEAR_API_KEY" not in env
+
+
+def test_passes_attempt_when_agent_hub_run_session_retried() -> None:
+    env = session_env({}, repo="demo-api", issue_id="DEM-1", run_id="1a2b3c4d", attempt=2)
+
+    assert env["AGENT_HUB_ATTEMPT"] == "2"
+
+
+def test_sets_given_step_when_session_env_built_for_workflow_node() -> None:
+    env = session_env({}, repo="", issue_id="", run_id="1a2b3c4d", attempt=3, step="lint__fix")
+
+    assert (env["AGENT_HUB_STEP"], env["AGENT_HUB_ATTEMPT"]) == ("lint__fix", "3")
+
+
+def test_drops_declared_credentials_when_untrusted_env_given_names() -> None:
+    secret = "x-" + "secret" + "-y"
+    environ = {"PATH": "/bin", "DEMO_DB_URL": secret, "AWS_PROFILE": "demo-staging"}
+    names = CredentialNames(
+        env=frozenset({"DEMO_DB_URL"}), aws_profiles=frozenset({"demo-staging"})
+    )
+
+    untrusted = children.untrusted_env(environ, hidden=names)
+    session = session_env(environ, repo="", issue_id="", run_id="1a2b3c4d", hidden=names)
+
+    for env in (untrusted, session):
+        assert "DEMO_DB_URL" not in env
+        assert "AWS_PROFILE" not in env
+        assert env["PATH"] == "/bin"
+    assert children.untrusted_env(environ)["DEMO_DB_URL"] == secret

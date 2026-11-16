@@ -1,0 +1,122 @@
+import pytest
+
+from agent_hub.core.hub_config.conventions import DEFAULT_BRANCH
+from agent_hub.core.workspace.worktree_name import (
+    issue_of_worktree,
+    task_worktree_names,
+    worktree_branch,
+    worktree_name_example,
+    worktree_name_problem,
+)
+
+
+@pytest.mark.parametrize("name", ["dem-7", "dem-7-collector", "dem-12-a.b_c"])
+def test_accepts_name_when_issue_shaped(name: str) -> None:
+    assert worktree_name_problem(name, teams=("DEM",)) is None
+
+
+@pytest.mark.parametrize("name", ["DEM-7", "dem7", "xyz-7", "dem-7/x", "dem-7-", ""])
+def test_names_expected_shape_when_name_malformed(name: str) -> None:
+    problem = worktree_name_problem(name, teams=("DEM",))
+
+    assert problem == "name must be the issue, dem-<n>[-<desc>] (e.g. dem-7-collector)"
+
+
+def test_lowercases_team_when_checking() -> None:
+    assert worktree_name_problem("dem-7", teams=("Dem",)) is None
+    assert worktree_name_problem("dem-7", teams=("dem",)) is None
+
+
+def test_refuses_trailing_newline_when_name_ends_with_one() -> None:
+    assert worktree_name_problem("dem-7\n", teams=("DEM",)) is not None
+
+
+def test_joins_prefix_when_branch_built() -> None:
+    assert worktree_branch("dem-7-x", prefix="jdoe/", pattern=DEFAULT_BRANCH) == "jdoe/dem-7-x"
+    assert worktree_branch("dem-7-x", prefix="", pattern=DEFAULT_BRANCH) == "dem-7-x"
+
+
+@pytest.mark.parametrize(
+    ("name", "pattern", "branch"),
+    [
+        ("dem-7-x", "{prefix}{ISSUE}-{slug}", "me/DEM-7-x"),
+        ("dem-7", "{prefix}{ISSUE}-{slug}", "me/DEM-7"),
+        ("dem2-7-a-b", "{slug}/{issue_lower}", "a-b/dem2-7"),
+    ],
+)
+def test_splits_name_into_issue_and_slug_when_branch_built(
+    name: str, pattern: str, branch: str
+) -> None:
+    assert worktree_branch(name, prefix="me/", pattern=pattern) == branch
+
+
+@pytest.mark.parametrize("name", ["DEM-7", "dem", "dem-x"])
+def test_refuses_branch_when_name_not_issue_shaped(name: str) -> None:
+    with pytest.raises(ValueError, match="not a worktree name"):
+        worktree_branch(name, prefix="me/", pattern=DEFAULT_BRANCH)
+
+
+def test_lowercases_team_when_example_built() -> None:
+    assert worktree_name_example("DEM") == "dem-7-collector"
+
+
+@pytest.mark.parametrize("name", ["app-1", "ops-12-x"])
+def test_accepts_name_of_any_team_when_several_listed(name: str) -> None:
+    assert worktree_name_problem(name, teams=("APP", "OPS")) is None
+
+
+def test_lists_teams_when_name_matches_none() -> None:
+    problem = worktree_name_problem("xyz-1-x", teams=("APP", "OPS"))
+
+    assert problem == (
+        "name must be the issue, <team>-<n>[-<desc>] in lowercase (e.g. app-7-collector);"
+        " use one of: APP, OPS"
+    )
+
+
+def test_accepts_names_when_keys_share_prefix() -> None:
+    assert worktree_name_problem("ap-1-x", teams=("AP", "APP")) is None
+    assert worktree_name_problem("app-1-x", teams=("AP", "APP")) is None
+    assert worktree_name_problem("apx-1-x", teams=("AP", "APP")) is not None
+
+
+@pytest.mark.parametrize("teams", [("App",), ("app",)])
+def test_ignores_key_case_when_matching(teams: tuple[str, ...]) -> None:
+    assert worktree_name_problem("app-1", teams=teams) is None
+    assert worktree_name_problem("APP-1", teams=teams) is not None
+
+
+def test_lists_task_names_when_issue_matches() -> None:
+    names = ["dem-7-x", "dem-8", "dem-7", "dem-7-a.b"]
+
+    assert task_worktree_names(names, issue_id="DEM-7", teams=("DEM",)) == (
+        "dem-7",
+        "dem-7-a.b",
+        "dem-7-x",
+    )
+
+
+def test_skips_longer_number_when_prefix_shared() -> None:
+    names = ["dem-70", "dem-70-x", "dem-7-x"]
+
+    assert task_worktree_names(names, issue_id="DEM-7", teams=("DEM",)) == ("dem-7-x",)
+
+
+@pytest.mark.parametrize("name", ["DEM-7", "dem-7-", "dem-7/x", "dem-7\n", ".dem-7", "xyz-7"])
+def test_skips_name_when_not_worktree_name(name: str) -> None:
+    assert task_worktree_names([name], issue_id="DEM-7", teams=("DEM",)) == ()
+
+
+@pytest.mark.parametrize(("name", "issue"), [("ops-3", "OPS-3"), ("app-12-x", "APP-12")])
+def test_gives_configured_team_when_name_is_task_worktree(name: str, issue: str) -> None:
+    assert issue_of_worktree(name, teams=("APP", "OPS")) == issue
+
+
+def test_uppercases_issue_when_team_configured_in_other_case() -> None:
+    """The id must pass ``ISSUE_ID_PATTERN``, so ``hub ship`` never refuses the id it derived."""
+    assert issue_of_worktree("ops-3", teams=("app", "Ops")) == "OPS-3"
+
+
+@pytest.mark.parametrize("name", ["xyz-3", "ops-3-", "OPS-3", "ops", "ops-0", "ops-0123"])
+def test_gives_none_when_team_foreign(name: str) -> None:
+    assert issue_of_worktree(name, teams=("APP", "OPS")) is None

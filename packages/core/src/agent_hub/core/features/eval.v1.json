@@ -1,0 +1,251 @@
+{
+  "$defs": {
+    "AcId": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+      "type": "string"
+    },
+    "AcResult": {
+      "additionalProperties": false,
+      "description": "The run of one acceptance criterion's check: its command, exit code, status and summary.",
+      "properties": {
+        "ac": {
+          "$ref": "#/$defs/AcId"
+        },
+        "command": {
+          "$ref": "#/$defs/CommandText"
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExitCode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/RunStatus"
+        },
+        "summary": {
+          "$ref": "#/$defs/OneLine1000"
+        }
+      },
+      "required": [
+        "ac",
+        "command",
+        "exit_code",
+        "status",
+        "summary"
+      ],
+      "title": "AcResult",
+      "type": "object"
+    },
+    "CommandText": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f]*$",
+      "type": "string"
+    },
+    "Commit": {
+      "pattern": "^[0-9a-f]{7,40}$",
+      "type": "string"
+    },
+    "Delivery": {
+      "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+      "type": "string"
+    },
+    "EvalAcs": {
+      "oneOf": [
+        {
+          "const": "all",
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/AcId"
+          },
+          "maxItems": 300,
+          "type": "array"
+        }
+      ]
+    },
+    "ExitCode": {
+      "maximum": 255,
+      "minimum": -255,
+      "type": "integer"
+    },
+    "GateResult": {
+      "additionalProperties": false,
+      "description": "The run of one repo gate: the repo, the gate's name, its exit code and status.",
+      "properties": {
+        "repo": {
+          "$ref": "#/$defs/GateText"
+        },
+        "name": {
+          "$ref": "#/$defs/GateText"
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExitCode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/RunStatus"
+        }
+      },
+      "required": [
+        "repo",
+        "name",
+        "exit_code",
+        "status"
+      ],
+      "title": "GateResult",
+      "type": "object"
+    },
+    "GateText": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f]*$",
+      "type": "string"
+    },
+    "OneLine1000": {
+      "maxLength": 1000,
+      "minLength": 1,
+      "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f]*$",
+      "type": "string"
+    },
+    "PathText": {
+      "maxLength": 512,
+      "minLength": 1,
+      "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f]*$",
+      "type": "string"
+    },
+    "RedOnParent": {
+      "additionalProperties": false,
+      "description": "A new test, and whether it failed on the base commit (null when not checked).",
+      "properties": {
+        "test": {
+          "$ref": "#/$defs/PathText"
+        },
+        "failed_on_base": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Failed On Base"
+        }
+      },
+      "required": [
+        "test",
+        "failed_on_base"
+      ],
+      "title": "RedOnParent",
+      "type": "object"
+    },
+    "RunStatus": {
+      "enum": [
+        "pass",
+        "fail",
+        "not-run"
+      ],
+      "type": "string"
+    },
+    "TicketKey": {
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,31}$",
+      "type": "string"
+    },
+    "Verdict": {
+      "enum": [
+        "SHIP",
+        "SHIP-WITH-OWNER-STEPS",
+        "NO-SHIP"
+      ],
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The evaluator's report for one delivery: its verdict, scope, results and gates.\n\n``acs`` is ``\"all\"`` or a list of AC ids; an empty list scopes the eval by ``tickets``.",
+  "properties": {
+    "schema": {
+      "const": "agent-hub/eval/1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "delivery": {
+      "$ref": "#/$defs/Delivery"
+    },
+    "verdict": {
+      "$ref": "#/$defs/Verdict"
+    },
+    "commit": {
+      "$ref": "#/$defs/Commit"
+    },
+    "tickets": {
+      "items": {
+        "$ref": "#/$defs/TicketKey"
+      },
+      "maxItems": 100,
+      "title": "Tickets",
+      "type": "array"
+    },
+    "acs": {
+      "$ref": "#/$defs/EvalAcs"
+    },
+    "results": {
+      "items": {
+        "$ref": "#/$defs/AcResult"
+      },
+      "maxItems": 300,
+      "title": "Results",
+      "type": "array"
+    },
+    "gates": {
+      "items": {
+        "$ref": "#/$defs/GateResult"
+      },
+      "maxItems": 50,
+      "title": "Gates",
+      "type": "array"
+    },
+    "red_on_parent": {
+      "items": {
+        "$ref": "#/$defs/RedOnParent"
+      },
+      "maxItems": 300,
+      "title": "Red On Parent",
+      "type": "array"
+    },
+    "owner_steps": {
+      "items": {
+        "$ref": "#/$defs/OneLine1000"
+      },
+      "maxItems": 50,
+      "title": "Owner Steps",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema",
+    "delivery",
+    "verdict",
+    "commit",
+    "tickets",
+    "acs",
+    "results",
+    "gates",
+    "red_on_parent",
+    "owner_steps"
+  ],
+  "title": "EvalOutput",
+  "type": "object"
+}

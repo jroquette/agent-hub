@@ -1,0 +1,117 @@
+---
+name: plain-language
+description: Rules for short, clear text that people read. Use them for chat replies, PR bodies, review replies, tracker comments, code comments, handoffs, summaries and brain notes. Text for agents keeps full detail.
+---
+
+# /plain-language
+
+People skim what agents write. If a text is long and dense, they miss the decisions and the open questions.
+These rules keep text for people short and clear. They never remove a fact.
+
+## Text for people and text for agents
+
+Text for people:
+
+- chat replies to the user;
+- PR bodies and PR review replies;
+- tracker comments;
+- code comments;
+- handoffs: `brain/now.md` and journal entries;
+- the summaries that `/summarize` writes;
+- brain notes that people read.
+
+Text for agents: feature records (`spec.md`, `research.md`, `plan.md`), `features.json`, review and eval JSON,
+prompts to subagents and their replies, and skill and agent files. These rules do not apply to them. They keep full
+detail.
+
+Commit messages, ADRs and tracker issue briefs follow the repo's own rules.
+
+## Language
+
+- Write to a person in the language of their latest message, for example pt-BR.
+- Apply the same rules in that language, adapted to its grammar.
+- Versioned text for people (PR bodies, summaries, handoffs, brain notes) uses the hub's language.
+- The hub's language is the one that `AGENTS.project.md` or the repo's `AGENTS.md` sets. If neither sets one,
+  use English.
+
+## Reply rules
+
+These apply to chat replies, review replies and tracker comments.
+
+- The first sentence gives the answer or the result.
+- No filler at the start or the end, such as "Great question" or "Hope this helps".
+- If you use a term the reader may not know, define it in a few words.
+- No em-dashes. No contractions.
+
+## Code comments
+
+A reviewer reads the code before the comments. Most comments repeat the code or hide a design that needs a clearer name.
+
+- Make the code explain itself first: a clear name, a smaller function, a named constant.
+- Comment only a why that the code cannot show: a business rule, a workaround, a surprising constraint.
+- One or two plain sentences that a new teammate understands. No private jargon.
+- Never restate the code, tell the story of the change, walk through every case or name a ticket.
+  That context goes in the commit, the PR body or the docs.
+- Docstrings say what a public function does and what it returns. They do not repeat its body.
+- The repo's own `AGENTS.md` wins on comment and docstring style, and on the language of code comments.
+
+```
+# Before: a STANDARD order on PENDING_REVIEW waits for its buyer's KYC_OK flag, then the retry job
+# re-reads it and moves it to READY, unless the first pass already set HOLD.
+# After: hold the order until the buyer's identity check passes.
+```
+
+## Document rules
+
+These apply to all text for people.
+
+- An instruction sentence has 20 words or fewer. A descriptive sentence has 25 words or fewer.
+- Put the condition before the command: "If the check fails, run X."
+- Use simple tenses and the active voice.
+- Do not hedge with "should", "would", "may" or "might". Use "can", "will" or "must".
+- Use one word for one meaning, and keep that word in the whole text.
+- Prefer the common word to the internal one. If you must use an internal name (an enum, a status, a flag),
+  say in plain words what it means.
+- No decorative words, such as "crucial", "robust" or "seamless".
+- Short, but not terse: keep the articles and the small words.
+- Use lists and headings where they help a person scan. SimpleEnglish asks for prose only in chat. We do not follow
+  that rule, because summaries and handoffs use lists and sections.
+
+## PR bodies
+
+A PR body tells a reviewer what changed and why. It holds only:
+
+- the ticket link, and a line for any PR or deploy this one depends on;
+- what changed, for the user;
+- links to the records that explain it (spec, design, plan).
+
+No placeholders, templates or sections that nobody will fill in. No "Checks" or "Before merge" sections: CI shows
+the checks, and the commands you ran, the owner steps and the follow-ups go in a comment on the tracker issue.
+No process notes, such as review rounds or agent decisions: they live in the hub's records.
+Link every AC, decision or plan step that the body cites to its record in the hub:
+`@@{hub_features_url}/<slug>/<file>#<section>`.
+A record reaches the hub's default branch through a hub PR when its decision closes, before the code PR.
+If `git ls-tree origin/@@{project_default_branch} -- brain/features/<slug>/<file>` in the hub prints nothing,
+that PR has not merged and the link will break. Tell the owner, and keep the PR a draft until it merges.
+
+## Never drop
+
+These win over every rule above. If a rule makes you drop one of them, keep it and break the rule.
+
+- facts;
+- hedges that carry meaning, such as "not verified" or "phase 1 only";
+- scope limits;
+- open questions;
+- decisions that wait for the owner.
+
+Code, paths, commands, ids and quotes stay exact. They do not count toward the word limits.
+
+## Sources
+
+This skill is our own text. It takes ideas from these sources and copies no text from them:
+
+- ASD-STE100 Simplified Technical English, Issue 9. ASD-STE100 is a trademark of ASD.
+  No text from the specification is used.
+- AminBlg/SimpleEnglish, under the MIT license.
+- danyuchn/asd-ste100-skill.
+- The "simplified-english" skill of Paperclip.

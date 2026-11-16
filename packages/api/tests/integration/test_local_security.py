@@ -1,0 +1,634 @@
+import json
+import re
+from dataclasses import replace
+from pathlib import Path
+from typing import Any
+
+import pytest
+from fastapi.testclient import TestClient
+
+from agent_hub.api.app import create_app
+from agent_hub.api.session_token import cookie_name
+from agent_hub.api.settings import ApiSettings
+from agent_hub.core.ingestion.hook_envelope import MAX_BODY_BYTES
+from agent_hub.core.item_versions.item_version_ports import ItemWriteResult
+from agent_hub.core.testing.read_model_builders import a_hub_view
+from agent_hub.core.workflows.gate_decisions import GateDecided, GateDecisionRequest
+
+HUB_PATH = {"path": "/home/demo/demo-hub"}
+
+
+def test_answers_forbidden_and_changes_nothing_when_host_is_foreign(wired: Any) -> None:
+    wired.hubs.hubs.append(a_hub_view())
+
+    responses = [
+        wired.client.get("/api/v1/hubs", headers={"Host": "attacker.example"}),
+        wired.client.post("/api/v1/hubs", json=HUB_PATH, headers={"Host": "attacker.example"}),
+        wired.client.get("/", headers={"Host": "attacker.example:7420"}),
+    ]
+
+    assert [response.status_code for response in responses] == [403, 403, 403]
+    assert all(r.headers["content-type"] == "application/problem+json" for r in responses)
+    assert wired.hubs.calls == []
+
+
+@pytest.mark.parametrize("method", ["post", "delete"])
+def test_answers_forbidden_and_changes_nothing_when_origin_is_foreign(
+    wired: Any, method: str
+) -> None:
+    wired.hubs.hubs.append(a_hub_view())
+    path = "/api/v1/hubs" if method == "post" else f"/api/v1/hubs/{a_hub_view().id}"
+    options = {"json": HUB_PATH} if method == "post" else {}
+
+    response = wired.client.request(
+        method, path, headers={"Origin": "http://attacker.example"}, **options
+    )
+
+    assert response.status_code == 403
+    assert response.json()["title"] == "Forbidden origin"
+    assert wired.hubs.calls == []
+    assert len(wired.hubs.hubs) == 1
+
+
+def test_accepts_write_when_origin_is_own(wired: Any) -> None:
+    wired.hubs.hubs.append(a_hub_view())
+
+    response = wired.client.post(
+        "/api/v1/hubs", json=HUB_PATH, headers={"Origin": "http://127.0.0.1:7420"}
+    )
+
+    assert response.status_code == 201
+    assert wired.hubs.calls == [("register_hub", HUB_PATH["path"])]
+
+
+def test_accepts_read_when_origin_is_foreign(wired: Any) -> None:
+    # A cross-site GET is answered, but without CORS headers the page cannot read it.
+    response = wired.client.get("/api/v1/hubs", headers={"Origin": "http://attacker.example"})
+
+    assert response.status_code == 200
+    assert not [name for name in response.headers if name.lower().startswith("access-control")]
+
+
+def test_answers_too_large_problem_when_content_length_over_cap(wired: Any) -> None:
+    body = b"{" + b" " * MAX_BODY_BYTES + b"}"
+
+    response = wired.client.post(
+        "/api/v1/hubs",
+        content=body,
+        headers={"Content-Type": "application/json", "Origin": "http://127.0.0.1:7420"},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["title"] == "Request body too large"
+    assert wired.hubs.calls == []
+
+
+def test_answers_too_large_problem_when_streamed_body_passes_cap(wired: Any) -> None:
+    def chunks() -> Any:
+        yield b'{"path": "'
+        for _ in range(MAX_BODY_BYTES // 65_536 + 1):
+            yield b"a" * 65_536
+        yield b'"}'
+
+    response = wired.client.post(
+        "/api/v1/hubs",
+        content=chunks(),
+        headers={"Content-Type": "application/json", "Origin": "http://127.0.0.1:7420"},
+    )
+
+    assert response.status_code == 413
+    assert wired.hubs.calls == []
+
+
+def test_sends_no_store_and_policy_headers_when_api_answers(wired: Any) -> None:
+    response = wired.client.get("/api/v1/hubs")
+
+    assert response.headers["cache-control"] == "no-store"
+    assert "script-src 'self'" in response.headers["content-security-policy"]
+    assert response.headers["x-content-type-options"] == "nosniff"
+
+
+def test_sends_policy_without_no_store_when_app_page_served(wired: Any) -> None:
+    response = wired.client.get("/sessions/abc")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-cache"
+    assert "connect-src 'self'" in response.headers["content-security-policy"]
+
+
+def test_sends_no_cors_headers_when_preflight_requested(wired: Any) -> None:
+    response = wired.client.options(
+        "/api/v1/hubs",
+        headers={
+            "Origin": "http://attacker.example",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+
+    assert not [name for name in response.headers if name.lower().startswith("access-control")]
+
+
+# The two learning actions open a hub PR, so they take stricter checks than the other writes
+# (S7, E9): the server's own Origin, no cross-site fetch and a JSON body.
+OWN_ORIGIN = "http://127.0.0.1:7420"
+type Action = tuple[str, dict[str, str]]
+LEARNING_ACTIONS: list[Action] = [
+    ("/api/v1/learnings/learning-1/accept", {"target": "learnings/"}),
+    ("/api/v1/learnings/learning-1/reject", {"reason": "Already in the brain"}),
+]
+# The policy as v0.9.0 serves it; control-plane clarity adds routes, never a source.
+V0_9_0_CSP = (
+    "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; "
+    "img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; "
+    "form-action 'self'; frame-ancestors 'none'"
+)
+
+
+def _post_action(wired: Any, action: Action, **headers: str) -> Any:
+    wired.wire(learning_decisions=wired.decisions)
+    sent = {"Origin": OWN_ORIGIN, "Content-Type": "application/json", **headers}
+    path, body = action
+    return wired.client.post(path, content=json.dumps(body), headers=sent)
+
+
+@pytest.mark.parametrize("action", LEARNING_ACTIONS)
+def test_accepts_learning_actions_when_origin_own_and_body_json(wired: Any, action: Action) -> None:
+    response = _post_action(wired, action, **{"Sec-Fetch-Site": "same-origin"})
+
+    assert response.status_code == 201
+    assert len(wired.decisions.calls) == 1
+
+
+@pytest.mark.parametrize("action", LEARNING_ACTIONS)
+def test_accepts_learning_actions_when_json_has_charset_and_no_fetch_metadata(
+    wired: Any, action: Action
+) -> None:
+    response = _post_action(wired, action, **{"Content-Type": "Application/JSON; charset=utf-8"})
+
+    assert response.status_code == 201
+
+
+@pytest.mark.parametrize("action", LEARNING_ACTIONS)
+def test_refuses_learning_actions_when_origin_missing(wired: Any, action: Action) -> None:
+    wired.wire(learning_decisions=wired.decisions)
+
+    path, body = action
+
+    response = wired.client.post(path, json=body)
+
+    assert response.status_code == 403
+    assert response.headers["content-type"] == "application/problem+json"
+    assert response.json()["title"] == "Forbidden origin"
+    assert wired.decisions.calls == []
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://attacker.example",
+        "null",
+        "http://localhost:7420",  # another loopback name than the Host the request names
+        "https://127.0.0.1:7420",
+        "http://127.0.0.1:5173",
+    ],
+)
+@pytest.mark.parametrize("action", LEARNING_ACTIONS)
+def test_refuses_learning_actions_when_origin_foreign(
+    wired: Any, action: Action, origin: str
+) -> None:
+    response = _post_action(wired, action, Origin=origin)
+
+    assert response.status_code == 403
+    assert response.json()["title"] == "Forbidden origin"
+    assert wired.decisions.calls == []
+
+
+@pytest.mark.parametrize("site", ["cross-site", "same-site", "none"])
+@pytest.mark.parametrize("action", LEARNING_ACTIONS)
+def test_refuses_learning_actions_when_fetch_is_cross_site(
+    wired: Any, action: Action, site: str
+) -> None:
+    response = _post_action(wired, action, **{"Sec-Fetch-Site": site})
+
+    assert response.status_code == 403
+    assert response.json()["title"] == "Forbidden fetch site"
+    assert wired.decisions.calls == []
+
+
+@pytest.mark.parametrize(
+    "content_type",
+    ["text/plain", "application/x-www-form-urlencoded", "multipart/form-data", None],
+)
+@pytest.mark.parametrize("action", LEARNING_ACTIONS)
+def test_refuses_learning_actions_when_content_type_is_text(
+    wired: Any, action: Action, content_type: str | None
+) -> None:
+    wired.wire(learning_decisions=wired.decisions)
+    headers = {"Origin": OWN_ORIGIN}
+    if content_type is not None:
+        headers["Content-Type"] = content_type
+
+    path, body = action
+
+    response = wired.client.post(path, content=json.dumps(body), headers=headers)
+
+    assert response.status_code == 415
+    assert response.headers["content-type"] == "application/problem+json"
+    assert response.json()["title"] == "Unsupported media type"
+    assert wired.decisions.calls == []
+
+
+@pytest.mark.parametrize("action", LEARNING_ACTIONS)
+def test_refuses_learning_actions_when_host_foreign(wired: Any, action: Action) -> None:
+    response = _post_action(
+        wired, action, Host="attacker.example", Origin="http://attacker.example"
+    )
+
+    assert response.status_code == 403
+    assert response.json()["title"] == "Forbidden host"
+    assert wired.decisions.calls == []
+
+
+@pytest.mark.parametrize("action", LEARNING_ACTIONS)
+def test_refuses_learning_actions_when_body_over_cap(wired: Any, action: Action) -> None:
+    wired.wire(learning_decisions=wired.decisions)
+    oversized = b"{" + b" " * MAX_BODY_BYTES + b"}"
+
+    response = wired.client.post(
+        action[0],
+        content=oversized,
+        headers={"Origin": OWN_ORIGIN, "Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 413
+    assert wired.decisions.calls == []
+
+
+# A11: the hub registry writes need this server's exact Origin, a missing one refused too (a
+# registered hub is a folder agent sessions may start in). The Origin-less hook POST stays
+# accepted: test_hooks_ingestion.
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {},
+        {"Sec-Fetch-Site": "cross-site"},
+        {"Origin": "http://localhost:7420"},
+        {"Origin": "http://127.0.0.1:7420", "Sec-Fetch-Site": "same-site"},
+    ],
+)
+@pytest.mark.parametrize("method", ["post", "delete"])
+def test_refuses_hub_registry_write_when_origin_not_exactly_own(
+    wired: Any, method: str, headers: dict[str, str]
+) -> None:
+    wired.hubs.hubs.append(a_hub_view())
+    path = "/api/v1/hubs" if method == "post" else f"/api/v1/hubs/{a_hub_view().id}"
+    options = {"json": HUB_PATH} if method == "post" else {}
+
+    response = wired.client.request(method, path, headers=headers, **options)
+
+    assert response.status_code == 403
+    assert wired.hubs.calls == []
+    assert len(wired.hubs.hubs) == 1
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v1/learnings",
+        "/api/v1/learnings/learning-1",
+        "/api/v1/sessions/session-1/problems",
+        "/api/v1/projects/demo/brain",
+        "/api/v1/projects/demo/brain/note?path=index.md",
+        "/api/v1/features/demo/feature-1/tickets",
+        "/api/v1/projects/demo/skills",
+        "/api/v1/projects/demo/skills/skill/hub-workflow/alpha",
+        "/api/v1/projects/demo/skills/skill/hub-workflow/alpha/files/0123456789abcdef",
+    ],
+)
+def test_keeps_csp_when_clarity_routes_served(wired: Any, path: str) -> None:
+    response = wired.client.get(path)
+
+    assert response.headers["content-security-policy"] == V0_9_0_CSP
+    assert response.headers["cache-control"] == "no-store"
+
+
+AGENT_SESSION_ID_PATH = "/api/v1/agent-sessions/0192f3a0-0000-7000-8000-000000000001"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v1/agent-sessions",
+        "/api/v1/agent-sessions/capabilities",
+        "/api/v1/agent-sessions/workdirs?project=demo",
+        "/api/v1/agent-sessions/cloud",
+        AGENT_SESSION_ID_PATH,
+        f"{AGENT_SESSION_ID_PATH}/events",
+    ],
+)
+def test_keeps_csp_when_agent_session_routes_served(wired: Any, path: str) -> None:
+    response = wired.client.get(path)
+
+    assert response.headers["content-security-policy"] == V0_9_0_CSP
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_keeps_csp_when_agent_session_page_served(wired: Any) -> None:
+    response = wired.client.get("/agent-sessions/0192f3a0-0000-7000-8000-000000000001")
+
+    assert response.status_code == 200
+    assert response.headers["content-security-policy"] == V0_9_0_CSP
+
+
+def _pre_existing_reads(wired: Any) -> list[str]:
+    """Every ``GET`` of the document outside the agent sessions, the discoveries and a scenario
+    run's values (which take the session cookie too), path parameters filled in, the endless
+    streams left out."""
+    paths: dict[str, dict[str, object]] = wired.client.app.openapi()["paths"]
+    return [
+        re.sub(r"\{[^}]+\}", "demo", path)
+        for path, item in sorted(paths.items())
+        if "get" in item
+        and not path.startswith("/api/v1/agent-sessions")
+        and "/environment-discoveries" not in path
+        and path != "/api/v1/scenario-runs/{run_id}/values"
+        and not path.endswith("/stream")
+    ]
+
+
+def test_keeps_routes_unchanged_when_no_cookie(wired: Any) -> None:
+    # The Origin-less hook POST without a cookie: test_hooks_ingestion (composed app, no token).
+    wired.hubs.hubs.append(a_hub_view())
+    reads = _pre_existing_reads(wired)
+    signed_in = [(path, wired.client.get(path)) for path in reads]
+
+    wired.client.cookies.clear()
+    without = [(path, wired.client.get(path)) for path in reads]
+
+    assert len(reads) > 20
+    assert [(path, r.status_code, r.content) for path, r in without] == [
+        (path, r.status_code, r.content) for path, r in signed_in
+    ]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/projects/demo/skills",
+        "/projects/demo/skills/skill/hub-workflow/alpha",
+        "/knowledge/skills",
+    ],
+)
+def test_keeps_csp_when_skills_deep_link_served(wired: Any, path: str) -> None:
+    response = wired.client.get(path)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert response.headers["content-security-policy"] == V0_9_0_CSP
+
+
+# The security headers every answer carries, by value (local_security.SECURITY_HEADERS).
+SECURITY_HEADERS_AS_SERVED = {
+    "content-security-policy": V0_9_0_CSP,
+    "x-content-type-options": "nosniff",
+    "referrer-policy": "no-referrer",
+}
+
+
+def _answer_accepting_br(client: TestClient, path: str) -> Any:
+    """GETs ``path`` accepting Brotli and gzip without reading the body: the test client would
+    decode the codings it knows, and the stand-in variant is no real Brotli."""
+    with client.stream("GET", path, headers={"Accept-Encoding": "br, gzip"}) as response:
+        return response
+
+
+def test_keeps_security_headers_when_compressed_asset_served(wired: Any, web_dist: Path) -> None:
+    (web_dist / "assets" / "app.js.br").write_bytes(b"\x1b\x00stand-in for the Brotli variant")
+
+    answers = {
+        "asset": _answer_accepting_br(wired.client, "/assets/app.js"),
+        "index.html": _answer_accepting_br(wired.client, "/sessions"),
+        "api": _answer_accepting_br(wired.client, "/api/v1/hubs"),
+    }
+
+    assert {kind: answer.status_code for kind, answer in answers.items()} == dict.fromkeys(
+        answers, 200
+    )
+    assert answers["asset"].headers.get("content-encoding") == "br"
+    assert {
+        kind: {name: answer.headers.get(name) for name in SECURITY_HEADERS_AS_SERVED}
+        for kind, answer in answers.items()
+    } == dict.fromkeys(answers, SECURITY_HEADERS_AS_SERVED)
+    api = answers["api"].headers
+    assert (api.get("cache-control"), api.get("content-encoding")) == ("no-store", None)
+
+
+# A workflow gate's decision (AC-213.18) runs the CLI and resumes a run: the same strict checks.
+GATE_DECISION = "/api/v1/approvals/run-9:ok:1/decision"
+
+
+class Decisions:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, GateDecisionRequest]] = []
+
+    def __call__(self, approval_id: str, request: GateDecisionRequest) -> GateDecided:
+        self.calls.append((approval_id, request))
+        return GateDecided(
+            approval_id=approval_id, run_id="run-9", project="demo", decision=request.decision
+        )
+
+
+def _post_decision(wired: Any, body: bytes = b'{"decision": "approve"}', **headers: str) -> Any:
+    decisions = Decisions()
+    wired.wire(gate_decisions=decisions)
+    wired.gate_calls = decisions.calls
+    sent = {"Origin": OWN_ORIGIN, "Content-Type": "application/json", **headers}
+    return wired.client.post(
+        GATE_DECISION, content=body, headers={k: v for k, v in sent.items() if v}
+    )
+
+
+def test_accepts_gate_decision_when_origin_own_and_body_json(wired: Any) -> None:
+    response = _post_decision(wired, **{"Sec-Fetch-Site": "same-origin"})
+
+    assert response.status_code == 202, response.text
+    assert [approval for approval, _ in wired.gate_calls] == ["run-9:ok:1"]
+
+
+@pytest.mark.parametrize(
+    ("headers", "status", "title"),
+    [
+        ({"Origin": ""}, 403, "Forbidden origin"),
+        ({"Origin": "http://attacker.example"}, 403, "Forbidden origin"),
+        ({"Origin": "http://localhost:7420"}, 403, "Forbidden origin"),
+        ({"Sec-Fetch-Site": "cross-site"}, 403, "Forbidden fetch site"),
+        ({"Content-Type": "text/plain"}, 415, "Unsupported media type"),
+        ({"Content-Type": "application/x-www-form-urlencoded"}, 415, "Unsupported media type"),
+        ({"Host": "attacker.example", "Origin": "http://attacker.example"}, 403, "Forbidden host"),
+    ],
+)
+def test_refuses_gate_decision_without_deciding_when_request_breaks_strict_rule(
+    wired: Any, *, headers: dict[str, str], status: int, title: str
+) -> None:
+    response = _post_decision(wired, **headers)
+
+    assert response.status_code == status
+    assert response.json()["title"] == title
+    assert wired.gate_calls == []
+
+
+def test_refuses_gate_decision_without_deciding_when_body_over_cap(wired: Any) -> None:
+    response = _post_decision(wired, b"{" + b" " * MAX_BODY_BYTES + b"}")
+
+    assert response.status_code == 413
+    assert wired.gate_calls == []
+
+
+# The item writes (AGH-295, AC-295.33): a restore or a publish writes into a hub's working tree,
+# so it takes the strict rule and the launch cookie (409 ``hub_read_only`` in the container);
+# nothing reaches the port when one fails.
+VERSION_ID = "0199f0a0-0000-7000-8000-00000000000a"
+DRAFT_ID = "agent-abc123"
+PUBLISH_PATH = f"/api/v1/projects/demo/skills/drafts/{DRAFT_ID}/publish"
+ITEM_VERSION_WRITES = [
+    pytest.param(
+        f"/api/v1/projects/demo/skills/agent/demo/scout/versions/{VERSION_ID}/restore",
+        id="item_versions-restore-skill",
+    ),
+    pytest.param(
+        f"/api/v1/workflows/demo/review/versions/{VERSION_ID}/restore",
+        id="item_versions-restore-workflow",
+    ),
+    pytest.param(PUBLISH_PATH, id="item_versions-publish"),
+]
+# The body each write takes, and the id its call names (the version, or the draft).
+_BODIES = {PUBLISH_PATH: b'{"target": null, "confirm_managed": true}'}
+_CALLED = {PUBLISH_PATH: DRAFT_ID}
+
+
+class ItemWrites:
+    """An ``ItemVersionWrites`` that records each restore or publish and answers it unchanged."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[object, str, bool]] = []
+
+    def restore(self, ref: object, version_id: str, *, confirm_managed: bool) -> ItemWriteResult:
+        self.calls.append((ref, version_id, confirm_managed))
+        return ItemWriteResult(changed=False, versioned=False, reason=None, version=None)
+
+    def publish(
+        self, project: str, draft_id: str, target: object, *, confirm_managed: bool
+    ) -> ItemWriteResult:
+        del project
+        self.calls.append((target, draft_id, confirm_managed))
+        return ItemWriteResult(changed=False, versioned=False, reason=None, version=None)
+
+
+def _post_restore(wired: Any, path: str, **headers: str) -> tuple[Any, ItemWrites]:
+    writes = ItemWrites()
+    wired.wire(item_version_writes=writes)
+    sent = {"Origin": OWN_ORIGIN, "Content-Type": "application/json", **headers}
+    body = _BODIES.get(path, b'{"confirm_managed": true}')
+    response = wired.client.post(path, content=body, headers={k: v for k, v in sent.items() if v})
+    return response, writes
+
+
+@pytest.mark.parametrize("path", ITEM_VERSION_WRITES)
+def test_accepts_item_versions_restore_when_origin_own_and_body_json(wired: Any, path: str) -> None:
+    response, writes = _post_restore(wired, path, **{"Sec-Fetch-Site": "same-origin"})
+
+    assert response.status_code == 200, response.text
+    called = _CALLED.get(path, VERSION_ID)
+    assert [(named, confirmed) for _, named, confirmed in writes.calls] == [(called, True)]
+
+
+@pytest.mark.parametrize(
+    ("headers", "status", "title"),
+    [
+        ({"Origin": ""}, 403, "Forbidden origin"),
+        ({"Origin": "http://attacker.example"}, 403, "Forbidden origin"),
+        ({"Origin": "http://localhost:7420"}, 403, "Forbidden origin"),
+        ({"Origin": "http://127.0.0.1:5173"}, 403, "Forbidden origin"),
+        ({"Sec-Fetch-Site": "cross-site"}, 403, "Forbidden fetch site"),
+        ({"Sec-Fetch-Site": "same-site"}, 403, "Forbidden fetch site"),
+        ({"Content-Type": "text/plain"}, 415, "Unsupported media type"),
+        ({"Content-Type": "application/x-www-form-urlencoded"}, 415, "Unsupported media type"),
+        ({"Content-Type": ""}, 415, "Unsupported media type"),
+    ],
+)
+@pytest.mark.parametrize("path", ITEM_VERSION_WRITES)
+def test_refuses_item_versions_restore_without_writing_when_strict_rule_broken(
+    wired: Any, *, path: str, headers: dict[str, str], status: int, title: str
+) -> None:
+    response, writes = _post_restore(wired, path, **headers)
+
+    assert response.status_code == status
+    assert response.json()["title"] == title
+    assert writes.calls == []
+
+
+@pytest.mark.parametrize("path", ITEM_VERSION_WRITES)
+def test_refuses_item_versions_restore_without_writing_when_no_cookie(
+    wired: Any, path: str
+) -> None:
+    wired.client.cookies.clear()
+
+    response, writes = _post_restore(wired, path)
+
+    assert response.status_code == 401
+    assert response.json()["type"] == "urn:agent-hub:problem:agent-session-unauthorized"
+    assert writes.calls == []
+
+
+@pytest.mark.parametrize("path", ITEM_VERSION_WRITES)
+def test_refuses_item_versions_restore_without_writing_when_body_over_cap(
+    wired: Any, path: str
+) -> None:
+    writes = ItemWrites()
+    wired.wire(item_version_writes=writes)
+
+    response = wired.client.post(
+        path,
+        content=b"{" + b" " * MAX_BODY_BYTES + b"}",
+        headers={"Origin": OWN_ORIGIN, "Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 413
+    assert writes.calls == []
+
+
+@pytest.mark.parametrize("signed_in", [True, False], ids=["signed-in", "no-cookie"])
+@pytest.mark.parametrize("path", ITEM_VERSION_WRITES)
+def test_refuses_item_versions_write_without_writing_when_in_container(
+    api_settings: ApiSettings, web_dist: Path, *, path: str, signed_in: bool
+) -> None:
+    writes = ItemWrites()
+    app = create_app(replace(api_settings, sessions_off=True), web_dist=web_dist)
+    app.state.ports = replace(app.state.ports, item_version_writes=writes)
+    with TestClient(app, base_url=OWN_ORIGIN, raise_server_exceptions=False) as client:
+        if signed_in and api_settings.session_token is not None:
+            client.cookies.set(cookie_name(api_settings.port), api_settings.session_token)
+        response = client.post(
+            path,
+            content=_BODIES.get(path, b"{}"),
+            headers={"Origin": OWN_ORIGIN, "Content-Type": "application/json"},
+        )
+
+    assert response.status_code == 409, response.text
+    assert (response.json()["title"], response.json()["code"]) == (
+        "Item write refused",
+        "hub_read_only",
+    )
+    assert writes.calls == []
+
+
+def test_reads_item_versions_without_cookie_when_get(wired: Any) -> None:
+    wired.client.cookies.clear()
+
+    for path in (
+        "/api/v1/projects/demo/skills/agent/demo/scout/versions",
+        f"/api/v1/workflows/demo/review/versions/{VERSION_ID}",
+    ):
+        response = wired.client.get(path, headers={"Origin": OWN_ORIGIN})
+        # Not wired here: the route answers, the access rules let it through.
+        assert response.status_code == 501, (path, response.text)

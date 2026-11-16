@@ -1,0 +1,35 @@
+version: 2
+kind: scenario
+name: blocks-together
+revision: 1
+description: 'Sample of the tree format: together'
+inputs:
+  shop_order_id:
+    required: true
+  personal_name:
+    required: true
+  aws_account_id:
+    required: true
+stages:
+- name: Fix shipping
+  steps:
+  - wait_until: order-state
+    until: $self.output.order_id != ''
+    every: 15s
+    timeout: 10m
+    capture:
+      order_id: $self.output.order_id
+  - together:
+    - - do: order-set-carrier
+        with:
+          order_id: $CTX.order_id
+    - - do: shipments-regenerate
+        with:
+          order_id: $CTX.order_id
+      - do: shipments-mark-in-transit
+        with:
+          order_id: $CTX.order_id
+  - do: queue-send
+    with:
+      message: demo.process-order
+      order_id: $CTX.order_id

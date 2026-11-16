@@ -1,0 +1,248 @@
+#!/usr/bin/env bash
+# Module cloud (hub.json → modules.cloud): set up a cloud session (claude.ai/code) that opens on
+# this hub. In order: sets the git identity from hub.json's project author (global, and
+# repo-local in the hub and each repo), or, when hub.json names no author (each developer brings
+# their own), from HUB_AUTHOR_NAME/HUB_AUTHOR_EMAIL, repo-local only (never ~/.gitconfig), else a
+# WARN and no identity; checks access to the release pinned in hub.json
+# (platform.version, from platform.repository: absent, the platform's own) with git ls-remote on
+# its tag; warms the uv cache with that release (uvx … hub --version), from the commit hub.lock
+# records for that pin and repository when it has one (ADR 0054), else from the tag; then fetches the repos
+# already beside the hub and clones the missing ones. The repos and the default release source
+# are rendered by hub sync (re-run it after changing the repos); the pin, the repository and the
+# author are read from hub.json at every run, so a new pin or repository needs no sync.
+#
+# Environment setup script (the cloud environment's settings), one line:
+#     bash scripts/cloud-setup.sh
+# Environment variables:
+#     HUB_AUTHOR_NAME, HUB_AUTHOR_EMAIL  read only when hub.json has no project.author_name or
+#               project.author_email: this developer's commit author, set in the hub and each repo.
+#     GH_TOKEN  optional: a fine-grained token for the repos, used by git only through a
+#               credential helper that reads the variable at credential time; never written to
+#               disk, never printed. Not needed when the repos are attached to the session.
+#               A session with repos attached is multi-repo: Claude Code then does not apply
+#               this hub's .claude/settings.json (hooks, attribution), and /kickoff reports it.
+#
+# Idempotent: a present repo is fetched, not cloned again. A repo that fails to fetch or clone is
+# a WARN, exit 0. Exit 1, one line naming the cause: no python3, no uv, an unreadable pin or
+# repository (never echoed; read before anything is written), no access to the pinned tag
+# (attach the repository, or set GH_TOKEN for github.com), or a failed warm-up; no repo is
+# touched then. Bash 3.2 safe. Managed by hub sync.
+set -euo pipefail
+
+repo_dirs='@@{repo_dirs}'
+repo_githubs='@@{repo_githubs}'
+# The default install source's prefix; the pin and platform.repository are read from hub.json
+# below.
+release_prefix='@@{platform_repository}@v'
+
+case $0 in
+  */*) script_dir=${0%/*} ;;
+  *) script_dir=. ;;
+esac
+hub_dir=$(CDPATH= cd -P -- "$script_dir/.." && pwd -P) || {
+  echo "cloud-setup: cannot find the hub above $script_dir" >&2
+  exit 1
+}
+workspace=${hub_dir%/*}
+
+# Git finds each repo from its own -C path, never from a caller's GIT_DIR or work tree, and never
+# waits on a terminal prompt.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES \
+  GIT_COMMON_DIR GIT_NAMESPACE
+GIT_TERMINAL_PROMPT=0
+export GIT_TERMINAL_PROMPT
+
+command -v python3 >/dev/null 2>&1 || {
+  echo "cloud-setup: python3 is not installed; it reads hub.json" >&2
+  exit 1
+}
+
+# For platform.version, the release: <repository>@v<X.Y.Z>, with platform.repository when
+# present (else the default prefix); a bad pin or repository is exit 1 and one line that never
+# repeats the value. Else a project string: empty when absent, not a string or holding a
+# control character.
+hub_value() {
+  python3 -I -S -c '
+import json, re, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as stream:
+        document = json.load(stream)
+except (OSError, ValueError, RecursionError):  # RecursionError: nesting too deep
+    sys.exit("cloud-setup: cannot read hub.json as JSON: " + sys.argv[1])
+section, key = sys.argv[2].split(".")
+part = document.get(section) if isinstance(document, dict) else None
+value = part.get(key) if isinstance(part, dict) else None
+if sys.argv[2] == "platform.version":
+    if not (isinstance(value, str) and re.fullmatch("[0-9]+[.][0-9]+[.][0-9]+", value)):
+        sys.exit("cloud-setup: platform.version in hub.json must be X.Y.Z")
+    prefix = sys.argv[3]
+    if "repository" in part:
+        repository = part["repository"]
+        if not (
+            isinstance(repository, str)
+            and len(repository) <= 200
+            and re.fullmatch(r"@@{platform_repository_pattern}", repository)
+        ):
+            sys.exit("cloud-setup: platform.repository in hub.json must be @@{platform_repository_form}")
+        prefix = repository + "@v"
+    value = prefix + value
+elif not (isinstance(value, str) and re.fullmatch(r"[^\x00-\x1f\x7f]+", value)):
+    value = ""
+print(value)
+' "$hub_dir/hub.json" "$1" "$release_prefix"
+}
+
+release=$(hub_value platform.version) || exit 1
+# A valid repository holds no "@", so the last "@v" starts the version.
+version=${release##*@v}
+release_source="$release#subdirectory=packages/agent-hub"
+release_url=${release%@v*}
+release_url=${release_url#git+}
+# The GH_TOKEN hint only for a URL on https://github.com/ (exact, lowercase), the helper's own
+# host: elsewhere it would not help, and a GitHub.com spelling only loses the hint.
+access_hint="attach the repository to this session"
+case $release_url in
+  https://github.com/*) access_hint="$access_hint or set GH_TOKEN" ;;
+esac
+name=$(hub_value project.author_name)
+email=$(hub_value project.author_email)
+# An environment variable, by the same rule as a project string: empty when unset, empty, not
+# UTF-8 or holding a control character.
+env_value() {
+  python3 -I -S -c '
+import os, re, sys
+value = os.environ.get(sys.argv[1], "")
+try:
+    value.encode("utf-8")
+except UnicodeEncodeError:
+    value = ""
+print(value if re.fullmatch(r"[^\x00-\x1f\x7f]+", value) else "")
+' "$1"
+}
+# An identity that cannot be written is a WARN: the run goes on.
+local_identity() {
+  if [ -n "$name" ] && [ -n "$email" ] && [ -e "$1/.git" ]; then
+    git -C "$1" config user.name "$name" && git -C "$1" config user.email "$email" ||
+      echo "cloud-setup: WARN could not set the git identity in $2"
+  fi
+}
+if [ -n "$name" ] && [ -n "$email" ]; then
+  if git config --global user.name "$name" && git config --global user.email "$email"; then
+    echo "cloud-setup: git identity = $name <$email>"
+  else
+    echo "cloud-setup: WARN could not set the global git identity"
+  fi
+  # Repo-local too: a container's global ~/.gitconfig has been seen reset mid-session.
+  local_identity "$hub_dir" "the hub"
+else
+  # A team hub: this developer's author from the session's variables, repo-local only.
+  name=$(env_value HUB_AUTHOR_NAME)
+  email=$(env_value HUB_AUTHOR_EMAIL)
+  if [ -n "$name" ] && [ -n "$email" ]; then
+    echo "cloud-setup: git identity (repo-local, from HUB_AUTHOR_NAME/HUB_AUTHOR_EMAIL) = $name <$email>"
+    local_identity "$hub_dir" "the hub"
+  else
+    name=
+    email=
+    echo "cloud-setup: WARN no commit author in hub.json or HUB_AUTHOR_NAME/HUB_AUTHOR_EMAIL; commits carry the container's identity"
+  fi
+fi
+# The hub's git hooks (ADR 0061), as hub sync sets them: core.hooksPath = .githooks, unless
+# another hook manager already holds it. A WARN when it cannot be set: the run goes on.
+if [ -e "$hub_dir/.git" ]; then
+  case $(git -C "$hub_dir" config --local --get core.hooksPath || true) in
+    "" | .git/hooks | .git/hooks/)
+      if git -C "$hub_dir" config --local core.hooksPath .githooks; then
+        echo "cloud-setup: git hooks = .githooks"
+      else
+        echo "cloud-setup: WARN could not set core.hooksPath in the hub"
+      fi
+      ;;
+  esac
+fi
+
+# Added beside any helper already there (gh auth setup-git writes two values), once. It answers
+# only while GH_TOKEN is set, so a later shell without it falls through to the next helper.
+# shellcheck disable=SC2016  # expanded by git at credential time, not here
+token_helper='!f() { test -n "${GH_TOKEN:-}" && test "$1" = get && echo username=x-access-token && echo "password=${GH_TOKEN}"; }; f'
+if [ -n "${GH_TOKEN:-}" ]; then
+  helpers=$(git config --global --get-all credential.https://github.com.helper || true)
+  newline='
+'
+  case "$newline$helpers$newline" in
+    *"$newline$token_helper$newline"*) ;;
+    *)
+      git config --global --add credential.https://github.com.helper "$token_helper" ||
+        echo "cloud-setup: WARN could not add the GH_TOKEN credential helper to ~/.gitconfig"
+      ;;
+  esac
+fi
+
+command -v uvx >/dev/null 2>&1 || {
+  echo "cloud-setup: uv is not installed (no uvx on PATH); see https://docs.astral.sh/uv/getting-started/installation/" >&2
+  exit 1
+}
+# After the helper: with GH_TOKEN, git reaches a private release through it.
+git ls-remote --exit-code "$release_url" "refs/tags/v$version" >/dev/null 2>&1 || {
+  echo "cloud-setup: cannot read agent-hub v$version at $release_url: $access_hint" >&2
+  exit 1
+}
+# The warm-up's source: the commit hub.lock records (40 lowercase hex) when the lock is a regular
+# file (not a link) of at most 1 MiB whose platform_version and platform_repository match; else the
+# tag. The access check above stays on the tag.
+warm_source=$release_source
+lock_commit=$(python3 -I -S -c '
+import json, os, re, stat, sys
+try:
+    if not stat.S_ISREG(os.lstat(sys.argv[1]).st_mode):
+        sys.exit(0)
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    with open(os.open(sys.argv[1], flags), "rb") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            sys.exit(0)
+        content = stream.read(1048577)
+    if len(content) > 1048576:
+        sys.exit(0)
+    lock = json.loads(content.decode("utf-8"))
+except (OSError, ValueError, RecursionError):
+    sys.exit(0)
+commit = lock.get("platform_commit") if isinstance(lock, dict) else None
+if (
+    isinstance(commit, str)
+    and re.fullmatch("[0-9a-f]{40}", commit)
+    and lock.get("platform_version") == sys.argv[2]
+    and lock.get("platform_repository") == sys.argv[3]
+):
+    print(commit)
+' "$hub_dir/hub.lock" "$version" "${release%@v*}") || lock_commit=
+if [ -n "$lock_commit" ]; then
+  warm_source="${release%@v*}@$lock_commit#subdirectory=packages/agent-hub"
+fi
+uvx --from "$warm_source" hub --version </dev/null >/dev/null || {
+  echo "cloud-setup: cannot run agent-hub $version from $warm_source: the uv cache warm-up failed" >&2
+  exit 1
+}
+
+# The two lists hold safe names joined by ", " in the same order: walk them in step.
+dirs="$repo_dirs, "
+githubs="$repo_githubs, "
+while [ -n "$dirs" ]; do
+  dir="${dirs%%, *}"
+  dirs="${dirs#*, }"
+  github="${githubs%%, *}"
+  githubs="${githubs#*, }"
+  dest="$workspace/$dir"
+  if [ -d "$dest/.git" ]; then
+    local_identity "$dest" "../$dir"
+    if git -C "$dest" fetch --quiet origin; then
+      echo "cloud-setup: $dir present, fetched"
+    else
+      echo "cloud-setup: WARN fetch failed for $dir"
+    fi
+  elif git clone --quiet "https://github.com/$github.git" "$dest"; then
+    local_identity "$dest" "../$dir"
+    echo "cloud-setup: cloned $github into ../$dir"
+  else
+    echo "cloud-setup: WARN could not clone $github: attach it to the session (or set GH_TOKEN)"
+  fi
+done

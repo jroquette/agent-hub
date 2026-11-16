@@ -1,0 +1,135 @@
+import { describe, expect, it } from "vitest";
+
+import { aSession, aSessionLabel } from "../../testing/builders";
+import { matchesQuery, ticketsOf, type Session } from "./model";
+
+const changeSession = (id: string, overrides: Partial<Session> = {}): Session =>
+  aSession({
+    id,
+    issue: null,
+    label: aSessionLabel({
+      issue: "AGH-7",
+      workflow: "/change",
+      workflows: ["/kickoff", "/change"],
+    }),
+    ...overrides,
+  });
+
+describe("ticketsOf", () => {
+  it("groups the sessions of one issue into one row, the newest session first (AC-426.2)", () => {
+    const rows = ticketsOf([
+      changeSession("a", { last_activity_at: "2026-10-20T10:00:00Z", status: "ended" }),
+      changeSession("b", { last_activity_at: "2026-10-20T11:00:00Z", status: "ended" }),
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      issue: "AGH-7",
+      kind: "change",
+      workflows: ["/change"],
+      sessions: 2,
+      group: "done",
+    });
+    expect(rows[0]?.latest.id).toBe("b");
+  });
+
+  it("lists the tickets a feature plans and the ones the feature path worked on, naming the feature", () => {
+    const planned = changeSession("a");
+    const featurePath = aSession({
+      id: "b",
+      label: aSessionLabel({ issue: "AGH-9", workflows: ["/feature"] }),
+    });
+    const features = new Map([
+      ["AGH-7", { project: "agent-hub", slug: "team-cap", title: "Cap the teams" }],
+    ]);
+    const rows = Object.fromEntries(
+      ticketsOf([planned, featurePath], features).map((row) => [row.issue, row]),
+    );
+    expect(rows["AGH-7"]).toMatchObject({
+      kind: "feature",
+      title: "Cap the teams",
+      feature: { slug: "team-cap" },
+    });
+    expect(rows["AGH-9"]).toMatchObject({ kind: "feature", feature: null });
+  });
+
+  it("keeps every session of the ticket, newest first", () => {
+    const [row] = ticketsOf([
+      changeSession("a", { last_activity_at: "2026-10-20T10:00:00Z" }),
+      changeSession("b", { last_activity_at: "2026-10-20T11:00:00Z" }),
+    ]);
+    expect(row?.sessionList.map((s) => s.id)).toEqual(["b", "a"]);
+  });
+
+  it("leaves out sessions with no issue (AC-426.2)", () => {
+    expect(
+      ticketsOf([changeSession("a", { label: aSessionLabel({ issue: null, workflows: [] }) })]),
+    ).toEqual([]);
+  });
+
+  it("puts a ticket with a waiting session under Needs you, a live one under In progress (AC-426.4)", () => {
+    const waiting = ticketsOf([changeSession("a", { status: "waiting" })]);
+    const live = ticketsOf([changeSession("a", { status: "live" })]);
+    expect(waiting[0]?.group).toBe("needs");
+    expect(live[0]?.group).toBe("active");
+  });
+
+  it("names the kind by the skill, a hub run, else other (AC-426.6)", () => {
+    const upgrade = changeSession("a", {
+      label: aSessionLabel({ issue: "AGH-7", workflows: ["/upgrade"] }),
+    });
+    const run = changeSession("b", {
+      run_id: "run-1",
+      label: aSessionLabel({ issue: "AGH-8", workflows: [] }),
+    });
+    const other = changeSession("c", { label: aSessionLabel({ issue: "AGH-9", workflows: [] }) });
+    const kinds = Object.fromEntries(
+      ticketsOf([upgrade, run, other]).map((row) => [row.issue, row.kind]),
+    );
+    expect(kinds).toEqual({ "AGH-7": "upgrade", "AGH-8": "run", "AGH-9": "other" });
+  });
+
+  it("finds a row by its issue, repo or skill (AC-426.7)", () => {
+    const [row] = ticketsOf([changeSession("a")]);
+    if (!row) throw new Error("no row");
+    expect(matchesQuery(row, "agh-7")).toBe(true);
+    expect(matchesQuery(row, "/change")).toBe(true);
+    expect(matchesQuery(row, "nothing")).toBe(false);
+  });
+
+  it("names a ticket the feature's ticket flow worked on a feature ticket", () => {
+    const implement = aSession({
+      id: "a",
+      label: aSessionLabel({ issue: "AGH-11", workflows: ["/implement"] }),
+    });
+    expect(ticketsOf([implement])[0]?.kind).toBe("feature");
+  });
+
+  it("groups one issue per project, in upper case, and keeps routine commands out of its skills (AC-426.2, AC-426.6)", () => {
+    const rows = ticketsOf([
+      changeSession("a", {
+        label: aSessionLabel({ issue: "agh-7", workflows: ["/kickoff", "/learn", "/refactor"] }),
+      }),
+      changeSession("b", { project: "demo-shop" }),
+    ]);
+    expect(rows.map((row) => [row.project, row.issue, row.kind, row.workflows])).toEqual(
+      expect.arrayContaining([
+        ["agent-hub", "AGH-7", "refactor", ["/refactor"]],
+        ["demo-shop", "AGH-7", "change", ["/change"]],
+      ]),
+    );
+  });
+
+  it("sums the cost and keeps the newest pull request (AC-426.5)", () => {
+    const pr = { number: 41, state: "open", url: "https://github.com/acme/app/pull/41" };
+    const [row] = ticketsOf([
+      changeSession("a", { cost_usd: "1.00", last_activity_at: "2026-10-20T10:00:00Z" }),
+      changeSession("b", {
+        cost_usd: "0.25",
+        last_activity_at: "2026-10-20T11:00:00Z",
+        pr,
+      }),
+    ]);
+    expect(row?.costUsd).toBeCloseTo(1.25);
+    expect(row?.pr?.number).toBe(41);
+  });
+});

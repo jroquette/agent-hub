@@ -1,0 +1,15 @@
+# /merge ran again for the same merge: a preflight since the merge already read the blocker's
+# outcome (its blockers_read lists it), so no brief, preflight or record node runs (AC-3.3).
+workflow: preflight
+inputs:
+  feature: demo-flow
+  ticket: DEM-8
+  blocker: DEM-7
+stubs:
+  due:
+    output:
+      due: false
+      reason: "DEM-8 already read DEM-7's outcome"
+      input: none
+expect: {status: done}
+reached: [due]

@@ -1,0 +1,2632 @@
+"""``hub doctor``: its command surface, the root and ``hub.json`` steps, and the exit codes.
+
+A failed config runs only the config rules and reads no other file, so those cases copy only
+``hub.json`` into an empty folder (plan O6); the others run on a copy of the ``DEMO`` hub, which is
+walked, not listed by git, unless the test commits it (plan E21 e): only ``features.tracker`` reads
+the listing.
+"""
+
+import errno
+import json
+import os
+import shutil
+import signal
+import subprocess
+import sys
+from collections.abc import Callable, Iterator
+from importlib.metadata import version
+from pathlib import Path
+from typing import Any, NamedTuple
+
+import pytest
+from click import unstyle
+from typer.testing import CliRunner, Result
+
+from agent_hub.cli import doctor_command
+from agent_hub.cli.doctor_report import finding_line, report_lines, totals_line
+from agent_hub.cli.main import app
+from agent_hub.core.doctor.brain_memory_rule import FIX as MEMORY_FIX
+from agent_hub.core.doctor.finding import Read, Rule
+from agent_hub.core.doctor.registry import REGISTRY
+from agent_hub.core.doctor.run_rules import Totals, UsageProblem, count_findings
+from agent_hub.core.hub_config.doctor_rules import Severity
+from agent_hub.core.hub_config.platform_repository import PLATFORM_REPOSITORY_MESSAGE
+from agent_hub.core.json_form import dump_json
+from agent_hub.core.testing.builders import (
+    a_conventions_document,
+    a_local_environments_document,
+    a_second_repo,
+    a_two_team_document,
+    an_environments_document,
+)
+from agent_hub.core.testing.platform_repository_cases import (
+    CREDENTIAL_VALUE,
+    CUSTOM_REPOSITORY,
+    SECRET_PARTS,
+)
+from agent_hub.core.testing.seeded_shadows import seeded_shadow_findings
+from agent_hub.generator import render_hub as render_hub_module
+
+# The conftest's in-process doctor run, its path recorder and the recorder's filters (tests
+# cannot import a conftest in importlib mode).
+type DoctorRunner = Callable[..., Result]
+type SyncRunner = Callable[..., Result]
+type ReadsIn = Callable[[list[PathRead], Path], set[str]]
+type Ancestors = Callable[..., set[str]]
+type CheckoutFactory = Callable[[str], Path]
+type Under = Callable[[list["PathRead"], Path], set[str]]
+
+
+class PathRead(NamedTuple):
+    """The conftest's ``PathRead``: the call, the path, its descriptor's identity, open flags."""
+
+    call: str
+    path: str
+    identity: tuple[int, int] | None = None
+    flags: int | str | None = None
+
+
+VERSION = version("agent-hub-cli")
+PINNED_COMMAND = (
+    "uvx --from git+https://github.com/jroquette/agent-hub@v0.0.1"
+    "#subdirectory=packages/agent-hub hub"
+)
+SCHEMA_FIX = "Fix: fix hub.json (docs/design/project-config.md)"
+CLEAN = "0 errors, 0 warnings, 0 infos"
+ONE_ERROR = "1 error, 0 warnings, 0 infos"
+NOT_A_HUB = (
+    ": not a hub: no hub.json in this folder (hub doctor runs in the hub folder, never a parent)"
+)
+FIFO_ALARM_SECONDS = 5
+NOT_ADOPTED_LINE = (
+    "warning lock.drift hub.lock: not adopted: no hub.lock records this hub's files"
+    " Fix: run hub sync --adopt"
+)
+# The seeded Makefile.project holds two comment lines; the planted rule is the third.
+OVERRIDE_LINE = (
+    "warning makefile.override Makefile.project:3: redefines target 'check'"
+    " Fix: rename the project target"
+)
+LISTING_FIX = (
+    "Fix: fix the cause above so every file can be listed and read, then run hub doctor again"
+)
+# The characters of the box Rich may draw around a usage error.
+BOX_CHARACTERS = "│╭╮╰╯─"
+# hub init seeds every built-in pack as shipped, so a full run on a DEMO hub names each seeded
+# workflow, identical to its built-in, with the fix "delete it" (AGH-699 D15). By rule id they
+# sort after every other rule's findings in these runs.
+SEEDED_FINDINGS = seeded_shadow_findings(VERSION)
+SEEDED_SHADOWS = [finding_line(finding) for finding in SEEDED_FINDINGS]
+SEEDED_JSON: list[dict[str, Any]] = [
+    {
+        "rule": finding.rule,
+        "severity": str(finding.severity),
+        "path": finding.path,
+        "line": finding.line,
+        "message": finding.message,
+        "fix": finding.fix,
+    }
+    for finding in SEEDED_FINDINGS
+]
+
+
+def seeded_totals(*, errors: int = 0, warnings: int = 0, infos: int = 0) -> str:
+    """The totals line of a run on a seeded hub: its other findings, plus the seeded shadows."""
+    return totals_line(Totals(errors=errors, warnings=warnings + len(SEEDED_FINDINGS), infos=infos))
+
+
+# A full run on a DEMO hub that nothing else is wrong with.
+SEEDED_CLEAN = [*SEEDED_SHADOWS, seeded_totals()]
+
+
+@pytest.fixture(autouse=True)
+def demo_api_folder(tmp_path: Path) -> None:
+    """DEMO's one repo as a folder next to the hub: a checkout whose only file is an empty
+    ``AGENTS.md``, which ``repos.agents`` accepts (plan E3a).
+
+    So a run of every rule on a ``DEMO`` hub reports no missing checkout; the tests of the
+    checkouts themselves make them git repos (``demo_checkout``) or remove them.
+    """
+    (tmp_path / "demo-api").mkdir()
+    (tmp_path / "demo-api" / "AGENTS.md").write_bytes(b"")
+
+
+@pytest.fixture
+def alarm() -> Iterator[None]:
+    """Fail a test that blocks (a FIFO opened by mistake) instead of hanging the run."""
+
+    def timed_out(_signal: int, _frame: object) -> None:
+        pytest.fail("the command blocked")
+
+    previous = signal.signal(signal.SIGALRM, timed_out)
+    signal.alarm(FIFO_ALARM_SECONDS)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def assert_refused(result: Result, message: str) -> None:
+    """Exit 2 with ``message`` as one line of the usage error on stderr, nothing on stdout.
+
+    Typer draws the error in a box whose width, colors and borders follow the terminal (CI sets
+    ``FORCE_TERMINAL``), so the box is stripped and only the message line is pinned.
+    """
+    assert result.exit_code == 2, result.output
+    assert result.stdout == ""
+    shown = unstyle(result.stderr)
+    assert "not a hub" not in shown
+    assert "Usage: hub doctor" in shown
+    texts = [line.strip(BOX_CHARACTERS + " ") for line in shown.splitlines()]
+    assert [text for text in texts if text == message] == [message], shown
+    assert [text for text in texts if message in text] == [message], shown
+
+
+def config_only_hub(tmp_path: Path, content: bytes) -> Path:
+    """A folder holding only ``hub.json`` with ``content``."""
+    root = tmp_path / "hub"
+    root.mkdir()
+    (root / "hub.json").write_bytes(content)
+    return root
+
+
+def lines_of(result: Result, *, exit_code: int) -> list[str]:
+    """The stdout lines of a run that exited ``exit_code`` with nothing on stderr."""
+    assert result.exit_code == exit_code, result.output
+    # An exit, not an exception the runner caught.
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert result.stderr == ""
+    return result.stdout.splitlines()
+
+
+def plant_check_override(root: Path) -> None:
+    """Give ``Makefile.project`` a rule for ``check``, a target the managed ``Makefile`` defines."""
+    project = root / "Makefile.project"
+    project.write_bytes(project.read_bytes() + b"check:\n\t@echo ours\n")
+
+
+def schema_line(message: str) -> str:
+    return f"error config.schema hub.json: {message} {SCHEMA_FIX}"
+
+
+def commit_all(root: Path) -> None:
+    """Make ``root`` a git work tree with every file committed, with a hermetic git."""
+    git = shutil.which("git")
+    assert git is not None
+    env = {"HOME": str(root.parent), "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}
+    author = ["-c", "user.name=Jane Doe", "-c", "user.email=jane@example.com"]
+    for args in (
+        ["init", "-q"],
+        ["add", "-A"],
+        [*author, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"],
+    ):
+        subprocess.run([git, *args], cwd=root, env=env, check=True, capture_output=True)  # noqa: S603 - absolute git, fixed arguments
+
+
+def test_lists_options_when_help_requested(demo_hub: Path, run_doctor: DoctorRunner) -> None:
+    shown = CliRunner().invoke(app, ["doctor", "--help"], env={"COLUMNS": "120"})
+    ran = run_doctor(demo_hub)
+    unknown = run_doctor(demo_hub, "--nope")
+
+    assert shown.exit_code == 0
+    help_text = " ".join(unstyle(shown.stdout).split())
+    assert "--only RULE" in help_text
+    assert "Run only this rule (and config.schema); repeatable." in help_text
+    assert "--json" in help_text
+    assert "Print one JSON object instead of lines." in help_text
+    assert "not implemented yet" not in ran.output
+    assert lines_of(ran, exit_code=0) == SEEDED_CLEAN
+    assert unknown.exit_code == 2
+    assert "Usage:" in unknown.stderr
+    assert unknown.stdout == ""
+
+
+@pytest.mark.parametrize("case", ["empty-folder", "hub-subfolder"])
+def test_exits_two_when_cwd_not_hub(
+    tmp_path: Path,
+    demo_hub: Path,
+    run_doctor: DoctorRunner,
+    *,
+    path_reads: list[PathRead],
+    reads_in: ReadsIn,
+    ancestors: Ancestors,
+    case: str,
+) -> None:
+    if case == "empty-folder":
+        folder = tmp_path / "empty"
+        folder.mkdir()
+    else:
+        folder = demo_hub / "brain"
+        assert (demo_hub / "hub.json").is_file()
+    real = os.path.realpath(folder)
+    allowed = ancestors(real, up_to=tmp_path) | {os.path.join(real, "hub.json")}
+    path_reads.clear()
+
+    result = run_doctor(folder)
+
+    assert result.exit_code == 2, result.output
+    assert result.stdout == ""
+    assert result.stderr == f"{real}{NOT_A_HUB}\n"
+    assert reads_in(path_reads, tmp_path) <= allowed
+
+
+@pytest.mark.usefixtures("alarm")
+@pytest.mark.parametrize(
+    ("case", "reason"),
+    [
+        ("folder", "not a regular file"),
+        ("fifo", "not a regular file"),
+        ("dangling-link", "No such file or directory"),
+        ("unreadable", "Permission denied"),
+        ("lstat-refused", "Permission denied"),
+    ],
+    ids=["folder", "fifo", "dangling-link", "unreadable", "lstat-refused"],
+)
+def test_reports_config_schema_when_hub_json_not_regular(
+    tmp_path: Path,
+    demo_document: dict[str, Any],
+    run_doctor: DoctorRunner,
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+    reason: str,
+) -> None:
+    root = tmp_path / "hub"
+    root.mkdir()
+    config = root / "hub.json"
+    if case == "folder":
+        config.mkdir()
+    elif case == "fifo":
+        os.mkfifo(config)
+    elif case == "dangling-link":
+        config.symlink_to("gone.json")
+    else:
+        config.write_bytes(dump_json(demo_document))
+        # "unreadable" refuses the open alone; "lstat-refused" refuses every look at hub.json,
+        # as an unsearchable folder does: the lstat error is not "absent", so it is no exit 2.
+        calls = ("open",) if case == "unreadable" else ("open", "stat", "lstat")
+        for call in calls:
+            monkeypatch.setattr(os, call, refusing_hub_json(getattr(os, call)))
+    shown = json.dumps(os.path.join(os.path.realpath(root), "hub.json"))
+
+    lines = lines_of(run_doctor(root), exit_code=1)
+
+    assert lines == [schema_line(f"$: cannot read {shown}: {reason}"), ONE_ERROR]
+
+
+def refusing_hub_json(real: Callable[..., Any]) -> Callable[..., Any]:
+    """``real``, except that a path ending in ``hub.json`` raises ``EACCES``."""
+
+    def refusing(path: Any, *args: Any, **kwargs: Any) -> Any:
+        if not isinstance(path, int) and os.fsdecode(path).endswith("hub.json"):
+            raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), path)
+        return real(path, *args, **kwargs)
+
+    return refusing
+
+
+def invalid_config(case: str, document: dict[str, Any]) -> tuple[bytes, str]:
+    """The ``hub.json`` bytes of an invalid case and the start of its one problem."""
+    if case == "invalid-json":
+        return b'{"schema_version": 1,', "$: "
+    if case == "missing-key":
+        del document["project"]
+        return dump_json(document), "project: "
+    if case == "unknown-key":
+        document["surprise"] = True
+        return dump_json(document), "surprise: "
+    document["project"]["name"] = "Demo"
+    return dump_json(document), "project.name: String should match pattern"
+
+
+@pytest.mark.parametrize("only", [(), ("--only", "lock.drift")], ids=["all", "only-lock-drift"])
+@pytest.mark.parametrize("case", ["invalid-json", "missing-key", "unknown-key", "bad-name"])
+def test_runs_only_config_schema_when_config_invalid(
+    tmp_path: Path,
+    demo_document: dict[str, Any],
+    run_doctor: DoctorRunner,
+    *,
+    case: str,
+    only: tuple[str, ...],
+) -> None:
+    content, problem = invalid_config(case, demo_document)
+    # No hub.lock: had lock.drift run, it would report the hub as not adopted.
+    root = config_only_hub(tmp_path, content)
+
+    lines = lines_of(run_doctor(root, *only), exit_code=1)
+
+    assert len(lines) == 2, lines
+    assert lines[0].startswith(f"error config.schema hub.json: {problem}"), lines
+    assert lines[0].endswith(f" {SCHEMA_FIX}")
+    assert lines[1] == ONE_ERROR
+
+
+def test_reports_transport_when_value_unknown(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    demo_document["tracker"]["transport"] = "connector"
+    (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "config.schema"), exit_code=1)
+
+    assert lines == [schema_line("tracker.transport: Input should be 'api' or 'mcp'"), ONE_ERROR]
+
+
+def test_reports_tracker_states_when_value_invalid(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    demo_document["tracker"]["states"] = {"done": "x"}
+    (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "config.schema"), exit_code=1)
+
+    assert lines == [schema_line("tracker.states.done: Extra inputs are not permitted"), ONE_ERROR]
+
+
+def test_stays_clean_when_transport_absent(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    assert "transport" not in demo_document["tracker"]
+    assert b'"transport"' not in (demo_hub / "hub.json").read_bytes()
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "config.schema"), exit_code=0)
+
+    assert lines == [CLEAN]
+
+
+def test_passes_config_schema_when_identity_absent(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    # A team hub: each developer's identity comes from hub.local.json or git config.
+    for key in ("branch_prefix", "author_name", "author_email"):
+        del demo_document["project"][key]
+    (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "config.schema"), exit_code=0)
+
+    assert lines == [CLEAN]
+
+
+def test_passes_config_schema_when_repo_sets_branch(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    demo_document["repos"][0]["default_branch"] = "master"
+    (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "config.schema"), exit_code=0)
+
+    assert lines == [CLEAN]
+
+
+def test_passes_config_schema_when_tracker_lists_teams(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    demo_document["tracker"] = a_two_team_document()["tracker"]
+    (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "config.schema"), exit_code=0)
+
+    assert lines == [CLEAN]
+
+
+def test_reports_team_keys_problem_when_both_set(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    demo_document["tracker"]["teams"] = ["APP", "OPS"]
+    (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "config.schema"), exit_code=1)
+
+    assert lines == [
+        schema_line("tracker.teams: set tracker.team or tracker.teams, not both"),
+        ONE_ERROR,
+    ]
+
+
+def test_reports_repo_branch_problem_when_value_invalid(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    demo_document["repos"][0]["default_branch"] = "-x"
+    (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "config.schema"), exit_code=1)
+
+    assert lines == [
+        schema_line(
+            "repos[0].default_branch: String should match pattern"
+            " '^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*(?:/[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*)*$'"
+        ),
+        ONE_ERROR,
+    ]
+
+
+def test_exits_one_with_schema_error_when_check_stop_wrong(
+    tmp_path: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    demo_document["repos"][0]["check_stop"] = 5
+    root = config_only_hub(tmp_path, dump_json(demo_document))
+
+    lines = lines_of(run_doctor(root), exit_code=1)
+
+    assert lines == [schema_line("repos[0].check_stop: Input should be a valid string"), ONE_ERROR]
+
+
+def test_passes_config_schema_when_hub_sets_conventions(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    mixed = a_conventions_document()
+    demo_document["project"]["conventions"] = mixed["project"]["conventions"]
+    demo_document["repos"] = mixed["repos"]
+    (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "config.schema"), exit_code=0)
+
+    assert lines == [CLEAN]
+
+
+def test_reports_branch_pattern_problem_when_issue_placeholder_missing(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    demo_document["repos"][0]["conventions"] = {"branch": "{prefix}{slug}"}
+    (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "config.schema"), exit_code=1)
+
+    assert lines == [
+        schema_line("repos[0].conventions.branch: a branch needs {ISSUE} or {issue_lower}"),
+        ONE_ERROR,
+    ]
+
+
+def test_passes_config_schema_when_hub_sets_platform_repository(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    demo_document["platform"]["repository"] = CUSTOM_REPOSITORY
+    (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "config.schema"), exit_code=0)
+
+    assert lines == [CLEAN]
+
+
+def test_reports_platform_repository_without_value_when_credential_given(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    demo_document["platform"]["repository"] = CREDENTIAL_VALUE
+    (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    result = run_doctor(demo_hub, "--only", "config.schema")
+
+    assert lines_of(result, exit_code=1) == [
+        schema_line(f"platform.repository: {PLATFORM_REPOSITORY_MESSAGE}"),
+        ONE_ERROR,
+    ]
+    assert [part for part in SECRET_PARTS if part in result.output] == []
+
+
+CONTRACT_SYNC = {"source": "demo-api", "target": "demo-web"}
+
+
+@pytest.mark.parametrize(
+    ("modules", "problem"),
+    [
+        (
+            {"contract-sync": {"target": "demo-web"}},
+            "modules.contract-sync.source: Field required",
+        ),
+        (
+            {"contract-sync": CONTRACT_SYNC | {"branch": "main"}},
+            "modules.contract-sync.branch: Extra inputs are not permitted",
+        ),
+        (
+            {"contract-sync": CONTRACT_SYNC | {"source": 1}},
+            "modules.contract-sync.source: Input should be a valid string",
+        ),
+        (
+            {"contract-sync": CONTRACT_SYNC | {"target": None}},
+            "modules.contract-sync.target: null is not a value; give a value or leave the key out",
+        ),
+        (
+            {"contract-sync": CONTRACT_SYNC | {"target": "nope"}},
+            'modules.contract-sync.target: repo dir "nope" is not in repos',
+        ),
+        (
+            {"contract-sync": CONTRACT_SYNC | {"target": "demo-api"}},
+            'modules.contract-sync.target: target "demo-api" is the source too;'
+            " give two different repos",
+        ),
+        ({"cloud": {"x": 1}}, "modules.cloud.x: Extra inputs are not permitted"),
+        ({"deploy": {}}, "modules.deploy: Extra inputs are not permitted"),
+    ],
+    ids=["missing", "extra", "not-string", "null", "unknown-repo", "same-repo", "cloud", "deploy"],
+)
+def test_reports_contract_sync_problem_when_settings_invalid(
+    tmp_path: Path,
+    demo_document: dict[str, Any],
+    run_doctor: DoctorRunner,
+    *,
+    modules: dict[str, Any],
+    problem: str,
+) -> None:
+    demo_document["repos"].append(a_second_repo())
+    demo_document["modules"] = modules
+    root = config_only_hub(tmp_path, dump_json(demo_document))
+
+    lines = lines_of(run_doctor(root, "--only", "config.schema"), exit_code=1)
+
+    assert lines == [schema_line(problem), ONE_ERROR]
+
+
+@pytest.mark.parametrize(
+    "modules",
+    [("cloud",), ("marketplace",), ("bench", "cloud", "contract-sync", "marketplace")],
+    ids=["cloud", "marketplace", "all"],
+)
+def test_finds_no_stale_reference_when_fresh_hub_selects_modules(
+    tmp_path: Path,
+    demo_document: dict[str, Any],
+    run_doctor: DoctorRunner,
+    *,
+    modules: tuple[str, ...],
+) -> None:
+    # AGH-17: AGENTS.md names the selected modules' files, which a fresh hub holds, so none is a
+    # stale reference.
+    demo_document["repos"].append(a_second_repo())
+    source, target = (repo["dir"] for repo in demo_document["repos"])
+    settings = {"contract-sync": {"source": source, "target": target}}
+    demo_document["modules"] = {module: settings.get(module, {}) for module in modules}
+    config = tmp_path / "hub.json"
+    config.write_bytes(dump_json(demo_document))
+    root = tmp_path / "hub"
+    created = CliRunner().invoke(app, ["init", "--config", str(config), "--dir", str(root)])
+    assert created.exit_code == 0, created.stderr
+
+    assert lines_of(run_doctor(root, "--only", "instructions.refs"), exit_code=0) == [CLEAN]
+
+
+@pytest.mark.parametrize(
+    ("project_branch", "repo_branch"),
+    [("main", "release/2"), ("stable/1", None)],
+    ids=["repo-branch", "project-branch"],
+)
+def test_finds_no_stale_reference_when_fresh_hub_names_branch_with_slash(
+    tmp_path: Path,
+    demo_document: dict[str, Any],
+    run_doctor: DoctorRunner,
+    *,
+    project_branch: str,
+    repo_branch: str | None,
+) -> None:
+    # AGENTS.md names the configured branches as code spans; one with a ``/`` looks like a path
+    # but is not a stale reference.
+    demo_document["project"]["default_branch"] = project_branch
+    if repo_branch is not None:
+        demo_document["repos"][0]["default_branch"] = repo_branch
+    config = tmp_path / "hub.json"
+    config.write_bytes(dump_json(demo_document))
+    root = tmp_path / "hub"
+    created = CliRunner().invoke(app, ["init", "--config", str(config), "--dir", str(root)])
+    assert created.exit_code == 0, created.stderr
+
+    assert lines_of(run_doctor(root, "--only", "instructions.refs"), exit_code=0) == [CLEAN]
+
+
+def test_finds_same_findings_when_fresh_hub_lists_teams(
+    tmp_path: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    # AGH-56: a fresh hub with two tracker teams renders their names into AGENTS.md and the
+    # plugin; every check finds what it finds in a fresh one-team hub, and nothing more.
+    two_team_document = {**demo_document, "tracker": a_two_team_document()["tracker"]}
+    results = []
+    for name, document in (("one", demo_document), ("two", two_team_document)):
+        base = tmp_path / name
+        base.mkdir()
+        config = base / "hub.json"
+        config.write_bytes(dump_json(document))
+        root = base / "hub"
+        created = CliRunner().invoke(app, ["init", "--config", str(config), "--dir", str(root)])
+        assert created.exit_code == 0, created.stderr
+        result = run_doctor(root)
+        results.append((result.exit_code, result.stdout.splitlines(), result.stderr))
+
+    assert results[0][0] == 0, results[0]
+    assert results[1] == results[0]
+
+
+def with_work_branches(document: dict[str, Any]) -> dict[str, Any]:
+    """``document`` as the mixed hub: ``demo-web`` added, the project branch ``work/…``, its
+    commit title ``wip/{summary}`` (no ``pr_title``, so the PR title follows it) and
+    ``demo-api``'s own ``release/{ISSUE}``.
+
+    Neither first segment is the prefix nor a path a fresh hub holds, so nothing resolves by luck.
+    """
+    mixed = a_conventions_document()
+    project = {**document["project"], "conventions": mixed["project"]["conventions"]}
+    project["conventions"]["branch"] = "work/{issue_lower}/{slug}"
+    # E32: a title shape holding `/` is path-shaped too; with no pr_title (E14) the PR title
+    # renders the same path-shaped shape and example.
+    project["conventions"]["commit_title"] = "wip/{summary}"
+    del project["conventions"]["pr_title"]
+    api = {**document["repos"][0], "conventions": {"branch": "release/{ISSUE}"}}
+    return {**document, "project": project, "repos": [api, *document["repos"][1:], a_second_repo()]}
+
+
+def test_finds_no_stale_reference_when_fresh_hub_sets_conventions(
+    tmp_path: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    # AGH-57 (plan O1 a): AGENTS.md names the branch shapes and the example as code spans.
+    config = tmp_path / "hub.json"
+    config.write_bytes(dump_json(with_work_branches(demo_document)))
+    root = tmp_path / "hub"
+    created = CliRunner().invoke(app, ["init", "--config", str(config), "--dir", str(root)])
+    assert created.exit_code == 0, created.stderr
+    agents = (root / "AGENTS.md").read_text(encoding="utf-8")
+    assert all(
+        f"`{span}`" in agents for span in ("work/{issue_lower}/{slug}", "work/dem-7/collector")
+    )
+    # AGH-98: demo-api's own branch is named by the repo, its pattern stays in hub.json.
+    assert (
+        "- `demo-api` overrides some keys: `hub.json` → `repos[].conventions`; `hub worktree` and"
+        " `hub run` apply them; a `pr_title` neither layer sets follows the repo's own"
+        " `commit_title`."
+    ) in " ".join(agents.split())
+    assert "release/{ISSUE}" not in agents
+    assert "- Commit title: `wip/{summary}`, e.g. `wip/add the collector`." in agents
+    assert "- PR title: `wip/{summary}`, e.g. `wip/add the collector`." in agents
+
+    assert lines_of(run_doctor(root, "--only", "instructions.refs"), exit_code=0) == [CLEAN]
+
+
+def test_finds_same_findings_when_fresh_hub_sets_conventions(
+    tmp_path: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    # AGH-57: every check finds in a fresh configured hub what it finds in a fresh unconfigured
+    # one with the same repos, and nothing more.
+    configured = with_work_branches(demo_document)
+    unconfigured = {**demo_document, "repos": [*demo_document["repos"], a_second_repo()]}
+    results = []
+    for name, document in (("unconfigured", unconfigured), ("configured", configured)):
+        base = tmp_path / name
+        base.mkdir()
+        config = base / "hub.json"
+        config.write_bytes(dump_json(document))
+        root = base / "hub"
+        created = CliRunner().invoke(app, ["init", "--config", str(config), "--dir", str(root)])
+        assert created.exit_code == 0, created.stderr
+        result = run_doctor(root)
+        results.append((result.exit_code, result.stdout.splitlines(), result.stderr))
+
+    assert results[0][0] == 0, results[0]
+    assert results[1] == results[0]
+
+
+@pytest.mark.parametrize("schema_version", [1, 2], ids=["schema-ok", "schema-wrong"])
+def test_reports_pin_only_when_pin_differs(
+    demo_hub: Path,
+    demo_document: dict[str, Any],
+    run_doctor: DoctorRunner,
+    *,
+    schema_version: int,
+) -> None:
+    demo_document["platform"]["version"] = "0.0.1"
+    demo_document["schema_version"] = schema_version
+    (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    lines = lines_of(run_doctor(demo_hub), exit_code=1)
+
+    assert lines == [
+        f"error platform.version hub.json: this hub is pinned to 0.0.1 but this hub command is"
+        f" {VERSION}. Fix: run the pinned release: {PINNED_COMMAND}",
+        ONE_ERROR,
+    ]
+
+
+class TestExitCodes:
+    def test_exits_one_when_error_found(
+        self, demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+    ) -> None:
+        demo_document["surprise"] = True
+        (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+        lines = lines_of(run_doctor(demo_hub), exit_code=1)
+
+        assert [line.split(" ")[:3] for line in lines[:-1]] == [
+            ["error", "config.schema", "hub.json:"]
+        ]
+        assert lines[-1] == ONE_ERROR
+
+    def test_exits_two_when_only_names_unknown_rule(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        path_reads: list[PathRead],
+        reads_in: ReadsIn,
+    ) -> None:
+        # Outside any hub: the refusal comes before the root and hub.json are looked at.
+        monkeypatch.chdir(tmp_path)
+        path_reads.clear()
+
+        result = CliRunner().invoke(app, ["doctor", "--only", "nope"], env={"COLUMNS": "80"})
+
+        assert_refused(result, "unknown rule in --only: nope")
+        assert reads_in(path_reads, tmp_path) == set()
+
+    @pytest.mark.parametrize(
+        ("modules", "message"),
+        [(None, "module bench is not selected")],
+        ids=["unselected"],
+    )
+    def test_exits_two_when_only_names_module_rule(
+        self,
+        demo_hub: Path,
+        demo_document: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        modules: dict[str, Any] | None,
+        message: str,
+    ) -> None:
+        if modules is not None:
+            demo_document["modules"] = modules
+        (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+        monkeypatch.chdir(demo_hub)
+
+        result = CliRunner().invoke(app, ["doctor", "--only", "bench.tasks"], env={"COLUMNS": "80"})
+
+        assert_refused(result, message)
+
+    def test_exits_zero_when_only_warnings_or_infos(
+        self, demo_hub: Path, run_doctor: DoctorRunner
+    ) -> None:
+        (demo_hub / "hub.lock").unlink()
+
+        lines = lines_of(run_doctor(demo_hub), exit_code=0)
+
+        assert lines == [NOT_ADOPTED_LINE, *SEEDED_SHADOWS, seeded_totals(warnings=1)]
+
+    def test_runs_only_named_rule_when_only_given(
+        self, demo_hub: Path, run_doctor: DoctorRunner
+    ) -> None:
+        # A lock.drift problem (a managed file edited) that only a run of lock.drift reports.
+        (demo_hub / "AGENTS.md").write_bytes(b"# Agents, edited\n")
+        plant_check_override(demo_hub)
+
+        lines = lines_of(run_doctor(demo_hub, "--only", "makefile.override"), exit_code=0)
+
+        assert lines == [OVERRIDE_LINE, "0 errors, 1 warning, 0 infos"]
+
+    def test_notes_disabled_rule_when_only_names_it(
+        self, demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+    ) -> None:
+        # lock.drift would warn "not adopted"; makefile.override, retuned to error, sets the exit.
+        demo_document["doctor"] = {
+            "rules": {"lock.drift": {"enabled": False}, "makefile.override": {"severity": "error"}}
+        }
+        (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+        (demo_hub / "hub.lock").unlink()
+        plant_check_override(demo_hub)
+
+        result = run_doctor(demo_hub, "--only", "lock.drift", "--only", "makefile.override")
+
+        assert result.exit_code == 1, result.output
+        assert result.stderr == "lock.drift: disabled in hub.json doctor.rules\n"
+        assert result.stdout.splitlines() == [
+            OVERRIDE_LINE.replace("warning", "error", 1),
+            ONE_ERROR,
+        ]
+
+
+TASKS = "brain/workflow/bench/tasks.json"
+BENCH_SHA = "0123456789abcdef0123456789abcdef01234567"
+
+
+def a_bench_case(**changes: Any) -> dict[str, Any]:
+    """A bench case valid against ``DEMO`` (its one repo ``demo-api``), with ``changes``."""
+    case: dict[str, Any] = {
+        "id": "T1",
+        "repo": "demo-api",
+        "merge": BENCH_SHA,
+        "prompt": "Add the fix",
+        "hidden_tests": ["tests/test_fix.py"],
+        "test_cmd": ["python3", "-m", "pytest", "-q"],
+    }
+    return case | changes
+
+
+def write_bench(
+    root: Path, document: dict[str, Any], *, modules: dict[str, Any] | None, cases: object
+) -> None:
+    """Give the hub ``modules`` (none when ``None``) and ``cases`` in the bench's tasks.json."""
+    if modules is not None:
+        document["modules"] = modules
+    (root / "hub.json").write_bytes(dump_json(document))
+    tasks = root / TASKS
+    tasks.parent.mkdir(parents=True, exist_ok=True)
+    tasks.write_bytes(dump_json(cases))
+
+
+class TestBenchTasks:
+    """``bench.tasks`` runs only when module ``bench`` is selected (spec AC-17.2, AC-17.3, E6)."""
+
+    @pytest.mark.parametrize("cases", [[], [a_bench_case()]], ids=["empty", "valid"])
+    def test_runs_rule_when_only_names_it_and_bench_selected(
+        self,
+        demo_hub: Path,
+        demo_document: dict[str, Any],
+        run_doctor: DoctorRunner,
+        *,
+        cases: list[dict[str, Any]],
+    ) -> None:
+        write_bench(demo_hub, demo_document, modules={"bench": {}}, cases=cases)
+        # A lock.drift problem that only a run of lock.drift reports.
+        (demo_hub / "hub.lock").unlink()
+
+        lines = lines_of(run_doctor(demo_hub, "--only", "bench.tasks"), exit_code=0)
+
+        assert lines == [CLEAN]
+
+    @pytest.mark.parametrize("only", [(), ("--only", "bench.tasks")], ids=["all", "only"])
+    def test_reports_findings_when_cases_invalid(
+        self,
+        demo_hub: Path,
+        demo_document: dict[str, Any],
+        run_doctor: DoctorRunner,
+        *,
+        only: tuple[str, ...],
+    ) -> None:
+        cases = [a_bench_case(), a_bench_case(repo="zz"), a_bench_case(id="T3", merge="--orphan")]
+        write_bench(demo_hub, demo_document, modules={"bench": {}}, cases=cases)
+
+        lines = lines_of(run_doctor(demo_hub, *only), exit_code=1)
+
+        fix = "Fix: fix the case in tasks.json"
+        # A full run also names the seeded workflows; a run of bench.tasks alone does not.
+        seeded = [] if only else SEEDED_SHADOWS
+        assert lines == [
+            f'error bench.tasks {TASKS}: [1].id: duplicate id "T1" {fix}',
+            f'error bench.tasks {TASKS}: [1].repo: "zz" is not in repos (demo-api) {fix}',
+            f"error bench.tasks {TASKS}: [2].merge: must be a commit sha:"
+            f" 7 to 40 characters among 0-9 and a-f {fix}",
+            *seeded,
+            f"3 errors, {len(seeded)} warnings, 0 infos",
+        ]
+
+    def test_skips_rule_when_bench_unselected(
+        self, demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+    ) -> None:
+        write_bench(demo_hub, demo_document, modules={"cloud": {}}, cases="not a list")
+
+        lines = lines_of(run_doctor(demo_hub, "--json"), exit_code=0)
+
+        assert json.loads("\n".join(lines)) == {
+            "findings": SEEDED_JSON,
+            "totals": {"errors": 0, "warnings": len(SEEDED_JSON), "infos": 0},
+        }
+
+    def test_rejects_rule_settings_when_bench_unselected(
+        self, demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+    ) -> None:
+        demo_document["doctor"] = {"rules": {"bench.tasks": {"enabled": False}}}
+        write_bench(demo_hub, demo_document, modules=None, cases="not a list")
+
+        lines = lines_of(run_doctor(demo_hub), exit_code=1)
+
+        assert lines == [
+            schema_line(
+                'doctor.rules["bench.tasks"]: rule "bench.tasks" belongs to module "bench",'
+                ' which is not selected; add "bench" to modules or remove the rule'
+            ),
+            ONE_ERROR,
+        ]
+
+
+def test_runs_no_git_when_no_rule_needs_listing(
+    demo_hub: Path, run_doctor: DoctorRunner, path_reads: list[PathRead]
+) -> None:
+    commit_all(demo_hub)
+    path_reads.clear()
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "platform.version"), exit_code=0)
+
+    assert lines == [CLEAN]
+    assert [read for read in path_reads if read.call == "Popen"] == []
+
+
+@pytest.mark.parametrize("case", ["clean", "error"])
+def test_prints_one_json_object_when_json_given(
+    tmp_path: Path,
+    demo_hub: Path,
+    demo_document: dict[str, Any],
+    *,
+    run_doctor: DoctorRunner,
+    case: str,
+) -> None:
+    if case == "error":
+        demo_document["surprise"] = True
+        del demo_document["project"]
+        (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+    empty = tmp_path / "empty"
+    empty.mkdir()
+
+    text = run_doctor(demo_hub)
+    shown = run_doctor(demo_hub, "--json")
+    not_hub = run_doctor(empty, "--json")
+
+    assert shown.exit_code == text.exit_code
+    assert shown.exit_code == (1 if case == "error" else 0)
+    assert shown.stderr == ""
+    document = json.loads(shown.stdout)
+    # One object in the one JSON form, and nothing else.
+    assert shown.stdout == dump_json(document).decode()
+    assert list(document) == ["findings", "totals"]
+    text_lines = text.stdout.splitlines()
+    assert [
+        f"{finding['severity']} {finding['rule']} {finding['path']}: {finding['message']}"
+        f" Fix: {finding['fix']}"
+        for finding in document["findings"]
+    ] == text_lines[:-1]
+    assert all(finding["line"] is None for finding in document["findings"])
+    errors = sum(finding["severity"] == "error" for finding in document["findings"])
+    warnings = len(document["findings"]) - errors
+    assert document["totals"] == {"errors": errors, "warnings": warnings, "infos": 0}
+    # A broken hub.json runs only the config rules; a clean hub names its seeded workflows.
+    assert (errors, warnings) == ((2, 0) if case == "error" else (0, len(SEEDED_SHADOWS)))
+    assert not_hub.exit_code == 2
+    assert not_hub.stdout == ""
+    assert not_hub.stderr == f"{os.path.realpath(empty)}{NOT_A_HUB}\n"
+
+
+def refusing_name(name: str, real: Callable[..., Any]) -> Callable[..., Any]:
+    """``real``, except that a path named ``name`` (its last segment) raises ``EACCES``."""
+
+    def refusing(path: Any, *args: Any, **kwargs: Any) -> Any:
+        if not isinstance(path, int) and os.path.basename(os.fsdecode(path)) == name:
+            raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), path)
+        return real(path, *args, **kwargs)
+
+    return refusing
+
+
+def test_reports_lock_drift_when_managed_paths_changed(
+    demo_hub: Path, run_doctor: DoctorRunner, path_reads: list[PathRead]
+) -> None:
+    # Paths the lock alone names (no fixed path): only the lock's paths make them looked at.
+    (demo_hub / "AGENTS.md").write_bytes(b"# Agents, edited\n")
+    (demo_hub / "CLAUDE.md").unlink()
+    (demo_hub / "plugin/hub-workflow/hooks/guard.py").chmod(0o644)
+    retargeted = demo_hub / ".claude/agents/planner.md"
+    retargeted.unlink()
+    retargeted.symlink_to("../../plugin/hub-workflow/agents/architect.md")
+    # Seeded: the project's, never compared.
+    (demo_hub / "README.md").write_bytes(b"# Our hub\n")
+    path_reads.clear()
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "lock.drift"), exit_code=1)
+
+    assert lines == [
+        "error lock.drift .claude/agents/planner.md: link target differs from its hub.lock entry"
+        " (on disk -> ../../plugin/hub-workflow/agents/architect.md,"
+        " hub.lock -> ../../plugin/hub-workflow/agents/planner.md) Fix: run hub sync",
+        "error lock.drift AGENTS.md: content differs from its hub.lock entry Fix: run hub sync",
+        "error lock.drift CLAUDE.md: missing; hub sync restores it Fix: run hub sync",
+        "error lock.drift plugin/hub-workflow/hooks/guard.py: executable bit differs from its"
+        " hub.lock entry (on disk -x, hub.lock +x) Fix: run hub sync",
+        "4 errors, 0 warnings, 0 infos",
+    ]
+    # The lock's paths are looked at by path: no listing, so no git.
+    assert [read for read in path_reads if read.call == "Popen"] == []
+
+
+@pytest.mark.parametrize("refused", [".claude", "hub.lock"])
+def test_reports_read_problem_not_adoption_when_lock_drift_cannot_read(
+    demo_hub: Path, run_doctor: DoctorRunner, monkeypatch: pytest.MonkeyPatch, *, refused: str
+) -> None:
+    # An unreadable hub.lock is not an absent one, and an unread managed file is not missing.
+    monkeypatch.setattr(os, "open", refusing_name(refused, os.open))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "lock.drift"), exit_code=1)
+
+    assert lines == [
+        f"error lock.drift .: could not read the files: {refused}: Permission denied"
+        " Fix: fix the cause above so every file can be listed and read, then run hub doctor again",
+        ONE_ERROR,
+    ]
+
+
+def test_reports_settings_weakening_when_project_disables_hooks(
+    demo_hub: Path, run_doctor: DoctorRunner, path_reads: list[PathRead]
+) -> None:
+    # The retimed group is found only against the release's base hooks block.
+    settings_path = demo_hub / ".claude/settings.json"
+    settings = json.loads(settings_path.read_bytes())
+    settings["hooks"]["Stop"][0]["hooks"][0]["timeout"] = 1
+    settings_path.write_bytes(dump_json(settings))
+    (demo_hub / ".claude/settings.project.json").write_bytes(dump_json({"disableAllHooks": False}))
+    path_reads.clear()
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "settings.weakening"), exit_code=1)
+
+    assert lines == [
+        "error settings.weakening .claude/settings.json: hooks.Stop: a base hook group is missing"
+        " or changed Fix: run hub sync",
+        "error settings.weakening .claude/settings.project.json: disableAllHooks: refused: a"
+        " project cannot set this key (it weakens the harness)"
+        " Fix: remove disableAllHooks from .claude/settings.project.json",
+        "2 errors, 0 warnings, 0 infos",
+    ]
+    assert [read for read in path_reads if read.call == "Popen"] == []
+
+
+def test_warns_not_adopted_and_runs_other_rules_when_lock_absent(
+    demo_hub: Path, run_doctor: DoctorRunner
+) -> None:
+    (demo_hub / "hub.lock").unlink()
+    plant_check_override(demo_hub)
+
+    lines = lines_of(run_doctor(demo_hub), exit_code=0)
+
+    assert lines == [NOT_ADOPTED_LINE, OVERRIDE_LINE, *SEEDED_SHADOWS, seeded_totals(warnings=2)]
+
+
+def test_renders_nothing_when_doctor_runs(
+    demo_hub: Path, run_doctor: DoctorRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Every render entry point, wherever a module bound it by name, raises when called.
+    renders = {name: getattr(render_hub_module, name) for name in ("render_hub", "render_entries")}
+    for module in [m for name, m in sys.modules.items() if name.startswith("agent_hub.")]:
+        for name, real in renders.items():
+            if getattr(module, name, None) is real:
+                monkeypatch.setattr(module, name, refusing_call(name))
+
+    lines = lines_of(run_doctor(demo_hub), exit_code=0)
+
+    assert lines == SEEDED_CLEAN
+
+
+def refusing_call(name: str) -> Callable[..., Any]:
+    def refusing(*_args: Any, **_kwargs: Any) -> Any:
+        pytest.fail(f"hub doctor called {name}")
+
+    return refusing
+
+
+def test_leaves_no_marker_when_guard_extension_would_write(
+    tmp_path: Path, demo_hub: Path, run_doctor: DoctorRunner
+) -> None:
+    marker = tmp_path / "imported.marker"
+    extension = demo_hub / "plugin/demo/hooks/project_guard.py"
+    extension.write_text(
+        "import pathlib\n"
+        f"pathlib.Path({str(marker)!r}).write_text('ran')\n"
+        "\n\n"
+        "def check(event, cfg):\n"
+        "    return None\n",
+        encoding="utf-8",
+    )
+
+    lines = lines_of(run_doctor(demo_hub), exit_code=0)
+
+    assert lines == SEEDED_CLEAN
+    assert not os.path.lexists(marker)
+
+
+def test_checks_features_when_only_features_tracker(
+    demo_hub: Path, run_doctor: DoctorRunner
+) -> None:
+    features = demo_hub / "brain/features"
+    valid = {
+        "feature": "valid",
+        "linear": ["DEM-1"],
+        "acs": [a_demo_ac(1, repo="demo-api"), a_demo_ac(2, repo="demo-hub")],
+    }
+    invalid = {
+        "feature": "invalid",
+        "linear": ["DEM-2"],
+        "acs": [a_demo_ac(1, repo="api"), a_demo_ac(2, passes=True)],
+    }
+    for name, record in (("valid", valid), ("invalid", invalid)):
+        (features / name).mkdir()
+        (features / name / "features.json").write_bytes(dump_json(record))
+    # The valid record agrees with its spec, so the cross-check runs and finds nothing.
+    (features / "valid/spec.md").write_bytes(b"# Valid\n\n- **AC-1** x\n- **AC-2** y\n")
+    # A lock.drift problem that only a run of lock.drift reports.
+    (demo_hub / "hub.lock").unlink()
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "features.tracker"), exit_code=1)
+
+    record = "brain/features/invalid/features.json"
+    assert lines == [
+        f"error features.tracker {record}: AC-1: repo must be one of demo-api, demo-hub"
+        " Fix: fix the record in features.json",
+        f"error features.tracker {record}: AC-2: passes=true needs evidence (command + result)"
+        " Fix: record the command run and its result in evidence",
+        "2 errors, 0 warnings, 0 infos",
+    ]
+
+
+def test_warns_and_passes_when_drafted_issues_have_no_ids(
+    demo_hub: Path, run_doctor: DoctorRunner
+) -> None:
+    folder = demo_hub / "brain/features/unlinked"
+    folder.mkdir()
+    record = {"feature": "unlinked", "linear": [], "acs": [a_demo_ac(1, repo="demo-api")]}
+    (folder / "features.json").write_bytes(dump_json(record))
+    (folder / "spec.md").write_bytes(b"---\nlinear: []\n---\n# Unlinked\n\n- **AC-1** x\n")
+    (folder / "issues.md").write_bytes(b"# Issues\n\n## T1: x\n")
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "features.tracker"), exit_code=0)
+
+    assert lines == [
+        "warning features.tracker brain/features/unlinked/features.json: issues.md exists but"
+        " `linear` holds no tracker id, here or in spec.md"
+        " Fix: write the created issue ids into features.json → linear",
+        "0 errors, 1 warning, 0 infos",
+    ]
+
+
+def a_demo_eval_output(delivery: str, **changes: object) -> bytes:
+    """An eval output that agrees with ``a_demo_eval_note(delivery)`` and the record's ACs."""
+    results = [
+        {"ac": ac, "command": "pytest", "exit_code": 0, "status": "pass", "summary": "Passes."}
+        for ac in ("AC-1", "AC-2")
+    ]
+    gate = {"repo": "demo-api", "name": "check", "exit_code": 0, "status": "pass"}
+    document = {
+        "schema": "agent-hub/eval/1",
+        "delivery": delivery,
+        "verdict": "SHIP",
+        "commit": "feb9c4c",
+        "tickets": [],
+        "acs": ["AC-1", "AC-2"],
+        "results": results,
+        "gates": [gate],
+        "red_on_parent": [],
+        "owner_steps": [],
+    }
+    return dump_json(document | changes)
+
+
+def a_demo_eval_note(delivery: str) -> bytes:
+    fields = f"type: eval\ndelivery: {delivery}\nverdict: SHIP\ncommit: feb9c4c\nacs: [AC-1, AC-2]"
+    return f"---\n{fields}\n---\n# Eval\n".encode()
+
+
+def a_demo_review_output(ticket: str, **changes: object) -> bytes:
+    document = {
+        "schema": "agent-hub/review/1",
+        "reviewer": "spec",
+        "ticket": ticket,
+        "task": "T1",
+        "round": 1,
+        "commit": "feb9c4c",
+        "verdict": "PASS",
+        "findings": [],
+    }
+    return dump_json(document | changes)
+
+
+def test_warns_on_agent_outputs_when_records_missing_or_invalid(
+    demo_hub: Path, run_doctor: DoctorRunner
+) -> None:
+    # AC-139.18 (S9, E5): the outputs of a recorded feature folder get warnings only.
+    folder = demo_hub / "brain/features/outputs"
+    record = {"feature": "outputs", "linear": ["DEM-1"], "acs": [a_demo_ac(1), a_demo_ac(2)]}
+    files = {
+        "features.json": dump_json(record),
+        "evals/abc-1.md": a_demo_eval_note("abc-1"),
+        "evals/abc-1.json": a_demo_eval_output("abc-1"),
+        "evals/abc-2.json": a_demo_eval_output("abc-2"),
+        "evals/abc-3.md": a_demo_eval_note("abc-3"),
+        "evals/abc-3.json": a_demo_eval_output("abc-3", verdict="MAYBE", colour=1),
+        "reviews/DEM-7/spec-r1.json": a_demo_review_output("DEM-7"),
+        "reviews/DEM-8.md": b"# Review\n",
+        "reviews/DEM-8/quality-r1.json": a_demo_review_output(
+            "DEM-7", reviewer="quality", verdict="FAIL"
+        ),
+        # E5: a folder without features.json gets no output finding.
+        "../no-record/reviews/DEM-9/spec-r1.json": b"{}",
+    }
+    for name, content in files.items():
+        (folder / name).parent.mkdir(parents=True, exist_ok=True)
+        (folder / name).write_bytes(content)
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "features.tracker"), exit_code=0)
+
+    shown = "warning features.tracker brain/features/outputs"
+    validate = "Fix: run ./hub validate-output"
+    assert lines == [
+        f"{shown}/evals/abc-2.json: eval output without its record evals/<name>.md"
+        " Fix: write the eval record beside it, or remove the output",
+        f"{shown}/evals/abc-3.json: invalid eval output: 2 problems, first: verdict: Input"
+        " should be 'SHIP', 'SHIP-WITH-OWNER-STEPS' or 'NO-SHIP'"
+        f" {validate} eval brain/features/outputs/evals/abc-3.json",
+        f"{shown}/reviews/DEM-7/spec-r1.json: review output without its ticket record"
+        " reviews/<ticket>.md Fix: write reviews/<ticket>.md once the ticket's reviews pass,"
+        " or remove the output",
+        f"{shown}/reviews/DEM-8/quality-r1.json: invalid review output: 2 problems, first:"
+        " ticket: the ticket is DEM-7 but the folder is DEM-8"
+        f" {validate} review brain/features/outputs/reviews/DEM-8/quality-r1.json",
+        "0 errors, 4 warnings, 0 infos",
+    ]
+
+
+def test_lists_files_when_rule_reads_instruction_files(
+    demo_hub: Path, run_doctor: DoctorRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A rule that declares only INSTRUCTION_FILES still gets the listing its set comes from, so
+    # the file that is not text is found (E28).
+    reader = Rule(
+        id="instructions.size",
+        severity=Severity.WARNING,
+        summary="A synthetic instruction-files reader.",
+        module=None,
+        reads=frozenset({Read.INSTRUCTION_FILES}),
+        check=lambda snapshot: (),
+    )
+    schema = next(rule for rule in REGISTRY if rule.id == "config.schema")
+    monkeypatch.setattr(doctor_command, "REGISTRY", (schema, reader))
+    (demo_hub / "AGENTS.md").write_bytes(b"\xff")
+
+    lines = lines_of(run_doctor(demo_hub), exit_code=1)
+
+    assert lines == [
+        "error instructions.size AGENTS.md: not UTF-8 text: byte 0 cannot be decoded"
+        " Fix: save it as UTF-8 text",
+        ONE_ERROR,
+    ]
+
+
+def a_demo_ac(number: int, **changes: object) -> dict[str, Any]:
+    """A pending AC of the ``DEMO`` hub, valid unless ``changes`` break it."""
+    ac: dict[str, Any] = {
+        "id": f"AC-{number}",
+        "description": "Given x When y Then z",
+        "repo": "demo-api",
+        "verification": f"pytest tests/unit/test_x.py::test_{number}",
+        "passes": False,
+        "evidence": None,
+    }
+    return ac | changes
+
+
+@pytest.mark.parametrize("only", [(), ("--only", "features.tracker")], ids=["all", "only-features"])
+def test_reports_listing_problem_once_when_git_missing(
+    demo_hub: Path,
+    run_doctor: DoctorRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    no_git_path: Path,
+    only: tuple[str, ...],
+) -> None:
+    # A .git entry asks for git's listing; with no git on PATH the listing fails. The fixed
+    # paths are still read, so no other rule reports anything (plan E23, E24).
+    (demo_hub / ".git").mkdir()
+    monkeypatch.setenv("PATH", str(no_git_path))
+
+    lines = lines_of(run_doctor(demo_hub, *only), exit_code=1)
+
+    # E35: E24's owner is the first rule by id reading the listing, E28's file sets included.
+    # workflows.shadow reads no listing, so a full run still names the seeded workflows.
+    owner = "features.tracker" if only else "attribution.ai"
+    seeded = [] if only else SEEDED_SHADOWS
+    assert lines == [
+        f"error {owner} .: could not list the files: git not found {LISTING_FIX}",
+        *seeded,
+        totals_line(Totals(errors=1, warnings=len(seeded), infos=0)),
+    ]
+
+
+MISSING_WEB = (
+    "info brain.leak ../demo-web: repo demo-web is not checked out next to the hub;"
+    " its repo checks are skipped Fix: clone the repo next to the hub"
+)
+
+
+@pytest.mark.parametrize("missing_as", ["absent", "file", "link-to-file"])
+def test_reports_info_when_checkout_missing(
+    demo_two_repo_hub: Path,
+    run_doctor: DoctorRunner,
+    demo_checkout: CheckoutFactory,
+    *,
+    missing_as: str,
+) -> None:
+    demo_checkout("demo-api")
+    web = demo_two_repo_hub.parent / "demo-web"
+    if missing_as == "file":
+        web.write_bytes(b"not a checkout\n")
+    elif missing_as == "link-to-file":
+        (demo_two_repo_hub.parent / "web.txt").write_bytes(b"not a checkout\n")
+        web.symlink_to("web.txt")
+
+    lines = lines_of(run_doctor(demo_two_repo_hub), exit_code=0)
+
+    assert lines == [MISSING_WEB, *SEEDED_SHADOWS, seeded_totals(infos=1)]
+
+
+def test_reads_checkout_real_path_when_dir_is_link(
+    demo_two_repo_hub: Path, run_doctor: DoctorRunner, demo_checkout: CheckoutFactory
+) -> None:
+    # ../<dir> is taken as its real path once (plan E18): a link to a checkout is a checkout.
+    demo_checkout("demo-api")
+    demo_checkout("web-clone")
+    (demo_two_repo_hub.parent / "demo-web").symlink_to("web-clone")
+
+    lines = lines_of(run_doctor(demo_two_repo_hub), exit_code=0)
+
+    assert lines == SEEDED_CLEAN
+
+
+def test_reads_no_repo_when_no_repo_rule_selected(
+    demo_two_repo_hub: Path,
+    run_doctor: DoctorRunner,
+    *,
+    demo_checkout: CheckoutFactory,
+    path_reads: list[PathRead],
+    under: Under,
+) -> None:
+    workspace = demo_two_repo_hub.parent
+    checkouts = [demo_checkout("demo-api"), demo_checkout("demo-web")]
+    path_reads.clear()
+
+    lines = lines_of(run_doctor(demo_two_repo_hub, "--only", "features.tracker"), exit_code=0)
+
+    # Copied first: the filters' own real-path looks would be recorded too.
+    recorded = list(path_reads)
+    assert lines == [CLEAN]
+    assert {path for checkout in checkouts for path in under(recorded, checkout)} == set()
+    outside_hub = under(recorded, workspace) - under(recorded, demo_two_repo_hub)
+    assert outside_hub <= {os.path.realpath(workspace)}
+    # The recorder sees a checkout read when a repo rule runs.
+    path_reads.clear()
+    assert lines_of(run_doctor(demo_two_repo_hub, "--only", "links.dead"), exit_code=0) == [CLEAN]
+    assert under(list(path_reads), checkouts[1]) != set()
+
+
+def test_reports_error_when_checkout_cannot_be_listed(
+    demo_two_repo_hub: Path, run_doctor: DoctorRunner, demo_checkout: CheckoutFactory
+) -> None:
+    # An empty .git folder asks for git's listing, and git finds no repository there (nor above
+    # the test's folder): the checkout is skipped with one error, never silently (plan E36).
+    demo_checkout("demo-api")
+    (demo_two_repo_hub.parent / "demo-web" / ".git").mkdir(parents=True)
+
+    lines = lines_of(run_doctor(demo_two_repo_hub), exit_code=1)
+
+    assert lines == [
+        "error brain.leak ../demo-web: could not list the files: git exited with 128:"
+        " fatal: not a git repository (or any of the parent directories): .git"
+        f" {LISTING_FIX}",
+        *SEEDED_SHADOWS,
+        seeded_totals(errors=1),
+    ]
+
+
+BRAIN_LINE = "A synthetic brain line, long enough for brain.leak to compare it."
+
+
+def test_checks_rest_of_checkout_when_one_file_unreadable(
+    demo_two_repo_hub: Path,
+    run_doctor: DoctorRunner,
+    *,
+    demo_checkout: CheckoutFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # One file that cannot be read is no listing problem (plan E36): the other files are checked.
+    (demo_two_repo_hub / "brain/note.md").write_text(f"# Note\n\n{BRAIN_LINE}\n", encoding="utf-8")
+    api = demo_checkout("demo-api")
+    (api / "LEAK.md").write_text(f"{BRAIN_LINE}\n", encoding="utf-8")
+    (api / "unreadable.md").write_text(f"{BRAIN_LINE}\n", encoding="utf-8")
+    demo_checkout("demo-web")
+    monkeypatch.setattr(os, "open", refusing_name("unreadable.md", os.open))
+
+    lines = lines_of(run_doctor(demo_two_repo_hub), exit_code=1)
+
+    assert lines == [
+        "error brain.leak ../demo-api/LEAK.md:1: line also in the brain at brain/note.md:3"
+        " Fix: reword or remove the line here, or reword the brain note if it quotes this file",
+        *SEEDED_SHADOWS,
+        seeded_totals(errors=1),
+    ]
+
+
+def test_reports_error_when_checkout_cannot_be_looked_at(
+    demo_two_repo_hub: Path,
+    run_doctor: DoctorRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    demo_checkout: CheckoutFactory,
+) -> None:
+    # A ../<dir> that cannot be looked at may be a checkout: E36's error, never Q-9's info.
+    demo_checkout("demo-api")
+    web = demo_two_repo_hub.parent / "demo-web"
+    web.mkdir()
+    (web / "README.md").write_bytes(b"# Web\n")
+    monkeypatch.setattr(os, "lstat", refusing_name("demo-web", os.lstat))
+
+    lines = lines_of(run_doctor(demo_two_repo_hub), exit_code=1)
+
+    assert lines == [
+        f"error brain.leak ../demo-web: could not list the files: {os.path.realpath(web)}:"
+        f" Permission denied {LISTING_FIX}",
+        *SEEDED_SHADOWS,
+        seeded_totals(errors=1),
+    ]
+
+
+ONBOARD_PROPOSAL = "brain/_inbox/onboard-proposal.md"
+REPO_LINE = "Run the fast gate before every commit and the full gate before a PR."
+
+
+def an_onboard_proposal(*, quoted_in_prose: bool) -> str:
+    """A proposal in the ``/onboard`` skill's shape that cites ``REPO_LINE`` by ``path:line``."""
+    prose = f"{REPO_LINE}\n\n" if quoted_in_prose else ""
+    return (
+        "---\ntype: onboard-proposal\nstatus: proposed\nprovenance: agent-from-code\n"
+        "last_verified: 2026-10-09\nplatform_version: 0.0.0\nhub_json_sha256: 0\n---\n"
+        "# Onboarding proposal\n\n"
+        "| value | evidence |\n|---|---|\n| gate rule | ../demo-api/AGENTS.md:3 |\n\n"
+        f"{prose}"
+        "The AGENTS.project.md draft:\n\n"
+        f"```markdown\n# Project rules\n\n{REPO_LINE}\n```\n"
+    )
+
+
+def onboard_hub(hub: Path, demo_checkout: CheckoutFactory, *, quoted_in_prose: bool) -> Path:
+    """The two-repo hub, both repos checked out, ``demo-api``'s AGENTS.md holding ``REPO_LINE``
+    and the proposal citing it."""
+    api = demo_checkout("demo-api")
+    (api / "AGENTS.md").write_text(f"# demo-api\n\n{REPO_LINE}\n", encoding="utf-8")
+    demo_checkout("demo-web")
+    proposal = hub / ONBOARD_PROPOSAL
+    proposal.write_text(an_onboard_proposal(quoted_in_prose=quoted_in_prose), encoding="utf-8")
+    return hub
+
+
+def test_skips_fenced_quote_when_onboard_proposal_checked(
+    demo_two_repo_hub: Path, run_doctor: DoctorRunner, demo_checkout: CheckoutFactory
+) -> None:
+    # AGH-108 AC-2.5: the proposal cites repo lines by path:line and quotes them only in a fenced
+    # block, which brain.leak skips.
+    hub = onboard_hub(demo_two_repo_hub, demo_checkout, quoted_in_prose=False)
+
+    assert lines_of(run_doctor(hub), exit_code=0) == SEEDED_CLEAN
+
+
+def test_flags_prose_quote_when_onboard_proposal_checked(
+    demo_two_repo_hub: Path, run_doctor: DoctorRunner, demo_checkout: CheckoutFactory
+) -> None:
+    # The same line in the proposal's prose is a leak, named at the repo line.
+    hub = onboard_hub(demo_two_repo_hub, demo_checkout, quoted_in_prose=True)
+
+    assert lines_of(run_doctor(hub), exit_code=1) == [
+        "error brain.leak ../demo-api/AGENTS.md:3: line also in the brain at"
+        f" {ONBOARD_PROPOSAL}:15 Fix: reword or remove the line here, or reword the brain note"
+        " if it quotes this file",
+        *SEEDED_SHADOWS,
+        seeded_totals(errors=1),
+    ]
+
+
+REPO_AGENTS_LINE = (
+    "warning repos.agents ../demo-api: no AGENTS.md at the repo root (hub agent loads none for it)"
+    " Fix: copy docs/app-repo-AGENTS.md to ../demo-api/AGENTS.md and fill it in;"
+    " check_fast: make check-fast, check: make check"
+)
+
+
+@pytest.mark.parametrize(
+    ("settings", "expected"),
+    [
+        (None, (0, [REPO_AGENTS_LINE, *SEEDED_SHADOWS, seeded_totals(warnings=1)])),
+        ({"enabled": False}, (0, SEEDED_CLEAN)),
+        (
+            {"severity": "error"},
+            (
+                1,
+                [
+                    REPO_AGENTS_LINE.replace("warning", "error", 1),
+                    *SEEDED_SHADOWS,
+                    seeded_totals(errors=1),
+                ],
+            ),
+        ),
+    ],
+    ids=["default", "disabled", "error"],
+)
+def test_follows_repo_agents_settings_when_checkout_lacks_file(
+    demo_hub: Path,
+    demo_document: dict[str, Any],
+    run_doctor: DoctorRunner,
+    *,
+    settings: dict[str, Any] | None,
+    expected: tuple[int, list[str]],
+) -> None:
+    (demo_hub.parent / "demo-api" / "AGENTS.md").unlink()
+    if settings is not None:
+        demo_document["doctor"] = {"rules": {"repos.agents": settings}}
+        (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    exit_code, lines = expected
+
+    assert lines_of(run_doctor(demo_hub), exit_code=exit_code) == lines
+
+
+def test_reports_checkout_on_repo_agents_when_only_it_selected(
+    demo_two_repo_hub: Path, run_doctor: DoctorRunner, demo_checkout: CheckoutFactory
+) -> None:
+    # With brain.leak and links.dead not selected, the runner's checkout info lands on
+    # repos.agents, the first selected repo reader (plan E3).
+    demo_checkout("demo-api")
+
+    lines = lines_of(run_doctor(demo_two_repo_hub, "--only", "repos.agents"), exit_code=0)
+
+    assert lines == [MISSING_WEB.replace("brain.leak", "repos.agents"), ONE_INFO]
+
+
+MEMORY_CANARY = "ZZ-PERSONAL-CANARY-48"
+MEMORY_PATH = "brain/auto/workspace/prefs.md"
+MEMORY_LINE = (
+    f"warning brain.memory {MEMORY_PATH}: personal memory file is tracked or not ignored by git"
+    f" Fix: {MEMORY_FIX}"
+)
+
+
+def committed_memory_hub(root: Path) -> Path:
+    """``root`` committed, then a personal memory file force-added past the ignore lines."""
+    commit_all(root)
+    (root / MEMORY_PATH).write_text(f"{MEMORY_CANARY}\n", encoding="utf-8")
+    git = shutil.which("git")
+    assert git is not None
+    env = {"HOME": str(root.parent), "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}
+    author = ["-c", "user.name=Jane Doe", "-c", "user.email=jane@example.com"]
+    for args in (
+        ["add", "-f", MEMORY_PATH],
+        [*author, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "memory"],
+    ):
+        subprocess.run([git, *args], cwd=root, env=env, check=True, capture_output=True)  # noqa: S603 - absolute git, fixed arguments
+    return root
+
+
+def test_hides_brain_memory_content_when_memory_committed(
+    demo_hub: Path, run_doctor: DoctorRunner
+) -> None:
+    hub = committed_memory_hub(demo_hub)
+
+    text = run_doctor(hub)
+    shown = run_doctor(hub, "--json")
+
+    assert lines_of(text, exit_code=0) == [MEMORY_LINE, *SEEDED_SHADOWS, seeded_totals(warnings=1)]
+    assert (shown.exit_code, shown.stderr) == (0, "")
+    assert json.loads(shown.stdout) == {
+        "findings": [
+            {
+                "rule": "brain.memory",
+                "severity": "warning",
+                "path": MEMORY_PATH,
+                "line": None,
+                "message": "personal memory file is tracked or not ignored by git",
+                "fix": MEMORY_FIX,
+            },
+            *SEEDED_JSON,
+        ],
+        "totals": {"errors": 0, "warnings": 1 + len(SEEDED_JSON), "infos": 0},
+    }
+    for result in (text, shown):
+        assert MEMORY_CANARY not in result.stdout
+        assert MEMORY_CANARY not in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("settings", "expected"),
+    [
+        (None, (0, [MEMORY_LINE, *SEEDED_SHADOWS, seeded_totals(warnings=1)])),
+        ({"enabled": False}, (0, SEEDED_CLEAN)),
+        (
+            {"severity": "error"},
+            (
+                1,
+                [
+                    MEMORY_LINE.replace("warning", "error", 1),
+                    *SEEDED_SHADOWS,
+                    seeded_totals(errors=1),
+                ],
+            ),
+        ),
+    ],
+    ids=["default", "disabled", "error"],
+)
+def test_follows_brain_memory_settings_when_memory_committed(
+    demo_hub: Path,
+    demo_document: dict[str, Any],
+    run_doctor: DoctorRunner,
+    *,
+    settings: dict[str, Any] | None,
+    expected: tuple[int, list[str]],
+) -> None:
+    hub = committed_memory_hub(demo_hub)
+    if settings is not None:
+        # hub.json is read from the work tree; the change stays uncommitted and listed.
+        demo_document["doctor"] = {"rules": {"brain.memory": settings}}
+        (hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    exit_code, lines = expected
+
+    assert lines_of(run_doctor(hub), exit_code=exit_code) == lines
+
+
+def test_reports_listing_problem_on_brain_memory_when_it_sorts_first(
+    demo_hub: Path,
+    run_doctor: DoctorRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    no_git_path: Path,
+) -> None:
+    # Plan E4: with attribution.ai, bench.tasks and brain.leak unselected, brain.memory is the
+    # first selected listing reader by id, so the runner's one listing error lands on it.
+    (demo_hub / ".git").mkdir()
+    monkeypatch.setenv("PATH", str(no_git_path))
+
+    lines = lines_of(
+        run_doctor(demo_hub, "--only", "brain.memory", "--only", "features.tracker"),
+        exit_code=1,
+    )
+
+    assert lines == [
+        f"error brain.memory .: could not list the files: git not found {LISTING_FIX}",
+        ONE_ERROR,
+    ]
+
+
+type Workspace = Any
+
+DERIVED_INFO = (
+    "info config.identity: branch prefix `jane/` is derived from git config user.email"
+    " (hub.local.json and hub.json set none)"
+    " Fix: set project.branch_prefix in hub.local.json to choose another"
+)
+ONE_INFO = "0 errors, 0 warnings, 1 info"
+
+
+def identity_reads(traced_git: Any) -> list[tuple[str, str]]:
+    """``(cwd, arguments)`` of each git call of a run that reads a ``user.*`` config key."""
+    return [
+        (cwd, arguments)
+        for cwd, arguments in traced_git.calls()
+        if "config" in arguments and "user." in arguments
+    ]
+
+
+def email_read_in(folder: Path) -> list[tuple[str, str]]:
+    """The one git call a derived prefix needs, run in ``folder``."""
+    return [(os.path.realpath(folder), "config --get user.email")]
+
+
+def hub_worktree_of(workspace: Workspace) -> Path:
+    """Commit the workspace's hub and add a hub worktree of it, as a developer's task would."""
+    hub = workspace.hub
+    workspace.git(hub, "-c", "init.defaultBranch=main", "init", "-q")
+    workspace.git(hub, "add", "-A")
+    workspace.git(hub, "commit", "-q", "-m", "hub")
+    worktree = hub / ".claude" / "worktrees" / "x"
+    workspace.git(hub, "worktree", "add", "-q", "-b", "x", str(worktree))
+    return worktree
+
+
+class TestIdentity:
+    @pytest.fixture(autouse=True)
+    def repo_agents_files(self, request: pytest.FixtureRequest) -> None:
+        """An empty untracked ``AGENTS.md`` in each workspace clone, so full runs stay clean.
+
+        ``demo_workspace`` itself stays unchanged: other commands' tests need clean trees.
+        """
+        if "demo_workspace" in request.fixturenames:
+            workspace = request.getfixturevalue("demo_workspace")
+            for repo in ("demo-api", "demo-web"):
+                (workspace.ws / repo / "AGENTS.md").write_bytes(b"")
+
+    def test_reports_derived_prefix_info_when_only_git_sets_email(
+        self, demo_workspace: Workspace, run_doctor: DoctorRunner, traced_git: Any
+    ) -> None:
+        demo_workspace.drop_identity()
+        demo_workspace.git_identity("Jane Roe", "jane@example.com")
+
+        lines = lines_of(run_doctor(demo_workspace.hub), exit_code=0)
+
+        assert lines == [DERIVED_INFO, *SEEDED_SHADOWS, seeded_totals(infos=1)]
+        # Git is asked for the email only: the prefix needs nothing else.
+        assert identity_reads(traced_git) == email_read_in(demo_workspace.hub)
+
+    def test_reports_no_identity_info_when_local_sets_prefix(
+        self, demo_workspace: Workspace, run_doctor: DoctorRunner, traced_git: Any
+    ) -> None:
+        demo_workspace.drop_identity()
+        demo_workspace.git_identity("Jane Roe", "jane@example.com")
+        demo_workspace.write_local(json.dumps({"project": {"branch_prefix": "me/"}}))
+
+        lines = lines_of(run_doctor(demo_workspace.hub), exit_code=0)
+
+        assert lines == SEEDED_CLEAN
+        assert identity_reads(traced_git) == []
+
+    def test_reports_local_file_error_when_invalid(
+        self, demo_workspace: Workspace, run_doctor: DoctorRunner
+    ) -> None:
+        demo_workspace.write_local(json.dumps({"project": {"colour": "blue"}}))
+
+        lines = lines_of(run_doctor(demo_workspace.hub), exit_code=1)
+
+        assert lines == [
+            "error config.schema hub.local.json: project.colour: Extra inputs are not permitted"
+            " Fix: fix hub.local.json (docs/design/developer-identity.md)",
+            *SEEDED_SHADOWS,
+            seeded_totals(errors=1),
+        ]
+
+    def test_reports_local_file_error_when_hub_json_also_invalid(
+        self, demo_workspace: Workspace, run_doctor: DoctorRunner
+    ) -> None:
+        path = demo_workspace.hub / "hub.json"
+        document = json.loads(path.read_text())
+        document["shade"] = 1
+        path.write_text(json.dumps(document))
+        demo_workspace.write_local("[]")
+
+        lines = lines_of(run_doctor(demo_workspace.hub), exit_code=1)
+
+        assert lines == [
+            schema_line("shade: Extra inputs are not permitted"),
+            "error config.schema hub.local.json: $: must be a JSON object"
+            " Fix: fix hub.local.json (docs/design/developer-identity.md)",
+            "2 errors, 0 warnings, 0 infos",
+        ]
+
+    def test_finds_same_findings_when_valid_local_file_added(
+        self, demo_workspace: Workspace, run_doctor: DoctorRunner
+    ) -> None:
+        # The doctor judges the hub, not the developer: the same hub gives every developer the
+        # same findings, whatever their local file sets.
+        # `me/…` is a stale path to the hub, whose prefix is not `me/`, whatever the local one.
+        (demo_workspace.hub / "AGENTS.md").write_bytes(
+            b"# Agents\nRun `scripts/gone.py`.\nNot the branch `me/dem-1-x`.\n"
+        )
+        without = run_doctor(demo_workspace.hub)
+        demo_workspace.write_local(
+            json.dumps(
+                {
+                    "project": {
+                        "branch_prefix": "me/",
+                        "author_name": "Jane Roe",
+                        "author_email": "jane.doe@example.com",
+                    },
+                    "tracker": {"transport": "mcp"},
+                }
+            )
+        )
+
+        with_local = run_doctor(demo_workspace.hub)
+
+        assert lines_of(with_local, exit_code=1) == lines_of(without, exit_code=1)
+        shown = lines_of(without, exit_code=1)
+        refs = [line for line in shown if line.startswith("error instructions.refs AGENTS.md:")]
+        assert [line.split(" (no such path)")[0] for line in refs] == [
+            "error instructions.refs AGENTS.md:2: stale reference `scripts/gone.py`",
+            "error instructions.refs AGENTS.md:3: stale reference `me/dem-1-x`",
+        ]
+        # The edited AGENTS.md is also lock.drift's.
+        assert shown[-1] == seeded_totals(errors=3)
+
+    def test_refuses_identity_severity_when_hub_json_retunes_it(
+        self, demo_workspace: Workspace, run_doctor: DoctorRunner
+    ) -> None:
+        # A retuned info would make the exit code depend on the developer's git email.
+        demo_workspace.drop_identity()
+        demo_workspace.git_identity("Jane Roe", "jane@example.com")
+        path = demo_workspace.hub / "hub.json"
+        document = json.loads(path.read_text())
+        document["doctor"] = {"rules": {"config.identity": {"severity": "error"}}}
+        path.write_text(json.dumps(document))
+
+        lines = lines_of(run_doctor(demo_workspace.hub), exit_code=1)
+
+        assert lines == [
+            schema_line(
+                'doctor.rules["config.identity"].severity: config.identity is always an info,'
+                " so every developer's run exits alike; remove severity"
+            ),
+            ONE_ERROR,
+        ]
+
+    def test_runs_no_git_config_when_identity_rule_disabled(
+        self, demo_workspace: Workspace, run_doctor: DoctorRunner, traced_git: Any
+    ) -> None:
+        demo_workspace.drop_identity()
+        demo_workspace.git_identity("Jane Roe", "jane@example.com")
+        path = demo_workspace.hub / "hub.json"
+        document = json.loads(path.read_text())
+        document["doctor"] = {"rules": {"config.identity": {"enabled": False}}}
+        path.write_text(json.dumps(document))
+
+        lines = lines_of(run_doctor(demo_workspace.hub), exit_code=0)
+
+        assert lines == SEEDED_CLEAN
+        assert identity_reads(traced_git) == []
+
+    def test_reports_main_checkout_local_file_when_run_from_hub_worktree(
+        self, demo_workspace: Workspace, run_doctor: DoctorRunner
+    ) -> None:
+        hub_worktree = hub_worktree_of(demo_workspace)
+        demo_workspace.write_local("[]")
+
+        lines = lines_of(run_doctor(hub_worktree, "--only", "config.schema"), exit_code=1)
+
+        assert lines == [
+            "error config.schema hub.local.json: $: must be a JSON object"
+            " Fix: fix hub.local.json (docs/design/developer-identity.md)",
+            ONE_ERROR,
+        ]
+
+    def test_reads_git_email_in_main_checkout_when_run_from_hub_worktree(
+        self, demo_workspace: Workspace, run_doctor: DoctorRunner, traced_git: Any
+    ) -> None:
+        demo_workspace.drop_identity()
+        hub_worktree = hub_worktree_of(demo_workspace)
+        demo_workspace.git_identity("Jane Roe", "jane@example.com")
+
+        lines = lines_of(run_doctor(hub_worktree, "--only", "config.identity"), exit_code=0)
+
+        assert lines == [DERIVED_INFO, ONE_INFO]
+        assert identity_reads(traced_git) == email_read_in(demo_workspace.hub)
+
+    def test_runs_no_git_config_when_only_config_schema_selected(
+        self, demo_workspace: Workspace, run_doctor: DoctorRunner, traced_git: Any
+    ) -> None:
+        demo_workspace.drop_identity()
+        demo_workspace.git_identity("Jane Roe", "jane@example.com")
+
+        lines = lines_of(run_doctor(demo_workspace.hub, "--only", "config.schema"), exit_code=0)
+
+        assert lines == [CLEAN]
+        assert identity_reads(traced_git) == []
+
+    def test_finds_nothing_in_agents_when_team_hub_checked(
+        self, tmp_path: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+    ) -> None:
+        # AC-65.8: the team AGENTS.md names `hub.local.json`, which no developer commits (E12),
+        # and the developer's git identity, which is no AI attribution.
+        for key in ("branch_prefix", "author_name", "author_email"):
+            del demo_document["project"][key]
+        demo_document["modules"] = {"marketplace": {}}
+        config = tmp_path / "hub.json"
+        config.write_bytes(dump_json(demo_document))
+        root = tmp_path / "hub"
+        created = CliRunner().invoke(app, ["init", "--config", str(config), "--dir", str(root)])
+        assert created.exit_code == 0, created.stderr
+        agents = (root / "AGENTS.md").read_text(encoding="utf-8")
+        assert "`hub.local.json`" in agents
+        assert not (root / "hub.local.json").exists()
+
+        lines = lines_of(run_doctor(root), exit_code=0)
+
+        assert lines == SEEDED_CLEAN
+
+
+STOP_GATE_FIX = (
+    "Fix: set the repo's check_fast to its fast gate command (docs/design/project-config.md)"
+)
+
+
+def edit_hub_json(hub: Path, edit: Callable[[dict[str, Any]], object]) -> None:
+    """Rewrite the hub's ``hub.json`` after ``edit`` changed the document in place."""
+    path = hub / "hub.json"
+    document = json.loads(path.read_text())
+    edit(document)
+    path.write_text(json.dumps(document))
+
+
+def stop_gate_line(index: int, repo_dir: str) -> str:
+    return (
+        f"warning config.stop_gate hub.json: repos[{index}].check_fast:"
+        f" no Stop gate for {repo_dir} {STOP_GATE_FIX}"
+    )
+
+
+def drop_both_gates(document: dict[str, Any]) -> None:
+    del document["repos"][0]["check_fast"]
+    document["repos"][1]["check_fast"] = ""
+
+
+class TestStopGate:
+    @pytest.fixture(autouse=True)
+    def checkouts(self, demo_checkout: CheckoutFactory) -> None:
+        demo_checkout("demo-api")
+        demo_checkout("demo-web")
+
+    def test_warns_once_per_repo_when_stop_gate_missing(
+        self, demo_two_repo_hub: Path, run_doctor: DoctorRunner
+    ) -> None:
+        edit_hub_json(demo_two_repo_hub, drop_both_gates)
+
+        lines = lines_of(run_doctor(demo_two_repo_hub), exit_code=0)
+
+        assert lines == [
+            stop_gate_line(0, "demo-api"),
+            stop_gate_line(1, "demo-web"),
+            *SEEDED_SHADOWS,
+            seeded_totals(warnings=2),
+        ]
+
+    def test_reports_nothing_when_stop_gate_rule_disabled(
+        self, demo_two_repo_hub: Path, run_doctor: DoctorRunner
+    ) -> None:
+        def disabled(document: dict[str, Any]) -> None:
+            drop_both_gates(document)
+            document["doctor"] = {"rules": {"config.stop_gate": {"enabled": False}}}
+
+        edit_hub_json(demo_two_repo_hub, disabled)
+
+        lines = lines_of(run_doctor(demo_two_repo_hub), exit_code=0)
+
+        assert lines == SEEDED_CLEAN
+
+    def test_refuses_stop_gate_severity_when_hub_json_retunes_it(
+        self, demo_two_repo_hub: Path, run_doctor: DoctorRunner
+    ) -> None:
+        # Kept a warning, so a missing gate never fails a hub's doctor run on its own.
+        edit_hub_json(
+            demo_two_repo_hub,
+            lambda document: document.update(
+                doctor={"rules": {"config.stop_gate": {"severity": "error"}}}
+            ),
+        )
+
+        lines = lines_of(run_doctor(demo_two_repo_hub), exit_code=1)
+
+        assert lines == [
+            schema_line(
+                'doctor.rules["config.stop_gate"].severity: config.stop_gate is always a warning;'
+                " remove severity"
+            ),
+            ONE_ERROR,
+        ]
+
+
+def test_returns_findings_without_exit_when_root_given_from_elsewhere(
+    demo_hub: Path, run_doctor: DoctorRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # ``hub setup`` runs the check on its hub root, whatever the current folder is.
+    elsewhere = demo_hub.parent
+    assert not (elsewhere / "hub.json").exists()
+    monkeypatch.chdir(elsewhere)
+
+    run = doctor_command.check_hub(str(demo_hub))
+
+    assert not isinstance(run, UsageProblem)
+    assert report_lines(run.findings) == lines_of(run_doctor(demo_hub), exit_code=0)
+    assert run.notes == ()
+    (demo_hub / "AGENTS.md").write_bytes(b"# edited\n")
+    monkeypatch.chdir(elsewhere)
+    edited = doctor_command.check_hub(str(demo_hub))
+    assert not isinstance(edited, UsageProblem)
+    assert count_findings(edited.findings).has_errors
+
+
+# AGH-134: sandbox.workflow probes each repo's remote only from a Claude Code session.
+SANDBOX_SETTINGS = ".claude/settings.json"
+
+
+def add_origin(checkout: Path, url: str) -> None:
+    git = shutil.which("git")
+    assert git is not None
+    subprocess.run(  # noqa: S603 - absolute git, fixed arguments, a tmp_path folder
+        [git, "remote", "add", "origin", url], cwd=checkout, check=True, capture_output=True
+    )
+
+
+def bare_origin(tmp_path: Path) -> str:
+    git = shutil.which("git")
+    assert git is not None
+    origin = tmp_path / "origin.git"
+    subprocess.run(  # noqa: S603 - absolute git, fixed arguments, a tmp_path folder
+        [git, "init", "-q", "--bare", str(origin)], check=True, capture_output=True
+    )
+    return str(origin)
+
+
+def test_reports_nothing_on_sandbox_workflow_when_synced(
+    demo_hub: Path, run_doctor: DoctorRunner
+) -> None:
+    lines = lines_of(run_doctor(demo_hub, "--only", "sandbox.workflow"), exit_code=0)
+
+    assert lines == [CLEAN]
+
+
+def test_reports_missing_exclusions_when_settings_edited(
+    demo_hub: Path, run_doctor: DoctorRunner
+) -> None:
+    settings = demo_hub / SANDBOX_SETTINGS
+    document = json.loads(settings.read_bytes())
+    document["sandbox"]["excludedCommands"].remove("make worktree *")
+    settings.write_bytes(dump_json(document))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "sandbox.workflow"), exit_code=1)
+
+    assert lines == [
+        "error sandbox.workflow .claude/settings.json: sandbox.excludedCommands lacks"
+        " make worktree *: inside the sandbox the hub's own fetch, push, gh and worktree"
+        " commands fail Fix: run hub sync",
+        ONE_ERROR,
+    ]
+
+
+def test_warns_unreachable_remote_when_run_in_claude_session(
+    demo_hub: Path,
+    run_doctor: DoctorRunner,
+    *,
+    demo_checkout: CheckoutFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    add_origin(demo_checkout("demo-api"), str(tmp_path / "no-such-origin.git"))
+    monkeypatch.setenv("CLAUDECODE", "1")
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "sandbox.workflow"), exit_code=0)
+
+    assert len(lines) == 2
+    assert lines[0].startswith(
+        "warning sandbox.workflow ../demo-api: git ls-remote origin fails inside this sandboxed"
+        " session ("
+    )
+    assert lines[0].endswith(
+        "); a hub worktree that runs sandboxed fails the same way Fix: run ./hub worktree <name>"
+        " as a Bash call of its own (no cd &&, pipe or redirect), or a bare git fetch origin"
+        " <branch> with ../demo-api as the cwd, then ./hub worktree --no-fetch <name>"
+    )
+    assert lines[1] == "0 errors, 1 warning, 0 infos"
+
+
+def test_probes_no_remote_when_outside_claude_session(
+    demo_hub: Path, run_doctor: DoctorRunner, *, demo_checkout: CheckoutFactory, tmp_path: Path
+) -> None:
+    add_origin(demo_checkout("demo-api"), str(tmp_path / "no-such-origin.git"))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "sandbox.workflow"), exit_code=0)
+
+    assert lines == [CLEAN]
+
+
+def test_reports_nothing_when_remote_answers_in_claude_session(
+    demo_hub: Path,
+    run_doctor: DoctorRunner,
+    *,
+    demo_checkout: CheckoutFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    add_origin(demo_checkout("demo-api"), bare_origin(tmp_path))
+    monkeypatch.setenv("CLAUDECODE", "1")
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "sandbox.workflow"), exit_code=0)
+
+    assert lines == [CLEAN]
+
+
+# The project's own settings, which hub sync merges into .claude/settings.json.
+PROJECT_SETTINGS = ".claude/settings.project.json"
+
+
+def test_warns_writing_allow_when_project_adds_broad_rule(
+    demo_hub: Path, run_doctor: DoctorRunner, run_sync: SyncRunner
+) -> None:
+    (demo_hub / PROJECT_SETTINGS).write_bytes(
+        dump_json({"permissions": {"allow": ["Bash(make *)", "Bash(python3 scripts/*)"]}})
+    )
+
+    # The rule reads the merged file, as Claude Code does: before a sync the new rule is in no
+    # file that grants anything.
+    assert lines_of(run_doctor(demo_hub, "--only", "permissions.writing"), exit_code=0) == [CLEAN]
+
+    assert run_sync(demo_hub).exit_code == 0
+    merged = json.loads((demo_hub / ".claude/settings.json").read_bytes())
+    assert "Bash(python3 scripts/*)" in merged["permissions"]["allow"]
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "permissions.writing"), exit_code=0)
+
+    assert lines == [
+        "warning permissions.writing .claude/settings.json: permissions.allow rule"
+        " `Bash(python3 scripts/*)` lets a command that writes run with no prompt, such as"
+        " `python3 scripts/../write.py` Fix: narrow or remove the rule in"
+        " .claude/settings.project.json, then run hub sync; for a rule that is not there, run hub"
+        " sync alone",
+        "0 errors, 1 warning, 0 infos",
+    ]
+
+
+def test_reports_nothing_for_writing_allow_when_hub_synced(
+    demo_hub: Path, run_doctor: DoctorRunner
+) -> None:
+    lines = lines_of(run_doctor(demo_hub, "--only", "permissions.writing"), exit_code=0)
+
+    assert lines == [CLEAN]
+
+
+PRODUCTION_FIX = (
+    "Fix: keep the agent's access to a production environment at read, or confirm it on purpose"
+    " (docs/design/environments.md)"
+)
+
+
+def environments_hub(demo_hub: Path, demo_document: dict[str, Any], **rules: Any) -> Path:
+    """``demo_hub`` with the spec's ``W`` and ``Lc``, ``jane-cloud`` set production (AC-277.9)."""
+    document = an_environments_document()
+    demo_document["environments"] = document["environments"]
+    demo_document["repos"][0]["services"] = document["repos"][0]["services"]
+    demo_document["guard"] = document["guard"]
+    if rules:
+        demo_document["doctor"] = {"rules": {"environments.production": rules}}
+    (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+    local = a_local_environments_document()
+    local["environments"]["jane-cloud"]["production"] = True
+    (demo_hub / "hub.local.json").write_text(json.dumps(local), encoding="utf-8")
+    return demo_hub
+
+
+def test_exits_zero_when_production_environment_warns(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    root = environments_hub(demo_hub, demo_document)
+
+    lines = lines_of(run_doctor(root, "--only", "environments.production"), exit_code=0)
+
+    assert lines == [
+        "info environments.production hub.json: production environment: live (access read,"
+        f" hub.json) {PRODUCTION_FIX}",
+        "warning environments.production hub.local.json: production environment: jane-cloud"
+        " (access write, hub.local.json); actions: writes and destroys are denied there"
+        f" {PRODUCTION_FIX}",
+        "0 errors, 1 warning, 1 info",
+    ]
+
+
+def test_exits_one_when_production_rule_retuned_to_error(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    # AM-2: an ordinary doctor.rules entry; a severity applies to all its findings.
+    root = environments_hub(demo_hub, demo_document, severity="error")
+
+    lines = lines_of(run_doctor(root, "--only", "environments.production"), exit_code=1)
+
+    assert [line.split(": production")[0] for line in lines] == [
+        "error environments.production hub.json",
+        "error environments.production hub.local.json",
+        "2 errors, 0 warnings, 0 infos",
+    ]
+
+
+def test_reports_nothing_when_production_rule_disabled(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    root = environments_hub(demo_hub, demo_document, enabled=False)
+
+    result = run_doctor(root, "--only", "environments.production")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == [CLEAN]
+
+
+def test_reports_local_conflict_when_local_redeclares_environment(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    # Doctor and the CLI agree: a local file that loosens a committed environment is an error.
+    root = environments_hub(demo_hub, demo_document)
+    (root / "hub.local.json").write_text(
+        json.dumps({"environments": {"staging": {"access": "write"}}}), encoding="utf-8"
+    )
+
+    lines = lines_of(run_doctor(root, "--only", "config.schema"), exit_code=1)
+
+    assert lines == [
+        "error config.schema hub.local.json: environments.staging.access: may only tighten"
+        " hub.json's ask Fix: fix hub.local.json (docs/design/developer-identity.md)",
+        ONE_ERROR,
+    ]
+
+
+def test_rewrites_brain_note_when_fix_given(
+    demo_two_repo_hub: Path, run_doctor: DoctorRunner, *, demo_checkout: CheckoutFactory
+) -> None:
+    # --fix rewrites the brain side only, then checks again: the leak is gone, the repo untouched.
+    own = "\n".join(
+        f"Own brain line {n}, which no repo file holds at all, kept as it is." for n in range(3)
+    )
+    note = demo_two_repo_hub / "brain/note.md"
+    note.write_text(f"# Note\n\n{own}\n{BRAIN_LINE}\n", encoding="utf-8")
+    api = demo_checkout("demo-api")
+    (api / "LEAK.md").write_text(f"{BRAIN_LINE}\n", encoding="utf-8")
+    demo_checkout("demo-web")
+
+    result = run_doctor(demo_two_repo_hub, "--fix", "--only", "brain.leak")
+
+    assert result.exit_code == 0, result.output
+    assert note.read_text(encoding="utf-8") == f"# Note\n\n{own}\n[in ../demo-api/LEAK.md:1]\n"
+    assert (api / "LEAK.md").read_text(encoding="utf-8") == f"{BRAIN_LINE}\n"
+    assert "fixed brain/note.md: 1 lines now point at the repo" in result.stderr
+
+
+OWN_LINES = "\n".join(
+    f"Own brain line {n}, which no repo file holds at all, kept as it is." for n in range(3)
+)
+
+
+def _leaking_note(hub: Path, checkout: CheckoutFactory) -> Path:
+    """A brain note with its own lines and one line ``../demo-api/LEAK.md`` also holds."""
+    note = hub / "brain/note.md"
+    note.write_text(f"# Note\n\n{OWN_LINES}\n{BRAIN_LINE}\n", encoding="utf-8")
+    (checkout("demo-api") / "LEAK.md").write_text(f"{BRAIN_LINE}\n", encoding="utf-8")
+    checkout("demo-web")
+    return note
+
+
+def test_replaces_brain_note_whole_keeping_its_mode_when_fix_given(
+    demo_two_repo_hub: Path,
+    run_doctor: DoctorRunner,
+    *,
+    demo_checkout: CheckoutFactory,
+    tmp_path: Path,
+) -> None:
+    # The new text goes to a file beside the note that then replaces it: the note's old inode
+    # (here held by a hard link) is never truncated, and the note keeps its mode.
+    note = _leaking_note(demo_two_repo_hub, demo_checkout)
+    note.chmod(0o640)
+    old_inode = tmp_path / "old-note.md"
+    old_inode.hardlink_to(note)
+    before = sorted(p.name for p in note.parent.iterdir())
+
+    result = run_doctor(demo_two_repo_hub, "--fix", "--only", "brain.leak")
+
+    assert result.exit_code == 0, result.output
+    assert note.read_text(encoding="utf-8") == (
+        f"# Note\n\n{OWN_LINES}\n[in ../demo-api/LEAK.md:1]\n"
+    )
+    assert os.stat(note).st_mode & 0o777 == 0o640
+    assert old_inode.read_text(encoding="utf-8") == f"# Note\n\n{OWN_LINES}\n{BRAIN_LINE}\n"
+    assert sorted(p.name for p in note.parent.iterdir()) == before
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root may write a read-only file")
+def test_refuses_brain_note_when_this_user_may_not_write_it(
+    demo_two_repo_hub: Path,
+    run_doctor: DoctorRunner,
+    *,
+    demo_checkout: CheckoutFactory,
+) -> None:
+    # Replacing the note must not get round its mode: a note this user may not write is refused,
+    # as the in-place write refused it.
+    note = _leaking_note(demo_two_repo_hub, demo_checkout)
+    note.chmod(0o444)
+
+    result = run_doctor(demo_two_repo_hub, "--fix", "--only", "brain.leak")
+
+    assert result.exit_code == 1, result.output
+    assert "could not fix" in result.output
+    assert note.read_text(encoding="utf-8") == f"# Note\n\n{OWN_LINES}\n{BRAIN_LINE}\n"
+
+
+def test_keeps_old_brain_note_when_its_replacement_fails(
+    demo_two_repo_hub: Path,
+    run_doctor: DoctorRunner,
+    *,
+    demo_checkout: CheckoutFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    note = _leaking_note(demo_two_repo_hub, demo_checkout)
+    before = sorted(p.name for p in note.parent.iterdir())
+
+    def fail_replace(source: object, target: object) -> None:
+        raise OSError(errno.EIO, "Input/output error")
+
+    monkeypatch.setattr(doctor_command.os, "replace", fail_replace)
+
+    result = run_doctor(demo_two_repo_hub, "--fix", "--only", "brain.leak")
+
+    assert result.exit_code == 1, result.output
+    assert note.read_text(encoding="utf-8") == f"# Note\n\n{OWN_LINES}\n{BRAIN_LINE}\n"
+    assert "could not fix brain/note.md: Input/output error" in result.stderr
+    assert sorted(p.name for p in note.parent.iterdir()) == before
+
+
+def test_prints_fix_line_for_schedule_naming_unknown_workflow_when_doctor_runs(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    demo_document["schedules"] = [{"workflow": "nope", "cron": "0 9 * * 1"}]
+    (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "workflows.starts"), exit_code=1)
+
+    assert lines == [
+        "error workflows.starts hub.json: schedules[0].workflow: unknown workflow nope"
+        " Fix: name a workflow that hub workflow list shows, or add it under workflows/",
+        ONE_ERROR,
+    ]
+
+
+def test_warns_read_cap_when_repo_agents_points_to_big_spec(
+    demo_hub: Path, run_doctor: DoctorRunner, tmp_path: Path
+) -> None:
+    # The repo's AGENTS.md sends every task to a SPEC of 139,404 bytes, as agent-hub's did.
+    checkout = tmp_path / "demo-api"
+    (checkout / "AGENTS.md").write_text(
+        "# demo-api\n\nThe spec is in `docs/SPEC.md`: read it before any task.\n", encoding="utf-8"
+    )
+    (checkout / "docs").mkdir()
+    (checkout / "docs" / "SPEC.md").write_bytes(b"spec line\n" * 13_940 + b"end\n")
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "instructions.read_cap"), exit_code=0)
+
+    assert lines == [
+        "warning instructions.read_cap ../demo-api/AGENTS.md:3: sends agents to docs/SPEC.md"
+        " (139404 bytes), over the Read tool's cap of about 25000 tokens (65536 bytes): one"
+        " Read cannot hold it Fix: split docs/SPEC.md into docs under the cap, or name the"
+        " section to read (Read with offset and limit, or grep)",
+        "0 errors, 1 warning, 0 infos",
+    ]
+
+
+def keep_one_seeded_pack(hub: Path, kept: str) -> None:
+    """Delete each pack ``hub init`` seeded in ``hub`` but ``kept``, as a hub that followed the
+    built-ins would have done; ``hub sync`` neither seeds them again nor reports them."""
+    for pack in (hub / "workflows").iterdir():
+        if pack.name != kept:
+            shutil.rmtree(pack)
+
+
+def test_warns_once_with_delete_fix_when_hub_holds_copy_of_builtin(
+    demo_hub: Path, run_doctor: DoctorRunner, run_sync: SyncRunner
+) -> None:
+    # AGH-699 D15-2, which replaces the earlier rule that a pack as hub init seeds it gives
+    # nothing: the copy hides nothing of this release, but sync never refreshes it, so it hides
+    # each later release's changes to the built-in.
+    keep_one_seeded_pack(demo_hub, "spike")
+
+    lines = lines_of(run_doctor(demo_hub), exit_code=0)
+
+    assert lines == [
+        "warning workflows.shadow workflows/spike/spike.yaml: overrides the built-in workflow"
+        f" spike, and workflows/spike/ is identical to the built-in spike pack of this release"
+        f" ({VERSION}), so it only hides the changes of later releases Fix: delete"
+        " workflows/spike/ to run the built-in (move any file of your own out of it first)",
+        "0 errors, 1 warning, 0 infos",
+    ]
+    # The fix leaves a clean hub that sync keeps as it is.
+    shutil.rmtree(demo_hub / "workflows" / "spike")
+    assert lines_of(run_doctor(demo_hub), exit_code=0) == [CLEAN]
+    synced = run_sync(demo_hub, "--check")
+    assert (synced.exit_code, synced.stdout, synced.stderr) == (0, "up to date\n", "")
+
+
+def test_warns_with_compare_fix_when_seeded_pack_differs_from_builtin(
+    demo_hub: Path, run_doctor: DoctorRunner
+) -> None:
+    keep_one_seeded_pack(demo_hub, "spike")
+    # A copy frozen before the release changed one prompt of the built-in pack.
+    prompt = demo_hub / "workflows" / "spike" / "prompts" / "options.md"
+    prompt.write_text(prompt.read_text(encoding="utf-8") + "An older step.\n", encoding="utf-8")
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "workflows.shadow"), exit_code=0)
+
+    assert lines == [
+        "warning workflows.shadow workflows/spike/spike.yaml: overrides the built-in workflow"
+        f" spike, and workflows/spike/ differs from the built-in spike pack of this release"
+        f" ({VERSION}) Fix: compare workflows/spike/ with"
+        " packages/core/src/agent_hub/core/workflows/builtin/spike/ at the platform's tag"
+        f" v{VERSION} and merge what you need, or delete workflows/spike/ to run the built-in"
+        " (move any file of your own out of it first)",
+        "0 errors, 1 warning, 0 infos",
+    ]
+
+
+# The scenario hub init wrote in the graph format (version 1) before it seeded blocks.
+GRAPH_SCENARIO = (
+    Path(__file__).resolve().parents[3] / "generator/tests/data/scenarios/demo-service-up.v1.yaml"
+)
+
+
+def test_warns_with_migrate_command_for_graph_scenario_when_doctor_runs(
+    demo_hub: Path, run_doctor: DoctorRunner
+) -> None:
+    shutil.copyfile(GRAPH_SCENARIO, demo_hub / "scenarios/demo/demo-service-up.yaml")
+    lines = lines_of(run_doctor(demo_hub, "--only", "scenarios.graph_format"), exit_code=0)
+
+    assert lines == [
+        "warning scenarios.graph_format scenarios/demo/demo-service-up.yaml:3: scenario"
+        " demo-service-up is in the graph format (version 1), which a later release removes"
+        " Fix: run hub scenario migrate demo-service-up to write it as blocks (version 2)",
+        "0 errors, 1 warning, 0 infos",
+    ]
+
+
+def test_finds_nothing_for_seeded_tree_scenario_when_doctor_runs(
+    demo_hub: Path, run_doctor: DoctorRunner
+) -> None:
+    # hub init seeds demo-service-up as blocks (version 2): a fresh hub has nothing to migrate.
+    lines = lines_of(run_doctor(demo_hub, "--only", "scenarios.graph_format"), exit_code=0)
+
+    assert lines == ["0 errors, 0 warnings, 0 infos"]
+
+
+# ADR 0054: lock.drift checks the lock's release commit against the pinned tag, from
+# the CLI, only when the lock records a commit. The release repository is the default one
+# (docs/design/project-config.md); the workspace's git rewrites its owner's URLs to ``origins``.
+RELEASE_REPOSITORY = "git+https://github.com/jroquette/agent-hub"
+RELEASE_TAG = f"v{VERSION}"
+
+
+class ReleaseOrigin(NamedTuple):
+    """The local release repository, the commit its pinned tag names and another commit."""
+
+    path: Path
+    commit: str
+    other_commit: str
+
+
+@pytest.fixture
+def release_origin(demo_workspace: Workspace, traced_git: Any) -> ReleaseOrigin:
+    """A bare ``agent-hub`` in the workspace's origins, annotated tag ``v<cli version>`` on its
+    second commit, reached through the workspace git's rewrite of the release URL."""
+    demo_workspace.rewrite_github("jroquette")
+    seed = demo_workspace.base / "release-seed"
+    seed.mkdir()
+    demo_workspace.git(seed, "-c", "init.defaultBranch=main", "init", "-q")
+    demo_workspace.git(seed, "commit", "-q", "--allow-empty", "-m", "earlier")
+    other_commit = demo_workspace.git(seed, "rev-parse", "HEAD")
+    demo_workspace.git(seed, "commit", "-q", "--allow-empty", "-m", "release")
+    demo_workspace.git(seed, "tag", "-a", RELEASE_TAG, "-m", "release")
+    path = demo_workspace.origins / "agent-hub.git"
+    demo_workspace.git(demo_workspace.base, "clone", "-q", "--bare", str(seed), str(path))
+    shutil.rmtree(seed)
+    commit = demo_workspace.git(path, "rev-parse", f"{RELEASE_TAG}^{{commit}}")
+    assert commit != other_commit
+    return ReleaseOrigin(path=path, commit=commit, other_commit=other_commit)
+
+
+def record_release(hub: Path, commit: str | None) -> None:
+    """Make ``hub.lock`` record ``commit`` of the default repository (``None``: no commit)."""
+    lock: dict[str, Any] = json.loads((hub / "hub.lock").read_bytes())
+    lock.pop("platform_commit", None)
+    lock.pop("platform_repository", None)
+    if commit is not None:
+        lock["platform_commit"] = commit
+        lock["platform_repository"] = RELEASE_REPOSITORY
+    (hub / "hub.lock").write_bytes(dump_json(lock))
+
+
+def release_probes(traced_git: Any) -> list[str]:
+    """The arguments of each ``git ls-remote`` a run made."""
+    calls: list[tuple[str, str]] = traced_git.calls()
+    return [arguments for _cwd, arguments in calls if "ls-remote" in arguments.split()]
+
+
+def test_reports_lock_drift_when_lock_commit_differs_from_tag(
+    demo_workspace: Workspace,
+    release_origin: ReleaseOrigin,
+    run_doctor: DoctorRunner,
+    *,
+    traced_git: Any,
+) -> None:
+    """AC-2: an error naming both commits, fixed by ``hub sync``; exit 1."""
+    record_release(demo_workspace.hub, release_origin.other_commit)
+
+    lines = lines_of(run_doctor(demo_workspace.hub, "--only", "lock.drift"), exit_code=1)
+
+    assert len(lines) == 2, lines
+    finding, totals = lines
+    assert finding.startswith("error lock.drift "), finding
+    assert release_origin.other_commit in finding
+    assert release_origin.commit in finding
+    assert finding.endswith(" Fix: run hub sync"), finding
+    assert totals == ONE_ERROR
+    assert len(release_probes(traced_git)) == 1
+
+
+def test_notes_unchecked_commit_when_remote_unreachable(
+    demo_workspace: Workspace,
+    release_origin: ReleaseOrigin,
+    run_doctor: DoctorRunner,
+    *,
+    traced_git: Any,
+) -> None:
+    """Q5: offline, the commit is not checked: one stderr note, no finding, exit 0."""
+    record_release(demo_workspace.hub, release_origin.commit)
+    # The rewritten release URL now names a missing path.
+    shutil.rmtree(release_origin.path)
+
+    result = run_doctor(demo_workspace.hub, "--only", "lock.drift")
+
+    assert (result.exit_code, result.stdout) == (0, f"{CLEAN}\n"), result.output
+    notes = result.stderr.splitlines()
+    assert len(notes) == 1, result.stderr
+    assert notes[0].startswith("lock.drift: hub.lock's release commit not checked: "), notes
+    assert len(release_probes(traced_git)) == 1
+
+
+def test_probes_no_release_when_only_other_rules_run(
+    demo_workspace: Workspace,
+    release_origin: ReleaseOrigin,
+    run_doctor: DoctorRunner,
+    *,
+    traced_git: Any,
+) -> None:
+    """Q5: the tag is probed only when lock.drift runs (``--only features.tracker`` probes none)."""
+    # A wrong commit: had the tag been probed, lock.drift would report it.
+    record_release(demo_workspace.hub, release_origin.other_commit)
+
+    lines = lines_of(run_doctor(demo_workspace.hub, "--only", "features.tracker"), exit_code=0)
+
+    assert lines == [CLEAN]
+    assert release_probes(traced_git) == []
+
+
+def test_reports_nothing_when_lock_has_no_commit(
+    demo_workspace: Workspace,
+    release_origin: ReleaseOrigin,
+    run_doctor: DoctorRunner,
+    *,
+    traced_git: Any,
+) -> None:
+    """Q21, AC-22: a lock with no commit (``hub init``'s, v0.27.1's): no finding, no probe."""
+    record_release(demo_workspace.hub, None)
+    assert b"platform_commit" not in (demo_workspace.hub / "hub.lock").read_bytes()
+
+    lines = lines_of(run_doctor(demo_workspace.hub, "--only", "lock.drift"), exit_code=0)
+
+    assert lines == [CLEAN]
+    assert release_probes(traced_git) == []
+
+
+def test_reports_lock_drift_when_pinned_tag_is_gone(
+    demo_workspace: Workspace,
+    release_origin: ReleaseOrigin,
+    run_doctor: DoctorRunner,
+    *,
+    traced_git: Any,
+) -> None:
+    """AC-2: a remote that answers without the pinned tag is an error, not the offline note."""
+    record_release(demo_workspace.hub, release_origin.commit)
+    demo_workspace.git(release_origin.path, "tag", "-d", RELEASE_TAG)
+
+    result = run_doctor(demo_workspace.hub, "--only", "lock.drift")
+
+    assert (result.exit_code, result.stderr) == (1, ""), result.output
+    lines = result.stdout.splitlines()
+    assert len(lines) == 2, lines
+    finding, totals = lines
+    assert finding.startswith("error lock.drift "), finding
+    assert release_origin.commit in finding
+    assert f"has no tag {RELEASE_TAG}" in finding
+    assert finding.endswith(" Fix: run hub sync"), finding
+    assert totals == ONE_ERROR
+    assert len(release_probes(traced_git)) == 1
+
+
+def test_probes_release_once_when_fix_checks_again(
+    demo_workspace: Workspace,
+    release_origin: ReleaseOrigin,
+    run_doctor: DoctorRunner,
+    *,
+    traced_git: Any,
+) -> None:
+    """The check after ``--fix`` reuses the first probe's answer: one ``git ls-remote`` a run."""
+    record_release(demo_workspace.hub, release_origin.other_commit)
+    note = demo_workspace.hub / "brain/note.md"
+    note.write_text(f"# Note\n\n{OWN_LINES}\n{BRAIN_LINE}\n", encoding="utf-8")
+    (demo_workspace.ws / "demo-api" / "LEAK.md").write_text(f"{BRAIN_LINE}\n", encoding="utf-8")
+
+    result = run_doctor(demo_workspace.hub, "--fix", "--only", "brain.leak", "--only", "lock.drift")
+
+    assert result.exit_code == 1, result.output
+    assert (
+        note.read_text(encoding="utf-8") == f"# Note\n\n{OWN_LINES}\n[in ../demo-api/LEAK.md:1]\n"
+    )
+    # The re-check still reports the wrong commit, from the first probe's answer.
+    assert [line for line in result.stdout.splitlines() if line.startswith("error lock.drift ")]
+    assert len(release_probes(traced_git)) == 1

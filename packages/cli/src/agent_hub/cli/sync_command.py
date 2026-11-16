@@ -1,0 +1,182 @@
+"""``hub sync``: bring a hub back to its render without overwriting what the project owns.
+
+The pipeline of the AGH-14 spec, in the current folder (its real path, taken once). ``--accept``
+without ``--adopt`` is a usage error (exit 2) before anything is read; ``--adopt`` runs
+``adopt_command`` instead (AGH-16). Each load step that fails exits 1 before anything is read
+after it: ``hub.json`` (pin, schema, model; any module set is accepted), then ``hub.lock``, read
+once without following a link (absent: the ``--adopt`` pointer; not a regular file or malformed:
+one line per problem, then the way out). Then the steps of ``sync_steps``: the tree read, the
+extension inputs and the render with them, and core's planner. A conflict exits 3 with its report
+on stderr and nothing written. With nothing pending, ``up to date`` and no write at all (the
+adapter is not called). ``--check`` prints the ``would`` lines and exits 4. Otherwise the plan is
+applied and its lines are printed. After those lines, ``up to date`` included, one
+``production environment: <name> (access <a>, hub.json)`` line per production environment of
+``hub.json`` (never ``hub.local.json``, AGH-282). Every error goes to stderr.
+
+The new lock keeps the release commit the old one recorded while the pin and the repository in
+use still match (ADR 0054). Otherwise, at a pin change and never with ``--check``, the injected
+``ReleaseLookup`` reads the tag's commit once; when it cannot (offline, the sandbox, no
+credential), the lock is written without a commit and one warning on stderr names the way back.
+"""
+
+import os
+from pathlib import Path
+from typing import Annotated, Final
+
+import typer
+
+from agent_hub.cli.adopt_command import run_adopt
+from agent_hub.cli.command_exits import fail, root_or_exit
+from agent_hub.cli.git_hooks_path import enable_git_hooks
+from agent_hub.cli.hub_config_reader import load_hub_json_or_exit
+from agent_hub.cli.release_lookup import lookup_release
+from agent_hub.cli.run_children import SESSION_HIDDEN, without
+from agent_hub.cli.sync_report import change_lines, conflict_lines
+from agent_hub.cli.sync_steps import (
+    CONFLICT,
+    MISSING_HUB_JSON_HINT,
+    PENDING,
+    apply_or_exit,
+    lock_or_exit,
+    rendering_or_exit,
+)
+from agent_hub.core.hub_config.effective_environments import effective_environments
+from agent_hub.core.hub_config.local_config import LocalConfig
+from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_files.hub_lock import ADOPT_POINTER, HUB_JSON_PATH, LOCK_WAY_OUT, HubLock
+from agent_hub.core.hub_files.plan_sync import SyncConflicts, SyncPlan, plan_sync
+from agent_hub.core.hub_files.release_commit import (
+    LookupFailure,
+    ReleaseCommit,
+    ReleaseLookup,
+    kept_release,
+    needs_lookup,
+)
+from agent_hub.core.workspace.environment_lines import production_lines
+
+
+def sync(
+    *,
+    check: Annotated[
+        bool,
+        typer.Option(
+            "--check",
+            help="Plan only: write nothing; exit 4 when changes are pending, 3 on a conflict.",
+        ),
+    ] = False,
+    adopt: Annotated[
+        bool,
+        typer.Option(
+            "--adopt",
+            help="Join a hand-made hub: record what matches the render, create what is missing,"
+            " list what differs (exit 3).",
+        ),
+    ] = False,
+    accept: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--accept",
+            metavar="PATH",
+            help="With --adopt: take the template of this listed path (repeatable).",
+        ),
+    ] = None,
+) -> None:
+    """Reapply the hub templates without overwriting what the project customized."""
+    if accept and not adopt:
+        raise typer.BadParameter("needs --adopt", param_hint="'--accept'")
+    if adopt:
+        run_adopt(check=check, accept=tuple(accept or ()))
+    else:
+        _sync(check=check)
+
+
+# The way back after a failed lookup (ADR 0054): the restored lock still holds the older pin, so
+# the next sync looks again; a second sync without the restore would find no pin change.
+NO_COMMIT_WAY_BACK: Final = (
+    "to record it, restore hub.lock from git, then run hub sync with network"
+)
+
+
+def _sync(*, check: bool) -> None:
+    root = Path(root_or_exit(None))
+    config = load_hub_json_or_exit(root / HUB_JSON_PATH, missing_hint=MISSING_HUB_JSON_HINT).config
+    read = lock_or_exit(root, way_out=LOCK_WAY_OUT)
+    if read is None:
+        fail(ADOPT_POINTER)
+    lock, lock_content = read
+    tree, extensions, rendered = rendering_or_exit(root, config=config, lock_files=lock.files)
+
+    def planned_with(release: ReleaseCommit | None) -> SyncPlan:
+        planned = plan_sync(
+            rendered=rendered,
+            config=config,
+            lock=lock,
+            lock_content=lock_content,
+            tree=tree,
+            extensions=extensions,
+            release=release,
+        )
+        if isinstance(planned, SyncConflicts):
+            # Nothing on stdout: the report, then exit 3.
+            for line in conflict_lines(planned):
+                typer.echo(line, err=True)
+            raise typer.Exit(CONFLICT)
+        return planned
+
+    kept = kept_release(lock, config)
+    planned = planned_with(kept)
+    # Only once nothing conflicts: a sync that exits 3 writes no lock, so it looks nothing up.
+    release = _release(lock, config, check=check, lookup=lookup_release(cwd=str(root)))
+    if kept is None and isinstance(release, ReleaseCommit):
+        planned = planned_with(release)
+    # An empty plan never reaches the adapter: nothing is opened, made or replaced (E4).
+    if planned.pending and not check:
+        apply_or_exit(root, planned)
+    _report(planned, config=config, check=check, release=release)
+    _hooks_path(root, check=check)
+    if planned.pending and check:
+        raise typer.Exit(PENDING)
+
+
+def _hooks_path(root: Path, *, check: bool) -> None:
+    """Git runs the hub's ``.githooks`` once ``core.hooksPath`` names them (ADR 0061); ``--check``
+    writes nothing, so it sets nothing."""
+    if check:
+        return
+    line, note = enable_git_hooks(root, environ=without(os.environ, SESSION_HIDDEN))
+    if line is not None:
+        typer.echo(line)
+    if note is not None:
+        typer.echo(f"warning: {note}", err=True)
+
+
+def _report(
+    planned: SyncPlan,
+    *,
+    config: HubConfig,
+    check: bool,
+    release: ReleaseCommit | LookupFailure | None,
+) -> None:
+    """The plan's lines; one warning when the lock was written without the commit it lacked."""
+    for line in change_lines(planned, check=check):
+        typer.echo(line)
+    if isinstance(release, LookupFailure) and planned.pending:
+        typer.echo(
+            f"warning: hub.lock written without the release commit ({release.reason});"
+            f" {NO_COMMIT_WAY_BACK}",
+            err=True,
+        )
+    # After the report, whatever it is: hub.json's production environments only (AM-8).
+    for line in production_lines(effective_environments(config, LocalConfig())):
+        typer.echo(line)
+
+
+def _release(
+    lock: HubLock, config: HubConfig, *, check: bool, lookup: ReleaseLookup
+) -> ReleaseCommit | LookupFailure | None:
+    """The release commit the new lock records: the lock's own while it fits the pin, else (at a
+    pin change, never with ``--check``) the one ``lookup`` finds or why it found none."""
+    kept = kept_release(lock, config)
+    if kept is not None or check or not needs_lookup(lock, config):
+        return kept
+    return lookup(config.platform.effective_repository, config.platform.version)

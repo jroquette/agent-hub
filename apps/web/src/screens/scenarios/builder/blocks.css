@@ -1,0 +1,639 @@
+/* The block canvas (scenario builder v4): the flow as a column of step cards joined by arrows,
+ * Zapier-like. A card says what the step does in a title, its facts in chips below, and its kind
+ * as a coloured tile (the kind-* tokens); the side form edits it. Lanes sit side by side. */
+
+.bk-viewport {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  --card-w: 420px;
+}
+.bk-viewport[data-dragging] {
+  cursor: grabbing;
+  user-select: none;
+}
+.bk-world {
+  position: absolute;
+  inset: 0 auto auto 0;
+  transform-origin: 0 0;
+}
+.bk-stack {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: var(--card-w);
+}
+.bk-stack[data-loose] {
+  opacity: 0.85;
+}
+.bk-loose-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--waiting);
+}
+
+/* Start and end: round pills on the line */
+.bk-hat {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: var(--card-w);
+  padding: 8px 16px 8px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  font-size: 14px;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+}
+.bk-hat:hover {
+  border-color: var(--accent);
+}
+.bk-hat b {
+  font-weight: 600;
+}
+.bk-hat .bk-icon {
+  border-radius: var(--radius-full);
+}
+.bk-cap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* The list: cards in a column, an arrow between each */
+.bk-list {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.bk-entry {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* A step: a card (v5: no colour bar, no shadow at rest; the kind's colour only on the tile) */
+.bk-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: var(--card-w);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast, 120ms) ease,
+    box-shadow var(--dur-fast, 120ms) ease;
+}
+.bk-card:hover {
+  border-color: var(--border-strong);
+}
+.bk-card:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.bk-card[data-selected] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  cursor: default;
+}
+.bk-card[data-invalid] {
+  border-color: var(--failed);
+}
+.bk-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 24px;
+}
+.bk-kind {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-muted);
+}
+.bk-num {
+  color: var(--text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+.bk-title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  overflow-wrap: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.bk-card[data-selected] .bk-title {
+  -webkit-line-clamp: unset;
+}
+.bk-runs-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 18px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.bk-runs-line > svg {
+  flex: none;
+  color: var(--text-muted);
+}
+.bk-runs-line .ah-mono {
+  font-size: 12px;
+}
+.bk-runs-missing {
+  color: var(--failed);
+}
+.bk-runs-missing > svg {
+  color: var(--failed);
+}
+.bk-facts-grid {
+  margin-top: var(--space-1);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
+}
+.bk-facts-grid dt {
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--text-muted);
+}
+.bk-facts-grid dd {
+  min-width: 0;
+  line-height: 20px;
+}
+.bk-with {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: var(--space-3);
+}
+.bk-key {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.bk-val {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bk-card[data-selected] .bk-val {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+.bk-val .ah-mono {
+  font-size: 12px;
+}
+.bk-clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.bk-call,
+.bk-keep {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: var(--space-3);
+}
+/* A value that comes from elsewhere: its source's icon and its name */
+.bk-token {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 100%;
+  height: 20px;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.bk-token > svg {
+  flex: none;
+  color: var(--text-muted);
+}
+.bk-plan-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: var(--space-1);
+  padding: 6px 8px;
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  font-size: 13px;
+  color: var(--text);
+}
+
+/* The kind's tile */
+.bk-icon {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  background: var(--kind-soft, var(--surface-sunken));
+  color: var(--kind, var(--text-muted));
+}
+.bk-icon-neutral {
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+}
+.bk-quiet {
+  color: var(--text-muted);
+}
+
+/* Marks at the top right: icon + word */
+.bk-marks {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.bk-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+.bk-errors {
+  color: var(--failed);
+}
+
+/* The selected card's problems, one line each */
+.bk-problems {
+  margin: var(--space-1) 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 2px;
+  font-size: 13px;
+}
+.bk-problems li {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--failed);
+}
+.bk-problems li[data-severity="warning"] {
+  color: var(--text-muted);
+}
+
+/* The arrow between two cards: a line, a head, and a "+" on it */
+.bk-gap {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 120px;
+  height: 44px;
+}
+.bk-gap::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 6px;
+  width: 2px;
+  transform: translateX(-50%);
+  background: var(--border-control);
+}
+.bk-gap::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top: 7px solid var(--border-control);
+  border-bottom: 0;
+}
+.bk-gap[data-first] {
+  height: 36px;
+}
+.bk-gap .bk-plus {
+  position: relative;
+  z-index: 1;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: var(--radius-full);
+  opacity: 0.7;
+}
+.bk-gap:hover .bk-plus,
+.bk-gap .bk-plus:focus-visible {
+  opacity: 1;
+  transform: scale(1.12);
+}
+.bk-gap[data-active] {
+  width: var(--card-w);
+  height: 64px;
+}
+.bk-gap[data-active]::before,
+.bk-gap[data-active]::after {
+  display: none;
+}
+.bk-gap[data-active] {
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.bk-plus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    opacity var(--dur-fast, 120ms) ease,
+    transform var(--dur-fast, 120ms) ease,
+    color var(--dur-fast, 120ms) ease;
+}
+.bk-plus:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.bk-mouth-empty {
+  display: flex;
+  width: calc(var(--card-w) - 40px);
+  min-height: 44px;
+  margin: 8px 0;
+}
+.bk-mouth-empty .bk-plus {
+  width: 100%;
+  height: 44px;
+  border-style: dashed;
+  border-color: var(--border-control);
+  border-radius: var(--radius-lg);
+  background: transparent;
+}
+.bk-mouth-empty[data-active] {
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius-lg);
+}
+
+/* Repeat, If, At the same time: a head card, then lanes side by side */
+.bk-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.bk-lanes {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+  margin-top: 12px;
+  padding-top: 16px;
+  border-top: 2px solid var(--border-control);
+}
+.bk-lane {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 12px 12px;
+  border: 1px dashed var(--border-control);
+  border-radius: var(--radius-lg);
+}
+.bk-loop {
+  margin-top: 12px;
+  border-color: color-mix(in srgb, var(--kind-control) 55%, var(--border));
+}
+.bk-lane-label {
+  margin-top: 6px;
+  padding: 1px 10px;
+  border-radius: var(--radius-full);
+  background: var(--kind-control-soft);
+  color: var(--kind-control);
+  font-size: 12px;
+  font-weight: 600;
+}
+.bk-foot {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--kind-control);
+}
+
+/* Suggested by Claude: dashed accent outline and a tag */
+.bk-card[data-suggested] {
+  outline: 2px dashed var(--accent);
+  outline-offset: 3px;
+}
+.bk-card[data-suggested]::after {
+  content: "Suggested";
+  position: absolute;
+  top: -9px;
+  right: 10px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+/* The dragged cards follow the pointer */
+.bk-ghost {
+  position: fixed;
+  box-shadow: var(--shadow-popover);
+  border-radius: var(--radius-lg);
+  z-index: 50;
+  pointer-events: none;
+  transform-origin: 0 0;
+  --card-w: 420px;
+  opacity: 0.94;
+}
+
+/* Palette (left rail): neutral tiles, the kind's colour on the icon */
+.bk-palette-block {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  cursor: grab;
+  touch-action: none;
+}
+.bk-palette-block > svg {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--kind) 16%, var(--surface));
+  color: var(--kind);
+}
+.bk-palette-block:hover {
+  background: var(--surface-hover);
+}
+.bk-palette-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+.bk-palette-action {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  cursor: grab;
+  touch-action: none;
+  text-align: left;
+}
+.bk-palette-action:hover {
+  background: var(--surface-hover);
+}
+.bk-palette-action .ah-mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Insert menu */
+.bk-menu-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+.bk-menu {
+  position: fixed;
+  z-index: 41;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  max-height: 420px;
+}
+.bk-menu-head {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.bk-menu-list {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.bk-menu-group {
+  margin: 6px 4px 2px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-subtle);
+}
+.bk-menu-row {
+  display: grid;
+  grid-template-columns: 18px auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.bk-menu-row[aria-selected="true"],
+.bk-menu-row[aria-current="true"],
+.bk-menu-row:hover {
+  background: var(--surface-hover);
+}
+.bk-menu-label {
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.bk-menu-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bk-menu-ai .bk-menu-label {
+  color: var(--accent);
+  white-space: normal;
+}
+.bk-menu-foot {
+  font-size: 11px;
+  color: var(--text-subtle);
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bk-card,
+  .bk-plus {
+    transition: none;
+  }
+}
+
+/* Loading: cards of the final shape; a preview made before the last change */
+.bk-skeleton-flow {
+  --card-w: 420px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 44px;
+  padding-top: var(--space-6);
+}
+.bk-card-skeleton {
+  cursor: default;
+}
+.bk-plan-line[data-stale] {
+  color: var(--text-muted);
+}

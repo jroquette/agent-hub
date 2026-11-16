@@ -1,0 +1,1265 @@
+/**
+ * The chat view model of one agent session (AC-165.43): a pure reducer from stream items (persisted
+ * records, text deltas, status and reset frames) to what the transcript shows.
+ *
+ * Deltas append to one assistant bubble per block; the block's `text` record replaces them. Records
+ * already applied (`seq` at or below the last one) and deltas already seen are ignored, so a replay
+ * after a reconnect never duplicates content. Tool calls pair with their results by `tool_use_id`
+ * and nest under the subagent call named by `parent_tool_use_id`. Text holding a
+ * `[redacted: <kind>]` marker is the stored copy (E9): live frames carry the original text.
+ */
+import type { components } from "../../api/schema";
+import { EFFORTS, type EffortLevel } from "./effort";
+import { netDiff, type NetDiff } from "./netDiff";
+import type { RepoFileInfo } from "./repoChanges";
+
+type Schemas = components["schemas"];
+export type LogRecord = Schemas["LogRecord"];
+export type AgentSession = Schemas["AgentSession"];
+export type AgentSessionStatus = Schemas["AgentSessionStatus"];
+export type EndReason = Schemas["EndReason"];
+export type TokenUsage = Schemas["TokenUsage"];
+export type OpenPermission = Schemas["OpenPermission"];
+export type PermissionSuggestion = Schemas["PermissionSuggestion"];
+export type PermissionMode = Schemas["PermissionMode"];
+export type RequestKind = Schemas["RequestKind"];
+export type RecordBy = Schemas["RecordBy"];
+/** A JSON value from an untyped record body (the schema's `JsonValue` is `unknown`). */
+export type JsonValue = unknown;
+export type JsonObject = Record<string, unknown>;
+
+/** A text delta on the stream (`event: delta`, id `<after_seq>.<index>`, E8). */
+export interface DeltaFrame {
+  after_seq: number;
+  block: number;
+  index: number;
+  text: string;
+}
+/** `event: status`: the session's status changed. */
+export interface StatusFrame {
+  status: AgentSessionStatus;
+  end_reason?: EndReason | null | undefined;
+}
+/** `event: reset`: the position cannot be resumed; the caller reloads the snapshot and the log. */
+export interface ResetFrame {
+  reason: string;
+}
+
+/** A message this page posts: shown at once, accepted with its record's seq, or failed. */
+export type SendItem =
+  | {
+      type: "sending";
+      key: string;
+      text: string;
+      screenshots?: readonly string[];
+      files?: readonly AttachedFileView[];
+    }
+  | { type: "accepted"; key: string; seq: number }
+  | { type: "failed"; key: string };
+
+/** What the reducer takes: one SSE frame, one record of a `GET /{id}/events` page, or a send. */
+export type StreamItem =
+  | { type: "record"; record: LogRecord }
+  | { type: "delta"; delta: DeltaFrame }
+  | { type: "status"; status: StatusFrame }
+  | { type: "reset"; reset: ResetFrame }
+  | SendItem;
+
+/** A file sent with a message: its name and size (the record's marker; its bytes are never kept). */
+export interface AttachedFileView {
+  name: string;
+  bytes: number;
+}
+
+/** A sent message until its `user.message` record (the POST's `seq`) arrives (AC-234.27). */
+export interface SendingView {
+  key: string;
+  text: string;
+  seq: number | null;
+  /** The images pasted in it (PNG data URLs), shown while it sends. */
+  screenshots?: readonly string[];
+  /** The files attached to it. */
+  files?: readonly AttachedFileView[];
+}
+
+export interface ToolResultView {
+  content: JsonValue;
+  isError: boolean;
+  /** The server stored a clipped copy (over 64 KiB); `originalBytes` is the full size. */
+  truncated: boolean;
+  originalBytes: number | null;
+  /** The change a file tool made, as Claude reported it once it ran: a unified diff with the
+   * file's real line numbers. */
+  diff?: string | null;
+}
+
+export interface ToolView {
+  id: string;
+  name: string;
+  input: JsonObject;
+  parentId: string | null;
+  /** A unified diff the server attached to the call, when it did. */
+  diff: string | null;
+  result: ToolResultView | null;
+  /** When its call record was written, for how long it has run. */
+  startedAt?: string | null;
+}
+
+export interface PermissionDecisionView {
+  decision: "allow" | "deny" | "always";
+  by: RecordBy | null;
+  message: string | null;
+  at: string;
+  /** An `AskUserQuestion`'s answers, by question text. */
+  answers?: Record<string, string> | null;
+  /** The mode a plan approval continued in. */
+  mode?: "default" | "acceptEdits" | null;
+}
+
+export interface PermissionView {
+  requestId: string;
+  tool: string;
+  requestKind: RequestKind;
+  summary: string;
+  input: JsonObject | null;
+  suggestions: PermissionSuggestion[];
+  askedAt: string;
+  /** When the server denies it unanswered; only the snapshot (memory) knows it. */
+  deadlineAt: string | null;
+  decision: PermissionDecisionView | null;
+  redacted: boolean;
+}
+
+export interface TodoView {
+  content: string;
+  status: string;
+  activeForm: string | null;
+}
+
+export interface MeterView {
+  /** The latest result's estimated cost (USD): Claude Code's running total; null before one. */
+  costUsd: number | null;
+  usage: TokenUsage | null;
+  turns: number;
+}
+
+export type NoticeTone = "info" | "warning" | "error";
+
+export type TranscriptEntry =
+  | {
+      kind: "user";
+      key: string;
+      seq: number;
+      at: string;
+      text: string;
+      redacted: boolean;
+      /** Sent while a turn ran: Claude reads it after that turn. */
+      queued: boolean;
+      /** A screenshot went with it (the record's `attachments` marker; the image is never stored). */
+      screenshot: boolean;
+      /** How many images went with it (one marker each). */
+      screenshotCount: number;
+      /** The files that went with it (one marker each). */
+      files: readonly AttachedFileView[];
+    }
+  | {
+      kind: "assistant";
+      key: string;
+      seq: number | null;
+      /** When its text record was written; null while it streams. */
+      at: string | null;
+      block: number;
+      text: string;
+      streaming: boolean;
+      /** The index of the last delta appended (-1 once the text record replaced them). */
+      lastDelta: number;
+      redacted: boolean;
+    }
+  | {
+      kind: "thinking";
+      key: string;
+      seq: number;
+      text: string;
+      redacted: boolean;
+      /** Whole seconds from the previous record to this one, null when unknown (AC-234.25). */
+      seconds: number | null;
+    }
+  | { kind: "tool"; key: string; toolId: string }
+  | { kind: "permission"; key: string; requestId: string }
+  | { kind: "notice"; key: string; seq: number; tone: NoticeTone; text: string };
+
+/** A task Claude started (a subagent, often in the background), from its `task` records. */
+export interface TaskView {
+  id: string;
+  /** What it does, as Claude described it when it started. */
+  description: string | null;
+  /** The call that started it, when known. */
+  toolUseId: string | null;
+  startedAt: string;
+  /** When it ended; null while it runs. */
+  endedAt: string | null;
+  status: "running" | "completed" | "failed" | "stopped";
+  /** What runs it, as the CLI names it: `local_bash`, `local_agent`, `remote_agent`... */
+  type: string | null;
+}
+
+export interface TranscriptState {
+  entries: TranscriptEntry[];
+  tools: Record<string, ToolView>;
+  /** Tool ids called by a subagent, by the calling tool's id. */
+  children: Record<string, string[]>;
+  permissions: Record<string, PermissionView>;
+  todos: TodoView[];
+  meter: MeterView;
+  status: AgentSessionStatus | null;
+  endReason: EndReason | null;
+  model: string | null;
+  effort: EffortLevel | null;
+  ultracode: boolean | null;
+  mode: PermissionMode | null;
+  /** The `/` menu: the init record's slash commands and skills, bounded (`commandsOf`). */
+  slashCommands: string[];
+  lastSeq: number;
+  /** When the last record was written: a thinking block's start. */
+  lastAt: string | null;
+  /** A text block is streaming (its bubble is open). */
+  streaming: boolean;
+  /** An interrupt was recorded: the turn's result reads "Turn interrupted" (AC-234.21). */
+  interrupted: boolean;
+  /** Why the stream reset; the caller reloads, then clears it with a fresh state. */
+  reset: string | null;
+  /** Messages posted from this page whose record has not arrived yet. */
+  sending: SendingView[];
+  /** A user message started a turn whose result has not arrived. */
+  turnOpen: boolean;
+  /** The tasks Claude started, by task id: a background one runs on after its turn ends. */
+  tasks: Record<string, TaskView>;
+  /** When the claude process last started or exited: a task started before it is gone. */
+  processAt: string | null;
+}
+
+export function initialTranscript(): TranscriptState {
+  return {
+    entries: [],
+    tools: {},
+    children: {},
+    permissions: {},
+    todos: [],
+    meter: { costUsd: null, usage: null, turns: 0 },
+    status: null,
+    endReason: null,
+    model: null,
+    effort: null,
+    ultracode: null,
+    mode: null,
+    slashCommands: [],
+    lastSeq: 0,
+    lastAt: null,
+    streaming: false,
+    interrupted: false,
+    reset: null,
+    sending: [],
+    turnOpen: false,
+    tasks: {},
+    processAt: null,
+  };
+}
+
+const REDACTION = /\[redacted: [^\]]+\]/;
+
+/** Whether text holds a `[redacted: <kind>]` marker: the stored copy, not the live text (E9). */
+export function isRedacted(text: string): boolean {
+  return REDACTION.test(text);
+}
+
+/* ---------- Reading untyped bodies ---------- */
+
+/** `value` when it is a JSON object, else null. */
+export function asObject(value: unknown): JsonObject | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as JsonObject)
+    : null;
+}
+/** `value` when it is a JSON array, else an empty one. */
+export function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? (value as unknown[]) : [];
+}
+/** The string at `key`, else null. */
+export function str(body: JsonObject, key: string): string | null {
+  const value = body[key];
+  return typeof value === "string" ? value : null;
+}
+function num(body: JsonObject, key: string): number | null {
+  const value = body[key];
+  if (typeof value === "number") return value;
+  if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value)))
+    return Number(value);
+  return null;
+}
+const obj = asObject;
+const arr = asArray;
+
+function suggestionsOf(value: unknown): PermissionSuggestion[] {
+  return arr(value).flatMap((item) => {
+    const s = obj(item);
+    if (!s) return [];
+    const index = num(s, "index");
+    const destination = str(s, "destination");
+    if (index === null || destination === null) return [];
+    return [{ index, destination, rule: s.rule ?? null }];
+  });
+}
+
+/* ---------- Labels ---------- */
+
+const MODE_LABEL: Record<PermissionMode, string> = {
+  default: "Ask before edits",
+  acceptEdits: "Accept edits",
+  plan: "Plan",
+  auto: "Auto",
+};
+/** How a permission mode reads in the UI. */
+export function modeLabel(mode: PermissionMode): string {
+  return MODE_LABEL[mode];
+}
+
+/** Claude keeps the conversation under its own id: a message resumes it, unless the log is full. */
+export function resumable(session: AgentSession, endReason: EndReason | null | undefined): boolean {
+  return session.kind !== "cloud" && session.claude_session_id != null && endReason !== "log_full";
+}
+
+const SUMMARY_KEYS = [
+  "command",
+  "file_path",
+  "notebook_path",
+  "path",
+  "pattern",
+  "url",
+  "query",
+  "description",
+  "skill",
+  "prompt",
+];
+const SUMMARY_MAX = 120;
+
+/** The one input that tells what a tool call does (a command, a path, a pattern), at most 120 chars. */
+export function toolSummary(input: JsonObject): string {
+  for (const key of SUMMARY_KEYS) {
+    const value = str(input, key);
+    if (value !== null) return value.length > SUMMARY_MAX ? value.slice(0, SUMMARY_MAX) : value;
+  }
+  return "";
+}
+
+/** A suggested rule as people read it: `Bash(git status)`, else its type and value. */
+export function ruleLabel(rule: unknown): string {
+  const r = obj(rule);
+  if (!r) return typeof rule === "string" ? rule : JSON.stringify(rule);
+  const rules = arr(r.rules).flatMap((item) => {
+    const one = obj(item);
+    if (!one) return [];
+    const tool = str(one, "toolName") ?? "";
+    const content = str(one, "ruleContent");
+    return [content ? `${tool}(${content})` : tool];
+  });
+  if (rules.length > 0) return rules.join(", ");
+  const type = str(r, "type") ?? "rule";
+  const value = str(r, "mode") ?? str(r, "behavior") ?? "";
+  return value ? `${type} ${value}` : type;
+}
+
+/** Where a tool call stands (AC-234.24). */
+export type ToolState = "running" | "waiting" | "done" | "error" | "denied";
+
+/** A call's state from its result and the permission asked for it (by `tool_use_id`): an open
+ * request waits for you, a denied one reads denied whatever result the CLI then sent. */
+export function toolState(tool: ToolView, request?: PermissionView): ToolState {
+  if (request?.decision?.decision === "deny") return "denied";
+  if (tool.result === null) return request?.decision === null ? "waiting" : "running";
+  return tool.result.isError ? "error" : "done";
+}
+
+/* ---------- Diffs ---------- */
+
+const DIFF_MAX_LINES = 2000;
+
+function splitLines(text: string): string[] {
+  return text === "" ? [] : text.replace(/\r\n?/g, "\n").split("\n");
+}
+
+/** The edit script between two line lists (LCS); a too-large input is all removed then all added. */
+function lineOps(a: string[], b: string[]): string[] {
+  if (a.length * b.length > (DIFF_MAX_LINES * DIFF_MAX_LINES) / 4) {
+    return [...a.map((line) => `-${line}`), ...b.map((line) => `+${line}`)];
+  }
+  const table: number[][] = Array.from({ length: a.length + 1 }, () =>
+    new Array<number>(b.length + 1).fill(0),
+  );
+  for (let i = a.length - 1; i >= 0; i--) {
+    const row = table[i] ?? [];
+    const below = table[i + 1] ?? [];
+    for (let j = b.length - 1; j >= 0; j--) {
+      row[j] = a[i] === b[j] ? (below[j + 1] ?? 0) + 1 : Math.max(below[j] ?? 0, row[j + 1] ?? 0);
+    }
+  }
+  const ops: string[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      ops.push(` ${a[i] ?? ""}`);
+      i++;
+      j++;
+    } else if ((table[i + 1]?.[j] ?? 0) >= (table[i]?.[j + 1] ?? 0)) {
+      ops.push(`-${a[i] ?? ""}`);
+      i++;
+    } else {
+      ops.push(`+${b[j] ?? ""}`);
+      j++;
+    }
+  }
+  while (i < a.length) ops.push(`-${a[i++] ?? ""}`);
+  while (j < b.length) ops.push(`+${b[j++] ?? ""}`);
+  return ops;
+}
+
+/** A one-hunk unified diff of an edit (`a/` and `b/` headers, the whole snippet as context). */
+export function unifiedDiff(path: string, before: string, after: string): string {
+  const a = splitLines(before);
+  const b = splitLines(after);
+  const range = (lines: string[]) => `${String(lines.length ? 1 : 0)},${String(lines.length)}`;
+  return [
+    `--- a/${path}`,
+    `+++ b/${path}`,
+    `@@ -${range(a)} +${range(b)} @@`,
+    ...lineOps(a, b),
+  ].join("\n");
+}
+
+/** A new file as a unified diff: every line added. */
+export function addedFileDiff(path: string, content: string): string {
+  const lines = splitLines(content);
+  return [
+    "--- /dev/null",
+    `+++ b/${path}`,
+    `@@ -0,0 +1,${String(lines.length)} @@`,
+    ...lines.map((line) => `+${line}`),
+  ].join("\n");
+}
+
+/** The diff an Edit, MultiEdit or Write shows (the server's when it sent one), else null. */
+export function toolDiff(tool: ToolView): string | null {
+  if (tool.diff !== null) return tool.diff;
+  const path = str(tool.input, "file_path") ?? "file";
+  switch (tool.name) {
+    case "Edit":
+      return unifiedDiff(
+        path,
+        str(tool.input, "old_string") ?? "",
+        str(tool.input, "new_string") ?? "",
+      );
+    case "MultiEdit":
+      return arr(tool.input.edits)
+        .flatMap((edit) => {
+          const e = obj(edit);
+          return e
+            ? [unifiedDiff(path, str(e, "old_string") ?? "", str(e, "new_string") ?? "")]
+            : [];
+        })
+        .join("\n");
+    case "Write":
+      return addedFileDiff(path, str(tool.input, "content") ?? "");
+    default:
+      return null;
+  }
+}
+
+/* ---------- Changed files ---------- */
+
+/** One call that changed a file: its diff and where the call stands. */
+export interface FileChange {
+  tool: ToolView;
+  diff: string;
+  /** The diff carries the file's real line numbers (Claude reported it), so they can show. */
+  numbered: boolean;
+  state: ToolState;
+  added: number;
+  removed: number;
+}
+
+/** A file Claude changed in the session, with every change to it in order. */
+export interface ChangedFile {
+  path: string;
+  /** The first change wrote the whole file (Write): a new file, as far as the chat knows. */
+  created: boolean;
+  changes: FileChange[];
+  /** Lines added and removed by the changes that were applied (not denied or failed). */
+  added: number;
+  removed: number;
+  /** The id of the latest change: a review marked before it is out of date. */
+  lastChangeId: string;
+  /** What the applied changes add up to, as one diff (null when they cannot be added up, or
+   * there is only one); when there is one, `added` and `removed` are its lines. Where git read
+   * the file's repository, its diff against the base branch (`repoChanges.ts`). */
+  net: NetDiff | null;
+  /** What git says about the file, when it read its repository (`withRepoChanges`). */
+  repo?: RepoFileInfo;
+}
+
+/** Lines added and removed in a unified diff, headers left out. */
+export function diffStats(diff: string): { added: number; removed: number } {
+  let added = 0;
+  let removed = 0;
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) added += 1;
+    else if (line.startsWith("-")) removed += 1;
+  }
+  return { added, removed };
+}
+
+const FILE_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
+
+function fileChangeDiff(tool: ToolView, path: string): string | null {
+  const reported = tool.result?.diff;
+  if (reported) return reported;
+  if (tool.name !== "NotebookEdit") return toolDiff(tool);
+  if (tool.diff !== null) return tool.diff;
+  return addedFileDiff(path, str(tool.input, "new_source") ?? "");
+}
+
+/** Every file the session's calls changed (subagents' included), first changed first. A change
+ * that was denied or failed stays listed, but counts no lines. */
+export function changedFiles(state: Pick<TranscriptState, "tools" | "permissions">): ChangedFile[] {
+  const files = new Map<string, ChangedFile>();
+  for (const tool of Object.values(state.tools)) {
+    if (!FILE_TOOLS.has(tool.name)) continue;
+    const path = str(tool.input, "file_path") ?? str(tool.input, "notebook_path");
+    if (path === null) continue;
+    const diff = fileChangeDiff(tool, path);
+    if (diff === null) continue;
+    const toolStateNow = toolState(tool, state.permissions[tool.id]);
+    const applied = toolStateNow !== "error" && toolStateNow !== "denied";
+    const stats = diffStats(diff);
+    const numbered = Boolean(tool.result?.diff);
+    const change: FileChange = { tool, diff, numbered, state: toolStateNow, ...stats };
+    const known = files.get(path);
+    const file = known ?? {
+      path,
+      created: tool.name === "Write",
+      changes: [],
+      added: 0,
+      removed: 0,
+      lastChangeId: tool.id,
+      net: null,
+    };
+    file.changes.push(change);
+    file.lastChangeId = tool.id;
+    if (applied) {
+      file.added += stats.added;
+      file.removed += stats.removed;
+    }
+    if (!known) files.set(path, file);
+  }
+  for (const file of files.values()) {
+    const applied = file.changes.filter(
+      (change) => change.state !== "error" && change.state !== "denied",
+    );
+    if (applied.length < 2) continue;
+    file.net = netDiff(
+      file.path,
+      applied.map((change) => ({
+        name: change.tool.name,
+        input: change.tool.input,
+        diff: change.diff,
+        numbered: change.numbered,
+      })),
+      file.created,
+    );
+    if (file.net) {
+      file.added = file.net.added;
+      file.removed = file.net.removed;
+    }
+  }
+  return [...files.values()];
+}
+
+/** The directory every path shares (ending in "/"), or "" when they share none. */
+export function commonDir(paths: readonly string[]): string {
+  const first = paths[0];
+  if (first === undefined) return "";
+  let dir = first.slice(0, first.lastIndexOf("/") + 1);
+  for (const path of paths) {
+    while (dir && !path.startsWith(dir))
+      dir = dir.slice(0, dir.lastIndexOf("/", dir.length - 2) + 1);
+  }
+  return dir;
+}
+
+/* ---------- The reducer ---------- */
+
+function push(state: TranscriptState, entry: TranscriptEntry): TranscriptState {
+  return { ...state, entries: [...state.entries, entry] };
+}
+
+function notice(state: TranscriptState, seq: number, text: string, tone: NoticeTone = "info") {
+  return push(state, { kind: "notice", key: `n-${String(seq)}`, seq, tone, text });
+}
+
+/** The last open bubble of `block`, as an index into entries, or -1. */
+function openBubble(entries: TranscriptEntry[], block: number): number {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
+    if (entry?.kind === "assistant" && entry.streaming && entry.block === block) return i;
+  }
+  return -1;
+}
+
+function applyDelta(state: TranscriptState, frame: DeltaFrame): TranscriptState {
+  if (frame.after_seq < state.lastSeq) return state;
+  const at = openBubble(state.entries, frame.block);
+  const open = state.entries[at];
+  if (open?.kind === "assistant") {
+    if (frame.index <= open.lastDelta) return state;
+    const entries = [...state.entries];
+    entries[at] = { ...open, text: open.text + frame.text, lastDelta: frame.index };
+    return { ...state, entries, streaming: true };
+  }
+  return {
+    ...push(state, {
+      kind: "assistant",
+      key: `d-${String(frame.after_seq)}-${String(frame.block)}`,
+      seq: null,
+      at: null,
+      block: frame.block,
+      text: frame.text,
+      streaming: true,
+      lastDelta: frame.index,
+      redacted: false,
+    }),
+    streaming: true,
+  };
+}
+
+function applyText(state: TranscriptState, record: LogRecord): TranscriptState {
+  const { seq, body } = record;
+  const block = num(body, "block") ?? 0;
+  const text = str(body, "text") ?? "";
+  const done = {
+    kind: "assistant" as const,
+    seq,
+    at: record.at,
+    block,
+    text,
+    streaming: false,
+    lastDelta: -1,
+    redacted: isRedacted(text),
+  };
+  const at = openBubble(state.entries, block);
+  const open = state.entries[at];
+  if (open?.kind === "assistant") {
+    const entries = [...state.entries];
+    entries[at] = { ...done, key: open.key };
+    return { ...state, entries, streaming: false };
+  }
+  return { ...push(state, { ...done, key: `t-${String(seq)}` }), streaming: false };
+}
+
+function applyToolCall(state: TranscriptState, body: JsonObject): TranscriptState {
+  const id = str(body, "tool_use_id") ?? "";
+  const parentId = str(body, "parent_tool_use_id");
+  const tool: ToolView = {
+    id,
+    name: str(body, "name") ?? "Tool",
+    input: obj(body.input) ?? {},
+    parentId,
+    diff: str(body, "diff"),
+    result: state.tools[id]?.result ?? null,
+    startedAt: state.tools[id]?.startedAt ?? state.lastAt,
+  };
+  const known = id in state.tools;
+  const next = { ...state, tools: { ...state.tools, [id]: tool } };
+  if (known) return next;
+  if (parentId !== null && parentId in state.tools) {
+    return {
+      ...next,
+      children: { ...state.children, [parentId]: [...(state.children[parentId] ?? []), id] },
+    };
+  }
+  return push(next, { kind: "tool", key: `tool-${id}`, toolId: id });
+}
+
+function applyToolResult(state: TranscriptState, body: JsonObject): TranscriptState {
+  const id = str(body, "tool_use_id") ?? "";
+  const result: ToolResultView = {
+    content: body.content ?? null,
+    isError: body.is_error === true,
+    truncated: body.truncated === true,
+    originalBytes: num(body, "original_bytes"),
+  };
+  const diff = str(body, "diff");
+  if (diff) result.diff = diff;
+  const known = state.tools[id];
+  if (known) return { ...state, tools: { ...state.tools, [id]: { ...known, result } } };
+  const orphan: ToolView = { id, name: "Tool", input: {}, parentId: null, diff: null, result };
+  return push(
+    { ...state, tools: { ...state.tools, [id]: orphan } },
+    { kind: "tool", key: `tool-${id}`, toolId: id },
+  );
+}
+
+function upsertPermission(state: TranscriptState, view: PermissionView): TranscriptState {
+  const known = state.permissions[view.requestId];
+  const merged: PermissionView = known
+    ? { ...view, decision: known.decision ?? view.decision }
+    : view;
+  const next = { ...state, permissions: { ...state.permissions, [view.requestId]: merged } };
+  if (known) return next;
+  return push(next, {
+    kind: "permission",
+    key: `perm-${view.requestId}`,
+    requestId: view.requestId,
+  });
+}
+
+function applyPermissionRequest(state: TranscriptState, record: LogRecord): TranscriptState {
+  const body = record.body;
+  const requestId = str(body, "request_id") ?? "";
+  const known = state.permissions[requestId];
+  const summary = str(body, "summary") ?? "";
+  // The snapshot's raw summary (memory, E10) wins over the stored, redacted one.
+  if (known && !known.redacted) return state;
+  const kind = str(body, "request_kind");
+  return upsertPermission(state, {
+    requestId,
+    tool: str(body, "tool") ?? "Tool",
+    requestKind: kind === "ask_user_question" || kind === "plan_approval" ? kind : "tool",
+    summary,
+    input: obj(body.input),
+    suggestions: suggestionsOf(body.suggestions),
+    askedAt: record.at,
+    deadlineAt: known?.deadlineAt ?? null,
+    decision: known?.decision ?? null,
+    redacted: isRedacted(summary),
+  });
+}
+
+function approvedMode(mode: string | null): "default" | "acceptEdits" | null {
+  return mode === "default" || mode === "acceptEdits" ? mode : null;
+}
+
+/** The answers of a decision record: question text to answer, strings only. */
+function answersOf(value: unknown): Record<string, string> | null {
+  const answers = obj(value);
+  if (!answers) return null;
+  const pairs = Object.entries(answers).filter(
+    (pair): pair is [string, string] => typeof pair[1] === "string",
+  );
+  return pairs.length > 0 ? Object.fromEntries(pairs) : null;
+}
+
+function applyDecision(state: TranscriptState, record: LogRecord): TranscriptState {
+  const requestId = str(record.body, "request_id") ?? "";
+  const known = state.permissions[requestId];
+  if (!known) return state;
+  const decision = str(record.body, "decision");
+  const view: PermissionDecisionView = {
+    decision: decision === "allow" || decision === "always" ? decision : "deny",
+    by: record.by ?? null,
+    message: str(record.body, "message"),
+    at: record.at,
+    answers: answersOf(record.body.answers),
+    mode: approvedMode(str(record.body, "mode")),
+  };
+  return {
+    ...state,
+    permissions: { ...state.permissions, [requestId]: { ...known, decision: view } },
+  };
+}
+
+function applyResult(state: TranscriptState, record: LogRecord): TranscriptState {
+  const body = record.body;
+  const cost = num(body, "cost_usd");
+  const usage = obj(body.usage);
+  const before = state.meter.usage;
+  const add = (key: keyof TokenUsage) =>
+    (before?.[key] ?? 0) + (usage ? (num(usage, key) ?? 0) : 0);
+  const meter: MeterView = {
+    // A result's cost is already the session's running total, not the turn's own.
+    costUsd: cost ?? state.meter.costUsd,
+    usage:
+      usage || before
+        ? {
+            input: add("input"),
+            output: add("output"),
+            cache_read: add("cache_read"),
+            cache_write: add("cache_write"),
+          }
+        : null,
+    turns: state.meter.turns + 1,
+  };
+  // A turn's end closes a bubble no text record replaced (an interrupt cut it short).
+  const ended = endTurn(state);
+  const entries = ended.entries.map((entry) =>
+    entry.kind === "assistant" && entry.streaming ? { ...entry, streaming: false } : entry,
+  );
+  // The result record is the turn's end: with nothing queued the session is idle, even when the
+  // server's status frame is lost (a stream reconnect), so the bar never reads as a stalled turn.
+  const live = state.status === "running" || state.status === "waiting_permission";
+  const status = live && !ended.turnOpen ? "idle" : state.status;
+  const next = { ...ended, entries, meter, status, streaming: false, interrupted: false };
+  const reason = str(body, "terminal_reason");
+  if (state.interrupted || reason?.startsWith("aborted"))
+    return notice(next, record.seq, "Turn interrupted", "warning");
+  const subtype = str(body, "subtype");
+  if (subtype !== null && subtype !== "success")
+    return notice(next, record.seq, `Turn ended: ${subtype.replace(/_/g, " ")}`, "warning");
+  return next;
+}
+
+const TASK_STATUSES = new Set<string>(["running", "completed", "failed", "stopped"]);
+
+/** A task started or ended: a start is kept, an end updates the start it ends. */
+function applyTask(state: TranscriptState, record: LogRecord): TranscriptState {
+  const id = str(record.body, "task_id");
+  const status = str(record.body, "status");
+  if (!id || status === null || !TASK_STATUSES.has(status)) return state;
+  const known = state.tasks[id];
+  const endedAt = status === "running" ? null : record.at;
+  const task: TaskView = known
+    ? {
+        ...known,
+        status: status as TaskView["status"],
+        endedAt,
+        // A finished agent resumed (a message sent to it) runs again from now.
+        startedAt: status === "running" && known.status !== "running" ? record.at : known.startedAt,
+      }
+    : {
+        id,
+        description: str(record.body, "description"),
+        toolUseId: str(record.body, "tool_use_id"),
+        startedAt: record.at,
+        endedAt,
+        status: status as TaskView["status"],
+        type: str(record.body, "task_type"),
+      };
+  return { ...state, tasks: { ...state.tasks, [id]: task } };
+}
+
+/** When the last message the owner sent was written; null before any. */
+export function lastMessageAt(state: TranscriptState): string | null {
+  const user = state.entries.findLast((entry) => entry.kind === "user" && !entry.queued);
+  return user?.kind === "user" ? user.at : null;
+}
+
+const SUBAGENT_TOOLS = new Set(["Task", "Agent"]);
+const AGENT_ID = /agentId:\s*([A-Za-z0-9_-]+)/;
+const HANDBACK = "SubagentHandback";
+
+/** The text of a tool result, its text blocks joined. */
+function resultTextOf(tool: ToolView): string {
+  const content = tool.result?.content;
+  if (typeof content === "string") return content;
+  return asArray(content)
+    .map((block) => {
+      const text = asObject(block)?.text;
+      return typeof text === "string" ? text : "";
+    })
+    .join("\n");
+}
+
+/**
+ * The background agents a log without `task` records shows (one from a server that did not record
+ * them): an `Agent` call with `run_in_background`, running until its last call is a
+ * `SubagentHandback` (completed), a `TaskStop` names its agent id (stopped) or the process
+ * restarted (stopped). A `SendMessage` to it after its handback runs it again.
+ */
+function inferredTasks(state: TranscriptState): TaskView[] {
+  const recorded = new Set(Object.values(state.tasks).map((task) => task.toolUseId));
+  const tools = Object.values(state.tools);
+  const top = tools.filter((tool) => tool.parentId === null);
+  return tools.flatMap((tool): TaskView[] => {
+    if (!SUBAGENT_TOOLS.has(tool.name) || tool.parentId !== null) return [];
+    if (tool.input.run_in_background !== true || recorded.has(tool.id) || !tool.startedAt)
+      return [];
+    const agentId = AGENT_ID.exec(resultTextOf(tool))?.[1] ?? null;
+    const at = (t: ToolView) => t.startedAt ?? "";
+    const handback = (state.children[tool.id] ?? [])
+      .map((id) => state.tools[id])
+      .filter((child): child is ToolView => child?.name === HANDBACK)
+      .map(at)
+      .sort()
+      .at(-1);
+    const resumed = top
+      .filter((t) => agentId !== null && t.name === "SendMessage" && t.input.to === agentId)
+      .map(at)
+      .sort()
+      .at(-1);
+    const stop = top
+      .filter((t) => agentId !== null && t.name === "TaskStop" && t.input.task_id === agentId)
+      .map(at)
+      .sort()
+      .at(-1);
+    const startedAt = resumed && (!handback || resumed > handback) ? resumed : tool.startedAt;
+    const restarted = state.processAt !== null && state.processAt > startedAt;
+    const ended: [TaskView["status"], string | null] =
+      stop && stop > startedAt
+        ? ["stopped", stop]
+        : handback && handback >= startedAt
+          ? ["completed", handback]
+          : restarted
+            ? ["stopped", state.processAt]
+            : ["running", null];
+    const description = tool.input.description;
+    return [
+      {
+        id: agentId ?? tool.id,
+        description: typeof description === "string" ? description : null,
+        toolUseId: tool.id,
+        startedAt,
+        endedAt: ended[1],
+        status: ended[0],
+        type: "local_agent",
+      },
+    ];
+  });
+}
+
+/** Every task of the session: the recorded ones, then the background agents inferred from a log
+ * that has no record of them. */
+export function sessionTasks(state: TranscriptState): TaskView[] {
+  return [...Object.values(state.tasks), ...inferredTasks(state)];
+}
+
+/** The tasks still running, oldest first. */
+export function runningTasks(state: TranscriptState): TaskView[] {
+  return sessionTasks(state).filter((task) => task.status === "running");
+}
+
+/** Whether a task is a shell command (else an agent). */
+export const isCommandTask = (task: TaskView) => task.type === "local_bash";
+
+/** "2 agents", "1 command", "1 agent, 2 commands": what a set of tasks is, in words. */
+export function tasksInWords(tasks: TaskView[]): string {
+  const commands = tasks.filter(isCommandTask).length;
+  const agents = tasks.length - commands;
+  const parts = [
+    agents > 0 ? `${String(agents)} ${agents === 1 ? "agent" : "agents"}` : null,
+    commands > 0 ? `${String(commands)} ${commands === 1 ? "command" : "commands"}` : null,
+  ];
+  return parts.filter(Boolean).join(", ");
+}
+
+function applySettings(state: TranscriptState, record: LogRecord): TranscriptState {
+  const mode = str(record.body, "mode");
+  const model = str(record.body, "model");
+  const parts: string[] = [];
+  let next = state;
+  if (mode === "default" || mode === "acceptEdits" || mode === "plan" || mode === "auto") {
+    parts.push(`Mode set to ${modeLabel(mode)}`);
+    next = { ...next, mode };
+  }
+  if (model !== null) {
+    parts.push(`${parts.length ? "model" : "Model"} set to ${model}`);
+    next = { ...next, model };
+  }
+  const effort = EFFORTS.find((option) => option.value === str(record.body, "effort"));
+  if (effort) {
+    parts.push(`${parts.length ? "effort" : "Effort"} set to ${effort.label}`);
+    next = { ...next, effort: effort.value };
+  }
+  const ultracode = record.body.ultracode;
+  if (typeof ultracode === "boolean") {
+    parts.push(`Ultracode ${ultracode ? "on" : "off"}`);
+    next = { ...next, ultracode };
+  }
+  return notice(next, record.seq, parts.join(", ") || "Settings changed");
+}
+
+/** The turn ended: queued messages start the next one. */
+function endTurn(state: TranscriptState): TranscriptState {
+  const queued = state.entries.some((entry) => entry.kind === "user" && entry.queued);
+  const entries = queued
+    ? state.entries.map((entry) =>
+        entry.kind === "user" && entry.queued ? { ...entry, queued: false } : entry,
+      )
+    : state.entries;
+  return { ...state, entries, turnOpen: queued };
+}
+const idle = (state: TranscriptState, status: AgentSessionStatus) =>
+  status === "running" || status === "waiting_permission"
+    ? state
+    : { ...endTurn(state), turnOpen: false };
+
+function applySend(state: TranscriptState, item: SendItem): TranscriptState {
+  const others = state.sending.filter((send) => send.key !== item.key);
+  switch (item.type) {
+    case "sending":
+      return {
+        ...state,
+        sending: [
+          ...others,
+          {
+            key: item.key,
+            text: item.text,
+            seq: null,
+            ...(item.screenshots?.length ? { screenshots: item.screenshots } : {}),
+            ...(item.files?.length ? { files: item.files } : {}),
+          },
+        ],
+      };
+    case "accepted":
+      // Its record may have come first: then it is already in the transcript.
+      return item.seq <= state.lastSeq
+        ? { ...state, sending: others }
+        : {
+            ...state,
+            sending: state.sending.map((send) =>
+              send.key === item.key ? { ...send, seq: item.seq } : send,
+            ),
+          };
+    case "failed":
+      return { ...state, sending: others };
+  }
+}
+
+/** Whole seconds (at least 1) between two record times; null when unknown or backwards. */
+function thoughtSeconds(start: string | null, end: string): number | null {
+  const ms = start === null ? NaN : Date.parse(end) - Date.parse(start);
+  return Number.isFinite(ms) && ms >= 0 ? Math.max(1, Math.round(ms / 1000)) : null;
+}
+
+/**
+ * Drops the send a user.message record echoes: the one with its seq or, since core publishes the
+ * record before the POST answers with that seq, the oldest unanswered send of the same text.
+ */
+function withoutEcho(sending: SendingView[], seq: number, text: string): SendingView[] {
+  let index = sending.findIndex((send) => send.seq === seq);
+  if (index < 0) index = sending.findIndex((send) => send.seq === null && send.text === text);
+  return index < 0 ? sending : sending.filter((_, i) => i !== index);
+}
+
+/** The `/` menu's bounds (plan "Inputs, bounds and budget"): what is over them is dropped. */
+export const MAX_COMMANDS = 200;
+export const MAX_COMMAND_CHARS = 100;
+
+/** The init record's slash commands, skills, then subagents: strings of at most 100 characters,
+ * each once as `/name` (a subagent as `/agent-name`, which the session sends to Claude as
+ * `@agent-name`), the first 200. Anything else is dropped silently (the menu reads "No commands"). */
+function commandsOf(body: JsonObject): string[] {
+  const names = new Set<string>();
+  const agents = arr(body.agents).map((agent) =>
+    typeof agent === "string" ? `agent-${agent}` : agent,
+  );
+  for (const item of [...arr(body.slash_commands), ...arr(body.skills), ...agents]) {
+    if (names.size >= MAX_COMMANDS) break;
+    if (typeof item !== "string" || item.length > MAX_COMMAND_CHARS) continue;
+    const name = item.replace(/^\//, "");
+    if (name !== "") names.add(`/${name}`);
+  }
+  return [...names];
+}
+
+/** How many screenshot markers a user message's record carries. */
+function screenshotsOf(body: JsonObject): number {
+  return asArray(body.attachments).filter((item) => asObject(item)?.kind === "screenshot").length;
+}
+
+/** The file markers of a user message's record. */
+function filesOf(body: JsonObject): AttachedFileView[] {
+  return asArray(body.attachments).flatMap((item) => {
+    const marker = asObject(item);
+    if (marker?.kind !== "file") return [];
+    const bytes = typeof marker.bytes === "number" ? marker.bytes : 0;
+    return [{ name: str(marker, "name") ?? "File", bytes }];
+  });
+}
+
+function applyRecord(state: TranscriptState, record: LogRecord): TranscriptState {
+  if (record.seq <= state.lastSeq) return state;
+  const s = { ...state, lastSeq: record.seq, lastAt: record.at };
+  const body = record.body;
+  switch (record.kind) {
+    case "user.message": {
+      const text = str(body, "text") ?? "";
+      const sending = withoutEcho(s.sending, record.seq, text);
+      // Core refuses a send while an interrupt awaits its result, so a message after an
+      // interrupt means that interrupt cut no turn short (it landed on an idle session).
+      // A message on an idle session starts a turn, as on the server.
+      const status = s.status === "idle" ? "running" : s.status;
+      return push(
+        { ...s, sending, status, turnOpen: true, interrupted: false },
+        {
+          kind: "user",
+          key: `u-${String(record.seq)}`,
+          seq: record.seq,
+          at: record.at,
+          text,
+          redacted: isRedacted(text),
+          queued: s.turnOpen,
+          screenshot: screenshotsOf(body) > 0,
+          screenshotCount: screenshotsOf(body),
+          files: filesOf(body),
+        },
+      );
+    }
+    case "text":
+      return applyText(s, record);
+    case "thinking": {
+      const text = str(body, "text") ?? "";
+      return push(s, {
+        kind: "thinking",
+        key: `th-${String(record.seq)}`,
+        seq: record.seq,
+        text,
+        redacted: isRedacted(text),
+        seconds: thoughtSeconds(state.lastAt, record.at),
+      });
+    }
+    case "tool.call":
+      return applyToolCall(s, body);
+    case "tool.result":
+      return applyToolResult(s, body);
+    case "todos":
+      return {
+        ...s,
+        todos: arr(body.items).flatMap((item) => {
+          const t = obj(item);
+          return t
+            ? [
+                {
+                  content: str(t, "content") ?? "",
+                  status: str(t, "status") ?? "pending",
+                  activeForm: str(t, "active_form"),
+                },
+              ]
+            : [];
+        }),
+      };
+    case "permission.request":
+      return applyPermissionRequest(s, record);
+    case "permission.decision":
+      return applyDecision(s, record);
+    case "result":
+      return applyResult(s, record);
+    case "init": {
+      const model = str(body, "model");
+      return notice(
+        { ...s, model: model ?? s.model, slashCommands: commandsOf(body), processAt: record.at },
+        record.seq,
+        model ? `Session started (model ${model})` : "Session started",
+      );
+    }
+    case "settings":
+      return applySettings(s, record);
+    case "interrupt":
+      return notice({ ...s, interrupted: true }, record.seq, "You interrupted the turn", "warning");
+    case "close":
+      return notice(s, record.seq, "Session closed");
+    case "error":
+      return notice(
+        { ...s, streaming: false },
+        record.seq,
+        str(body, "message") ?? "Error",
+        "error",
+      );
+    case "task":
+      return applyTask(s, record);
+    case "exited": {
+      // The process took its tasks with it.
+      const t = { ...s, tasks: {}, processAt: record.at };
+      const code = num(body, "code");
+      return code === null || code === 0
+        ? notice(t, record.seq, "claude exited")
+        : notice(t, record.seq, `claude exited with code ${String(code)}`, "error");
+    }
+    case "log.truncated": {
+      const cap = str(body, "cap");
+      const limit = num(body, "limit") ?? 0;
+      const what =
+        cap === "bytes"
+          ? `${limit.toLocaleString("en-US")} bytes`
+          : `${limit.toLocaleString("en-US")} records`;
+      return notice(
+        s,
+        record.seq,
+        `The log is full (${what}): resume the session to continue`,
+        "warning",
+      );
+    }
+    case "cloud.start":
+    case "cloud.followup":
+      return notice(
+        s,
+        record.seq,
+        record.kind === "cloud.start" ? "Cloud start" : "Cloud follow-up",
+      );
+  }
+}
+
+/** The next state after one stream item. Pure: the caller keeps the state. */
+export function reduceTranscript(state: TranscriptState, item: StreamItem): TranscriptState {
+  switch (item.type) {
+    case "record":
+      return applyRecord(state, item.record);
+    case "delta":
+      return applyDelta(state, item.delta);
+    case "status":
+      return {
+        ...idle(state, item.status.status),
+        status: item.status.status,
+        endReason: item.status.end_reason ?? null,
+        streaming:
+          item.status.status === "running" || item.status.status === "waiting_permission"
+            ? state.streaming
+            : false,
+      };
+    case "reset":
+      return { ...initialTranscript(), reset: item.reset.reason, sending: state.sending };
+    default:
+      return applySend(state, item);
+  }
+}
+
+/** Merges what `GET /{id}` holds: status, mode, model and the open request with its raw summary. */
+export function applySnapshot(state: TranscriptState, session: AgentSession): TranscriptState {
+  const next: TranscriptState = {
+    ...idle(state, session.status),
+    status: session.status,
+    endReason: session.end_reason ?? null,
+    mode: session.mode,
+    model: session.model ?? state.model,
+    effort: session.effort ?? state.effort,
+    ultracode: session.ultracode,
+  };
+  const open = session.open_permission;
+  if (!open) return next;
+  const known = next.permissions[open.request_id];
+  return upsertPermission(next, {
+    requestId: open.request_id,
+    tool: open.tool,
+    requestKind: open.request_kind,
+    summary: open.summary,
+    input: open.input ?? null,
+    suggestions: open.suggestions,
+    askedAt: open.asked_at,
+    deadlineAt: open.deadline_at,
+    decision: known?.decision ?? null,
+    redacted: false,
+  });
+}
+
+/** `loaded` (a reload of the log) with the messages of `previous` whose record it lacks. */
+export function keepSending(previous: TranscriptState, loaded: TranscriptState): TranscriptState {
+  const sending = previous.sending.filter((send) => send.seq === null || send.seq > loaded.lastSeq);
+  return { ...loaded, sending };
+}
+
+/** The ids of the requests still waiting for an answer, oldest first. */
+export function pendingPermissions(state: TranscriptState): string[] {
+  return state.entries.flatMap((entry) =>
+    entry.kind === "permission" && state.permissions[entry.requestId]?.decision === null
+      ? [entry.requestId]
+      : [],
+  );
+}

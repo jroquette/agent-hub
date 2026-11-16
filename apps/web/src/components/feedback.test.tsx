@@ -1,0 +1,288 @@
+import { act, fireEvent, render, renderHook, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { startTransition, useLayoutEffect, useState } from "react";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
+
+import { seriousViolations } from "../testing/axe";
+import {
+  Banner,
+  ConfirmDialog,
+  EmptyState,
+  ProblemError,
+  SKELETON_DELAY_MS,
+  Skeleton,
+  Toast,
+  useSkeleton,
+} from "./feedback";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe("Skeleton", () => {
+  it("shows only after 300 ms so fast answers never flash it", () => {
+    vi.useFakeTimers();
+    const { container } = render(<Skeleton width={40} />);
+    expect(container.querySelector(".ah-skel")).toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(container.querySelector(".ah-skel")).not.toBeNull();
+  });
+
+  it("shows at once with lines when the delay is 0", () => {
+    const { container } = render(<Skeleton lines={3} delay={0} />);
+
+    expect(container.querySelectorAll(".ah-skel")).toHaveLength(3);
+  });
+
+  it("keeps a shown skeleton 300 ms after loading ends (useSkeleton)", () => {
+    vi.useFakeTimers();
+    const { result, rerender } = renderHook(({ pending }) => useSkeleton(pending), {
+      initialProps: { pending: true },
+    });
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(result.current).toBe(true);
+
+    rerender({ pending: false });
+    act(() => {
+      vi.advanceTimersByTime(299);
+    });
+    expect(result.current).toBe(true);
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(result.current).toBe(false);
+  });
+
+  it("never covers a page drawn once loading ended, however late the delay's timer runs (useSkeleton)", async () => {
+    // AGH-659: on a loaded machine the commit that ends the loading can end past the delay,
+    // before React runs the effects that clear its timer; the timer then ran first and put the
+    // skeleton over the page just drawn, for 300 ms (the app's hub gate test saw it).
+    const actEnvironment = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean | undefined };
+    const previous = actEnvironment.IS_REACT_ACT_ENVIRONMENT;
+    onTestFinished(() => {
+      actEnvironment.IS_REACT_ACT_ENVIRONMENT = previous;
+    });
+    let finish: () => void = () => undefined;
+    function Page() {
+      const [pending, setPending] = useState(true);
+      finish = () => {
+        startTransition(() => {
+          setPending(false);
+        });
+      };
+      const skeleton = useSkeleton(pending);
+      useLayoutEffect(() => {
+        if (pending) return;
+        // A slow commit: it ends past the delay.
+        const end = performance.now() + SKELETON_DELAY_MS + 50;
+        while (performance.now() < end) {
+          // Busy, as a loaded machine is.
+        }
+      }, [pending]);
+      return <p>{skeleton ? "Skeleton" : pending ? "Loading" : "Page"}</p>;
+    }
+    render(<Page />);
+
+    // Outside act, as the router's own updates are: React runs the effects after the commit.
+    actEnvironment.IS_REACT_ACT_ENVIRONMENT = false;
+    finish();
+    expect(await screen.findByText("Page")).toBeInTheDocument();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(screen.queryByText("Skeleton")).toBeNull();
+    expect(screen.getByText("Page")).toBeInTheDocument();
+  });
+});
+
+describe("EmptyState", () => {
+  it("explains why and gives the next command", () => {
+    render(
+      <EmptyState
+        icon="radio"
+        title="No live sessions"
+        command="hub web"
+        action={<button type="button">Go</button>}
+      >
+        Start a Claude Code session in the hub.
+      </EmptyState>,
+    );
+
+    expect(screen.getByRole("heading", { name: "No live sessions" })).toBeInTheDocument();
+    expect(screen.getByText("hub web")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy command" })).toBeInTheDocument();
+  });
+});
+
+describe("ProblemError", () => {
+  it("shows the problem's title, detail and Try again in a region alert", () => {
+    const onRetry = vi.fn();
+    render(
+      <ProblemError
+        title="Could not load sessions"
+        detail="Collector database busy"
+        status={503}
+        type="https://agent-hub/problems/busy"
+        instance="/api/v1/sessions"
+        onRetry={onRetry}
+      />,
+    );
+
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("Could not load sessions");
+    expect(alert).toHaveTextContent("Collector database busy");
+    expect(alert).toHaveTextContent(
+      "HTTP 503 · https://agent-hub/problems/busy · /api/v1/sessions",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(onRetry).toHaveBeenCalled();
+  });
+
+  it("hides the metadata when compact and the button without a retry", () => {
+    render(<ProblemError status={500} compact />);
+
+    expect(screen.queryByText(/HTTP/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+});
+
+describe("Banner and Toast", () => {
+  it("uses an alert for errors and a status otherwise, with dismiss", () => {
+    const onDismiss = vi.fn();
+    render(
+      <>
+        <Banner tone="error">Broken</Banner>
+        <Banner tone="warning" boxed onDismiss={onDismiss}>
+          Careful
+        </Banner>
+      </>,
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Broken");
+    expect(screen.getByRole("status")).toHaveClass("ah-banner-boxed");
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(onDismiss).toHaveBeenCalled();
+  });
+
+  it("drops its live role when another live region announces it", () => {
+    render(
+      <>
+        <Banner tone="error" live={false}>
+          Broken
+        </Banner>
+        <Banner tone="info" live={false}>
+          Done
+        </Banner>
+      </>,
+    );
+
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByText("Broken").closest(".ah-banner")).toHaveClass("ah-banner-error");
+  });
+
+  it("offers undo on a toast", () => {
+    const onUndo = vi.fn();
+    render(
+      <Toast tone="error" onUndo={onUndo}>
+        Hub removed
+      </Toast>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(onUndo).toHaveBeenCalled();
+    expect(screen.getByRole("status")).toHaveClass("ah-toast-error");
+  });
+  it("a quiet Toast has no live role when another region announces it", () => {
+    render(<Toast live={false}>Answer recorded: option o2 picked.</Toast>);
+
+    expect(screen.getByText("Answer recorded: option o2 picked.")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+});
+
+describe("ConfirmDialog", () => {
+  it("enables the verb only after the required text is typed", () => {
+    const onConfirm = vi.fn();
+    render(
+      <ConfirmDialog
+        title="Remove hub agent-hub?"
+        confirmLabel="Remove hub"
+        consequences={["Its events stay in the database."]}
+        requireText="agent-hub"
+        onConfirm={onConfirm}
+        onCancel={vi.fn()}
+      >
+        The hub stops showing in every view.
+      </ConfirmDialog>,
+    );
+
+    const confirm = screen.getByRole("button", { name: "Remove hub" });
+    expect(screen.getByRole("alertdialog", { name: "Remove hub agent-hub?" })).toBeInTheDocument();
+    expect(confirm).toBeDisabled();
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "agent-hub" } });
+    fireEvent.click(confirm);
+    expect(onConfirm).toHaveBeenCalled();
+  });
+
+  it("renders through Dialog: focus on Cancel, Escape and the X cancel", async () => {
+    const onCancel = vi.fn();
+    render(
+      <ConfirmDialog title="Delete this session?" confirmLabel="Delete" onCancel={onCancel} />,
+    );
+
+    const dialog = screen.getByRole("alertdialog", { name: "Delete this session?" });
+    expect(dialog).toHaveClass("ah-dialog-frame");
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(onCancel).toHaveBeenCalledTimes(2);
+  });
+
+  it("closes on nothing while pending and turns its buttons off", async () => {
+    const onCancel = vi.fn();
+    const onConfirm = vi.fn();
+    render(
+      <ConfirmDialog
+        title="Stop reading agent-hub?"
+        confirmLabel="Removing…"
+        onCancel={onCancel}
+        onConfirm={onConfirm}
+        pending
+      />,
+    );
+
+    await userEvent.keyboard("{Escape}");
+    const scrim = screen.getByRole("presentation");
+    fireEvent.mouseDown(scrim);
+    fireEvent.click(scrim);
+
+    expect(screen.getByRole("alertdialog")).toHaveAttribute("aria-busy", "true");
+    for (const name of ["Close", "Cancel", "Removing…"])
+      expect(screen.getByRole("button", { name })).toBeDisabled();
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("disables a later phase's confirmation", () => {
+    render(<ConfirmDialog title="Approve?" confirmLabel="Approve" tone="primary" phase="P4" />);
+
+    expect(screen.getByRole("button", { name: /Approve/ })).toBeDisabled();
+  });
+
+  it("has no serious or critical a11y violation", async () => {
+    const { container } = render(
+      <div>
+        <ProblemError title="Could not load" detail="x" onRetry={vi.fn()} />
+        <EmptyState title="Nothing yet" />
+        <Banner tone="offline">Offline</Banner>
+      </div>,
+    );
+
+    expect(await seriousViolations(container)).toEqual([]);
+  });
+});

@@ -1,0 +1,150 @@
+/* The safe Markdown renderer (Markdown.tsx): blocks the shared .ah-md rules in bundle.css leave out. */
+.ah-md h4,
+.ah-md h5,
+.ah-md h6 {
+  font-size: 13px;
+  margin: var(--space-3) 0 var(--space-1);
+}
+.ah-md ul ul,
+.ah-md ol ol,
+.ah-md ul ol,
+.ah-md ol ul {
+  margin: var(--space-1) 0 0;
+}
+.ah-md hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: var(--space-4) 0;
+}
+.ah-md-code {
+  margin: 0 0 var(--space-3);
+  background: var(--code-bg);
+  border-radius: var(--radius-md);
+}
+.ah-md-code-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-1) 0 var(--space-3);
+}
+.ah-md-lang {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.ah-md-copy {
+  margin-left: auto;
+}
+.ah-md-code .ah-md-pre {
+  margin: 0;
+  padding-top: var(--space-1);
+}
+.ah-md-pre {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--code-bg);
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  white-space: pre;
+}
+.ah-md-pre code {
+  padding: 0;
+  background: none;
+}
+.ah-md-table {
+  margin: 0 0 var(--space-3);
+  overflow-x: auto;
+}
+.ah-md-text {
+  margin: 0 0 var(--space-3);
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+.ah-md-outside {
+  color: var(--text-muted);
+  text-decoration: underline dotted;
+  cursor: help;
+}
+/* Highlighted code (AC-234.31, ADR 0034; diffs AC-424.4): highlight.js scopes on design tokens, both themes. */
+.hljs .hljs-keyword,
+.hljs .hljs-selector-tag,
+.hljs .hljs-name,
+.hljs .hljs-doctag {
+  color: var(--syntax-keyword);
+}
+.hljs .hljs-title,
+.hljs .hljs-type,
+.hljs .hljs-built_in,
+.hljs .hljs-section,
+.hljs .hljs-selector-id,
+.hljs .hljs-selector-class {
+  color: var(--syntax-title);
+}
+.hljs .hljs-string,
+.hljs .hljs-regexp,
+.hljs .hljs-symbol,
+.hljs .hljs-char {
+  color: var(--syntax-string);
+}
+.hljs .hljs-number,
+.hljs .hljs-literal,
+.hljs .hljs-bullet {
+  color: var(--syntax-number);
+}
+.hljs .hljs-attr,
+.hljs .hljs-attribute,
+.hljs .hljs-property,
+.hljs .hljs-variable,
+.hljs .hljs-template-variable,
+.hljs .hljs-link {
+  color: var(--syntax-key);
+}
+.hljs .hljs-comment,
+.hljs .hljs-quote,
+.hljs .hljs-meta {
+  color: var(--syntax-comment);
+  font-style: italic;
+}
+.hljs .hljs-addition {
+  color: var(--diff-add);
+}
+.hljs .hljs-deletion {
+  color: var(--diff-del);
+}
+.hljs .hljs-strong,
+.hljs .hljs-section {
+  font-weight: 600;
+}
+.hljs .hljs-emphasis {
+  font-style: italic;
+}
+/* A ref the page opens in place (a file of the review): reads as a link, is a button. */
+.ah-md-ref {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+.ah-md-ref:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.ah-md-ref:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+/* A code span that is a ref keeps its code look, in the link's colour. */
+.ah-md a > code,
+.ah-md-ref > code {
+  color: var(--accent);
+}

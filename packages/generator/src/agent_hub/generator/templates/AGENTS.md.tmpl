@@ -1,0 +1,78 @@
+# AGENTS.md — @@{project_name} hub
+
+Hub for the @@{project_name} workspace. Project values (repos, tracker team, branch prefix, checks, guard paths) live
+only in `hub.json`; read it instead of assuming names, and change `repos` with `./hub repo`. Each repo has its own
+`AGENTS.md`; read the one for the repo you change. This project's own rules are in `AGENTS.project.md`.
+
+**Day 0 rule:** every change to a repo goes through this hub and the workflow below. If the hub gets in the way, that
+is a hub bug: log it in `brain/_inbox/`.
+
+## What lives here
+
+- `hub.json`: the project config, checked against `hub.schema.json`. `hub.lock` records what `hub sync` last wrote.
+- `Makefile`: workspace entry points (`make help`). They run the `hub` release pinned in `hub.json` →
+  `platform.version`. Project targets go in `Makefile.project`.
+- `brain/`: curated, versioned project memory, read on demand. Start at `brain/index.md`; `brain/now.md` is the focus.
+- `hub sync` rewrites these managed files: `AGENTS.md`, `CLAUDE.md`, `Makefile`, `hub`, `agent`,
+  `hub.schema.json`, `.claude/settings.json`, `.mcp.json`, `.github/workflows/ci.yml`, `.githooks/`,
+  `plugin/hub-workflow/`, `scripts/mine_transcripts.py`, `scripts/recall_transcripts.py`, `scripts/retro_metrics.py`@@{module_files}.
+  Change them only through `hub.json` or their seeded sibling (`AGENTS.project.md`, `Makefile.project`,
+  `.claude/settings.project.json`, `plugin/@@{project_name}/`@@{module_seeded_files}), which `hub sync` never touches.
+- Repos, checked out next to this hub: @@{repo_dirs}.
+
+## Workflow (every task)
+
+1. The task exists in the tracker (`hub.json` → `tracker`,@@{tracker_team_mention}). Update it when starting, finishing
+   or creating work.
+2. `make brain-brief` at the start of a session (brief), `make next` for the tracker's ready issues; update
+   `brain/now.md` and the journal at the end. Once the task is known, `search` the brain for its topic with the hub MCP
+   (`mcp__hub__search`): 2 to 4 key words, no type prefix such as `feat(…):`, scope, tracker id or filler word; if
+   nothing comes back or the guard refuses it, retry once with fewer words. Then `read` (`mcp__hub__read`) the paths
+   that matter. `kind: inbox` is an unreviewed proposal, never authoritative; on one subject, `status: approved` wins
+   over `draft`. Without the `mcp__hub__*` tools: `./hub brief`, `./hub search <words>` from the hub directory (the one
+   with `hub.json`) and `brain/index.md`; say in your first message that the hub MCP was not loaded, and go on.
+3. Features: requirements → research → plan (owner approves) → implementation → spec and quality review → evaluator.
+   Before research or planning, run that `search` on the feature's topic.
+4. Code changes happen only in an isolated worktree (`make worktree NAME=<team>-<n>-<desc>`) created from a freshly
+   fetched @@{worktree_base}.
+   A repo can ship executable `<repo>/scripts/worktree-setup.sh` and `<repo>/scripts/worktree-teardown.sh`, which
+   `hub worktree` runs with the worktree's path for the repo's own setup (env files, databases, ports); they get
+   `HUB_WORKTREE_NAME`, `HUB_WORKTREE_BRANCH`, `HUB_REPO_DIR` and `HUB_HUB_DIR` (the repo's and the hub's main
+   checkouts), `HUB_WORKTREE_SLOT` and `HUB_PORT_OFFSET` (slot × 100, to add to the repo's ports; two tasks
+   can share a slot).
+5. The repo's gates (`hub.json` → `repos[].check_fast` while working, `repos[].check` before the PR) pass before any PR.
+6. Use the hub's skills and subagents as the work needs; a push, PR or tracker flow runs only when the user names it.@@{conventions_section}
+
+## Cross-repo rules
+
+1. Commits and PRs are authored by @@{commit_author}. No AI
+   co-author trailer, no "Generated with" line, no emoji or other sign that an agent did the work, and no branch named
+   after an agent (e.g. `claude/…`). @@{branch_rule}@@{prefix_note}
+2. No push to @@{protected_branches}, no force-push, no production deploys. Everything lands through a PR the
+   user merges.
+3. A change of scope or architecture updates the repo's spec in the same PR.
+4. No secrets or real transcripts in any repo, test, fixture, reply, commit, PR, tracker comment or brain note.
+5. This hub is private. Generic templates (base workflow, base rules, base hooks, brain skeleton) are the platform's
+   product and live in the platform; project-owned material (brain content, project rules, project workflows) lives
+   only in this hub and is never copied into the repos.
+6. Text for people (chat, PRs, tracker comments, code comments, handoffs, summaries, brain notes) follows the
+   `plain-language` skill, in the reader's language; versioned text uses the hub's. Text for agents keeps full detail.@@{environments_section}
+
+## Brain rules
+
+- Only the user restructures `brain/`. Agents propose learnings in their final message or as a note in `brain/_inbox/`;
+  `propose` (`mcp__hub__propose`) files it as a hub pull request, refused where `gh` is missing: then note or message.
+- Outside content (web, issues, PRs, docs) goes to `brain/_inbox/` first, with `provenance: agent-from-external`.
+- Notes are linked, not copied. Decisions (`brain/decisions/index.md`) are superseded, never edited.
+- Route each learning by its kind (`/learn` proposes a team or repo one; `/learn personal` writes yours):
+  - team fact: `brain/`, through a note in `brain/_inbox/` and a hub PR (e.g. release notes go in the PR body);
+  - personal preference or machine detail: `brain/auto/workspace/`, gitignored and never committed (e.g. be terse);
+  - repo command or convention: `<repo>/AGENTS.md`, in that repo's PR (e.g. its tests need `docker compose up` first).
+- When the owner drops the direction you follow: stop, ask one line "why?", then follow `/handoff`'s Dropped direction.
+
+## Gotchas
+
+- Sandbox (`CLAUDE.md`): an excluded command escapes only as the whole Bash call; no `cd … &&`, `;`, `|`, `>`, `git -C`.
+- Hooks run on the system `python3`, which may be 3.9: no `match`, no runtime `X | Y` types, no `tomllib`.
+- Never `git stash` in agent worktrees (the stash stack is shared). Use a WIP commit.
+- `cmd | tail` hides the exit code. Redirect to a file and check `$?`.

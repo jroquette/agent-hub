@@ -1,0 +1,255 @@
+"""``/features``: the feature folders of the registered hubs."""
+
+from typing import Annotated, Any
+
+from fastapi import APIRouter, Path
+from fastapi.responses import HTMLResponse
+
+from agent_hub.api.ac_check import AcCheckRun
+from agent_hub.api.change_request_files import ChangeRequestDecisionBody
+from agent_hub.api.dependencies import (
+    AcChecksDep,
+    ChangeRequestDecisionsDep,
+    EventReadModelsDep,
+    FeatureNamesDep,
+    HubReadModelsDep,
+    OptionalChangeRequestDecisionsDep,
+    OptionalScreenReadsDep,
+    OwnerSignOffDep,
+    OwnerStatusDep,
+)
+from agent_hub.api.feature_names import FeatureName, FeatureNameBody, FeatureNamesView
+from agent_hub.api.local_security import UX_MOCKUP_PAGE_POLICY
+from agent_hub.api.owner_signoff_files import OwnerSignOffBody
+from agent_hub.api.owner_status_files import OwnerStatusBody
+from agent_hub.api.schemas import MAX_QUERY_TEXT, PROBLEM_RESPONSES, ProjectParam
+from agent_hub.core.features.change_request_decision import (
+    DecideChangeRequest,
+    RequestRuns,
+    with_runs,
+)
+from agent_hub.core.features.feature_view import (
+    ChangeRequestView,
+    EvalRecord,
+    FeatureDetail,
+    FeatureView,
+    UxMockup,
+)
+from agent_hub.core.features.ticket_view import FeatureTickets, TicketRecords
+from agent_hub.core.readmodels.filters import Scope
+from agent_hub.core.readmodels.page import Page
+from agent_hub.core.readmodels.read_ports import EventReadModels
+from agent_hub.core.screens.screen_reads import ScreenReads
+
+router = APIRouter(tags=["features"], responses=PROBLEM_RESPONSES)
+
+NamePath = Annotated[str, Path(min_length=1, max_length=MAX_QUERY_TEXT)]
+MockupNamePath = Annotated[
+    str, Path(pattern=r"^ux-[A-Za-z0-9][A-Za-z0-9._-]*\.html$", max_length=200)
+]
+
+# Problems are JSON even on the mockup's page route, so their media type is spelled out here.
+_PROBLEM_JSON = {"application/json": {"schema": {"$ref": "#/components/schemas/ProblemDetails"}}}
+MOCKUP_PAGE_RESPONSES: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": "The mockup's own page",
+        "content": {"text/html": {"schema": {"type": "string"}}},
+    },
+    "4XX": {"description": "A client error, as an RFC 9457 problem", "content": _PROBLEM_JSON},
+    "5XX": {"description": "A server error, as an RFC 9457 problem", "content": _PROBLEM_JSON},
+}
+
+
+@router.get("/features")
+def list_features(models: HubReadModelsDep, *, project: ProjectParam = None) -> Page[FeatureView]:
+    """Features of every (or one) project."""
+    return models.list_features(Scope(project=project))
+
+
+@router.get("/features/{project}/{slug}")
+def get_feature(
+    project: NamePath,
+    slug: NamePath,
+    *,
+    models: HubReadModelsDep,
+    events: EventReadModelsDep,
+    decisions: OptionalChangeRequestDecisionsDep,
+) -> FeatureDetail:
+    """One feature with its acceptance criteria; each open change request carries the open gate
+    of its run that answers it (``approval_id``), and whether its run is gone, so hub web
+    decides it (``decidable_here``); ``cost`` adds up what its sessions cost."""
+    detail = models.get_feature(project, slug)
+    requests = _with_runs(project, detail.change_requests, events=events, decisions=decisions)
+    cost = events.feature_cost(project, slug, detail.issues)
+    return detail.model_copy(update={"change_requests": requests, "cost": cost})
+
+
+@router.get("/features/{project}/{slug}/mockups/{name}")
+def get_ux_mockup(
+    project: NamePath, slug: NamePath, name: MockupNamePath, *, models: HubReadModelsDep
+) -> UxMockup:
+    """One UX design's visual mockup (``ux-*.html`` of the feature folder) as text; 400 for any
+    other name, 404 for a missing file, a link or one over 1 MiB."""
+    return models.ux_mockup(project, slug, name)
+
+
+@router.get(
+    "/features/{project}/{slug}/mockups/{name}/page",
+    response_class=HTMLResponse,
+    responses=MOCKUP_PAGE_RESPONSES,
+)
+def get_ux_mockup_page(
+    project: NamePath, slug: NamePath, name: MockupNamePath, *, models: HubReadModelsDep
+) -> HTMLResponse:
+    """The same mockup served as its own page, which hub web frames: ``text/html`` with a policy
+    of its own that allows its inline styles and ``data:`` images, fonts and media, and nothing
+    else (no script, no request, framed only by hub web); the same 400 and 404 as the JSON
+    read."""
+    mockup = models.ux_mockup(project, slug, name)
+    return HTMLResponse(
+        mockup.html,
+        headers={"Content-Security-Policy": UX_MOCKUP_PAGE_POLICY},
+    )
+
+
+@router.get("/features/{project}/{slug}/tickets")
+def get_feature_tickets(
+    project: NamePath, slug: NamePath, models: HubReadModelsDep
+) -> FeatureTickets:
+    """One feature's tickets with their planning and golden path; Linear when connected, else
+    the plan with a notice (always 200 for a known feature)."""
+    return models.feature_tickets(project, slug)
+
+
+@router.get("/features/{project}/{slug}/tickets/{ticket}")
+def get_ticket_records(
+    project: NamePath,
+    slug: NamePath,
+    ticket: NamePath,
+    *,
+    models: HubReadModelsDep,
+    events: EventReadModelsDep,
+    decisions: OptionalChangeRequestDecisionsDep,
+) -> TicketRecords:
+    """One ticket's records the ticket panel shows: its context brief and ticket plan, every
+    preflight run (local notes, discoveries) and the change requests it asks or is held by, each
+    open one with its run's open gate; 404 when the feature does not list the ticket."""
+    records = models.ticket_records(project, slug, ticket)
+    requests = _with_runs(project, records.change_requests, events=events, decisions=decisions)
+    return records.model_copy(update={"change_requests": requests})
+
+
+@router.post("/features/{project}/{slug}/change-requests/{n}/decision", status_code=201)
+def decide_change_request(
+    project: NamePath,
+    slug: NamePath,
+    n: Annotated[int, Path(ge=1, le=999_999)],
+    *,
+    body: ChangeRequestDecisionBody,
+    decide: ChangeRequestDecisionsDep,
+    screens: OptionalScreenReadsDep,
+) -> ChangeRequestView:
+    """The owner decides a plan change request whose run is gone (lost, or ended, and held by no
+    child): creates ``change-requests/<n>.decision.md`` once with the hub's person as
+    ``decided_by``, never editing the request; the next ``/implement`` of its ticket reads it.
+    409 while the run's gate is open (answer it through ``approval_id``), while the run lives,
+    once decided, or with no person to record; 422 for a decline without a note."""
+    decided = decide(project, slug, n, decision=body.decision, note=body.note)
+    _forget_feature_lists(screens)
+    return decided
+
+
+def _forget_feature_lists(screens: ScreenReads | None) -> None:
+    """After a write of a feature record: the shell read lists the features again at its next
+    poll, so its badge counts the write (ADR 0056)."""
+    if screens is not None:
+        screens.forget_features()
+
+
+def _with_runs(
+    project: str,
+    requests: tuple[ChangeRequestView, ...],
+    *,
+    events: EventReadModels,
+    decisions: DecideChangeRequest | None,
+) -> tuple[ChangeRequestView, ...]:
+    """The requests with their gates and whether this hub web decides them: never when the
+    decision route is not wired; else when the run is gone, the launcher's runs included."""
+    if not any(request.status == "open" for request in requests):
+        return requests
+    live = None if decisions is None else decisions.live_runs(project)
+    return with_runs(requests, RequestRuns(events), project=project, live=live)
+
+
+@router.post("/features/{project}/{slug}/owner-signoff", status_code=201)
+def sign_off_owner_steps(
+    project: NamePath,
+    slug: NamePath,
+    *,
+    sign_off: OwnerSignOffDep,
+    screens: OptionalScreenReadsDep,
+    body: OwnerSignOffBody | None = None,
+) -> EvalRecord:
+    """The owner settles the owner steps. Without a body: writes an ``owner-signoff`` SHIP eval
+    over the ACs the Acceptance step waits on; 409 with a one-line reason, writing nothing, when
+    none waits or the feature lists no AC, when one of them has a NO-SHIP as its latest eval, when
+    the acceptance eval is undated or future-dated, or when not every eval was read. With
+    ``delivery``, settles that SHIP-WITH-OWNER-STEPS eval only: ``decision`` ``done`` writes a SHIP
+    over its waiting ACs, ``more_work`` a NO-SHIP; ``note`` is the owner's words. A ``delivery``
+    naming the acceptance eval covers what the Acceptance step waits on, with the no-body
+    refusals, except that ``more_work`` is not refused over ACs an agent's eval reopened; either
+    decision there is refused once an owner decision newer than the acceptance eval settled it
+    (its SHIP signed every waiting AC off, or its NO-SHIP is still the latest eval of one). With
+    ``acs``, signs off those criteria as checked by hand (AGH-425), with the same refusals over
+    them: an unknown AC, a NO-SHIP as the latest eval of one (``done``), an eval naming one that
+    the note would not rank newer than, evals left unread."""
+    if body is None:
+        record = sign_off(project, slug)
+    else:
+        record = sign_off(
+            project,
+            slug,
+            delivery=body.delivery,
+            decision=body.decision,
+            note=body.note,
+            acs=body.acs,
+        )
+    _forget_feature_lists(screens)
+    return record
+
+
+@router.post("/features/{project}/{slug}/status", status_code=204)
+def set_owner_status(
+    project: NamePath,
+    slug: NamePath,
+    body: OwnerStatusBody,
+    *,
+    set_status: OwnerStatusDep,
+    screens: OptionalScreenReadsDep,
+) -> None:
+    """The owner marks the feature shipped, closes it without shipping, pauses it, or reopens it
+    (``active``): writes ``status.md`` into its hub folder, uncommitted; the list reads it over the
+    derived phase. 404 when the feature has no folder."""
+    set_status(project, slug, status=body.status, note=body.note)
+    _forget_feature_lists(screens)
+
+
+@router.post("/features/{project}/{slug}/acs/{ac}/check-runs")
+def run_ac_check(
+    project: NamePath, slug: NamePath, ac: NamePath, *, checks: AcChecksDep
+) -> AcCheckRun:
+    """Run the check ``features.json`` records for one AC in its repo's checkout and answer its
+    exit code and output (nothing is recorded; 409 for a manual AC or one with no command)."""
+    return checks.run(project, slug, ac)
+
+
+@router.get("/feature-names")
+def list_feature_names(names: FeatureNamesDep) -> FeatureNamesView:
+    """The nicknames the owner gave features on this machine (the slug stays the identity)."""
+    return names.all()
+
+
+@router.put("/feature-names")
+def set_feature_name(body: FeatureNameBody, names: FeatureNamesDep) -> FeatureName:
+    """Give a feature a nickname, or clear it with an empty name."""
+    return names.set(body)

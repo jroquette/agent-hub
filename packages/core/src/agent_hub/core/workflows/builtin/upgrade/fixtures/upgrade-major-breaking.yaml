@@ -1,0 +1,35 @@
+# AC-2: a major bump with a breaking change: the fast check is red, one adapt round makes it
+# green, size asks and the owner approves; the full check passes, the push is approved, the PR
+# opens.
+workflow: upgrade
+inputs: {issue: DEM-1, repo: demo-api, package: httpx, to: "1.0.0"}
+stubs:
+  config:
+    output: {default_branch: main, branch_prefix: jdoe/, author_name: null, author_email: null, ready_label: agent-ready, teams: [DEM], hub: {github: acme/demo-hub, default_branch: main, target: {github: acme/demo-hub, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}, repos: [{dir: demo-api, github: acme/demo-api, default_branch: main, check_fast: make check-fast, check: make check, target: {github: acme/demo-api, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}]}
+  worktree:
+    output:
+      path: /ws/demo-api/.claude/worktrees/dem-1
+      branch: jdoe/dem-1
+      base: origin/trunk
+      hub: /ws/hub
+      hub_name: hub
+      check: make check
+      prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}
+      target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
+  gate: {output: {check_fast: make check-fast, source: check_fast, reason: ""}}
+  bump: {output: {manager: uv, dir: ., from: "0.28.1", to: "1.0.0", major: true, files: [pyproject.toml, uv.lock], commit: 0a1b2c3d4e5f60718293a4b5c6d7e8f901234567}}
+  notes: {output: {found: true, sources: ["https://github.com/encode/httpx/releases/tag/1.0.0"], text: "Changes the client.", truncated: false, reason: ""}}
+  changelog: {output: {breaking: [{change: Client.get drops the verify argument., path: src/api.py, line: 12, action: Pass verify through the transport.}], summary: One breaking change hits the repo.}}
+  check: {output: {passed: false, exit_code: 2, round: 1, tail: "FAILED tests/test_api.py::test_get\n"}}
+  adapt__fix: {output: {status: done, summary: Adapts the client calls., question: ""}}
+  adapt__recheck: {output: {passed: true, exit_code: 0, round: 1, tail: "ok\n"}}
+  strength: {output: {touched: 3, files: [src/api.py, src/client.py, tests/test_api.py], lockfiles_edited: [], lockfile_edit: false, ran: false, tool: "", reason: no mutation tool found in the repo, mutants: 0, killed: 0, inconclusive: 0, survived: [], more_survived: 0}}
+  size: {decision: approve, approver: Jo}
+  check-full: {output: {passed: true, exit_code: 0, round: 1, tail: "ok\n"}}
+  commits: {output: {count: 2, subjects: ["chore(deps): bump httpx (DEM-1)", "fix(api): adapt to httpx (DEM-1)"], summary: Bumps httpx., dirty: false}}
+  outcome: {output: {status: done, question: "", summary: "httpx 0.28.1 -> 1.0.0, major."}}
+  publish: {decision: approve, approver: Jo}
+  pr: {output: {url: "https://github.com/acme/demo-api/pull/99", found: false, summary: "httpx 0.28.1 -> 1.0.0, major.", title_unmatched: null}}
+  report: {output: {delivery: delivered, stage: "", reason: "", question: "", pr: "https://github.com/acme/demo-api/pull/99", summary: "httpx 0.28.1 -> 1.0.0, major."}}
+expect: {status: done, outcome: delivered}
+reached: [config, worktree, gate, bump, notes, changelog, check, adapt, adapt__fix, adapt__recheck, strength, size, check-full, commits, outcome, publish, pr, report]

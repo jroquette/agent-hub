@@ -1,0 +1,133 @@
+import pytest
+from pydantic import TypeAdapter, ValidationError
+
+from agent_hub.core.agent_sessions.driver import (
+    MODEL_ALIASES,
+    DriverAnswer,
+    DriverEvent,
+    DriverImage,
+    PermissionMode,
+    PermissionRequest,
+    StartSpec,
+    TextDelta,
+    TurnResult,
+    is_valid_model,
+)
+
+EVENTS: TypeAdapter[DriverEvent] = TypeAdapter(DriverEvent)
+ANSWERS: TypeAdapter[DriverAnswer] = TypeAdapter(DriverAnswer)
+MODES: TypeAdapter[PermissionMode] = TypeAdapter(PermissionMode)
+
+
+def test_refuses_event_when_kind_unknown() -> None:
+    with pytest.raises(ValidationError):
+        EVENTS.validate_python({"kind": "shell.output", "text": "x"})
+
+
+def test_parses_event_when_kind_known() -> None:
+    event = EVENTS.validate_python({"kind": "text.delta", "block": 0, "index": 2, "text": "Hi"})
+
+    assert event == TextDelta(block=0, index=2, text="Hi")
+
+
+def test_refuses_event_when_field_unknown() -> None:
+    with pytest.raises(ValidationError):
+        EVENTS.validate_python({"kind": "thinking", "text": "x", "shell": "rm -rf /"})
+
+
+def test_keeps_request_kind_apart_when_permission_request_parsed() -> None:
+    event = EVENTS.validate_python(
+        {
+            "kind": "permission.request",
+            "request_id": "req-1",
+            "tool": "AskUserQuestion",
+            "input": {"questions": []},
+            "suggestions": [],
+            "request_kind": "ask_user_question",
+        }
+    )
+
+    assert isinstance(event, PermissionRequest)
+    assert event.kind == "permission.request"
+    assert event.request_kind == "ask_user_question"
+
+
+@pytest.mark.parametrize(
+    "model", [*MODEL_ALIASES, "claude-sonnet-4-5", "claude-opus-4-1[1m]", "x.y_z"]
+)
+def test_accepts_model_when_alias_or_pattern(model: str) -> None:
+    assert is_valid_model(model)
+    assert StartSpec(cwd="/hub", mode="default", model=model).model == model
+
+
+def test_offers_fable_when_model_aliases_listed() -> None:
+    """AC-681.10: fable is an alias like opus and sonnet."""
+    assert MODEL_ALIASES == ("default", "opus", "fable", "sonnet", "haiku")
+    assert StartSpec(cwd="/hub", mode="default", model="fable").model == "fable"
+
+
+@pytest.mark.parametrize("effort", ["low", "medium", "high", "xhigh", "max"])
+def test_takes_effort_when_level_known(effort: str) -> None:
+    """AC-681.1: each effort level reaches the start spec."""
+    assert StartSpec.model_validate(
+        {"cwd": "/hub", "mode": "default", "effort": effort}
+    ).effort == (effort)
+
+
+def test_leaves_effort_to_cli_and_ultracode_off_when_spec_names_neither() -> None:
+    """AC-681.1, AC-681.9: no effort means the CLI picks; Ultracode starts off."""
+    spec = StartSpec(cwd="/hub", mode="default")
+
+    assert (spec.effort, spec.ultracode) == (None, False)
+
+
+@pytest.mark.parametrize(
+    "model", ["", "opus sonnet", "--dangerously-skip-permissions" + "x" * 64, "a/b", "m;rm", "é"]
+)
+def test_refuses_model_when_pattern_fails(model: str) -> None:
+    assert not is_valid_model(model)
+    with pytest.raises(ValidationError):
+        StartSpec(cwd="/hub", mode="default", model=model)
+
+
+@pytest.mark.parametrize("mode", ["bypassPermissions", "dontAsk", "manual"])
+def test_refuses_bypass_when_mode_parsed(mode: str) -> None:
+    with pytest.raises(ValidationError):
+        MODES.validate_python(mode)
+    with pytest.raises(ValidationError):
+        StartSpec(cwd="/hub", mode=mode)  # type: ignore[arg-type]
+
+
+def test_takes_auto_when_mode_parsed() -> None:
+    # Claude Code's auto mode: its classifier approves safe actions and blocks risky ones; the dev
+    # app of make playground offers it.
+    assert MODES.validate_python("auto") == "auto"
+    assert StartSpec(cwd="/hub", mode="auto").mode == "auto"
+
+
+def test_refuses_fork_when_no_resume_given() -> None:
+    with pytest.raises(ValidationError):
+        StartSpec(cwd="/hub", mode="default", fork=True)
+
+
+def test_parses_answer_when_decision_given() -> None:
+    allow = ANSWERS.validate_python({"decision": "allow"})
+    deny = ANSWERS.validate_python({"decision": "deny", "message": "not now"})
+
+    assert allow.decision == "allow"
+    assert deny.decision == "deny"
+
+
+def test_carries_cost_as_money_when_result_dumped() -> None:
+    result = TurnResult(subtype="success", terminal_reason="completed", cost_usd="0.01234")
+
+    assert result.model_dump(mode="json")["cost_usd"] == "0.0123"
+
+
+def test_shows_only_media_type_and_size_when_image_repr_printed() -> None:
+    image = DriverImage(media_type="image/png", data=b"\x89PNG\r\n\x1a\nSECRET-PIXELS")
+
+    shown = repr(image)
+
+    assert shown == "DriverImage(media_type='image/png', bytes=21)"
+    assert "SECRET" not in str(image)

@@ -1,0 +1,1971 @@
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { Profiler } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { rememberScreenshot } from "../../lib/screenshotCopy";
+import { AppShell } from "../../shell/AppShell";
+import { seriousViolations } from "../../testing/axe";
+import { codeText } from "../../testing/text";
+import {
+  aCapabilities,
+  aCatalogItem,
+  aFeature,
+  aFeatureTickets,
+  aPage,
+  aProjectDetail,
+  aProjectSummary,
+  aSession,
+  aSessionLabel,
+  aSkillCatalog,
+  aTicketRow,
+  aDeltaFrame,
+  aLogRecord,
+  aPermissionRequest,
+  aProblem,
+  anAgentSession,
+  anId,
+  renderWithApi,
+  type ApiRoutes,
+  type LogRecord,
+} from "../../testing/builders";
+import { AgentSessionScreen } from "./index";
+
+const ID = anId(1, "0192a5e5");
+const SESSION = `/api/v1/agent-sessions/${ID}`;
+const EVENTS = `${SESSION}/events`;
+const STREAM = `${SESSION}/stream`;
+
+function log(): LogRecord[] {
+  return [
+    aLogRecord("init", { seq: 1 }),
+    aLogRecord("user.message", { seq: 2 }),
+    aLogRecord("text", { seq: 3, body: { block: 0, text: "Starting." } }),
+  ];
+}
+
+function routes(overrides: ApiRoutes = {}): ApiRoutes {
+  return {
+    [SESSION]: anAgentSession({ status: "running", last_seq: 3 }),
+    [EVENTS]: { items: log(), next_after: null },
+    "/api/v1/agent-sessions/capabilities": aCapabilities(),
+    ...overrides,
+  };
+}
+
+// The composer keeps drafts in this browser (and saves one on unmount): no test sees another's.
+beforeEach(() => {
+  window.localStorage.clear();
+});
+afterEach(() => {
+  window.localStorage.clear();
+});
+
+/** Markdown renders (each one parses its source). */
+const parses = vi.hoisted(() => ({ count: 0 }));
+vi.mock("../../components/Markdown", async (original) => {
+  const real = await original<typeof import("../../components/Markdown")>();
+  return {
+    ...real,
+    Markdown: (props: Parameters<typeof real.Markdown>[0]) => {
+      parses.count += 1;
+      return real.Markdown(props);
+    },
+  };
+});
+
+/** Animation frames run only when the test says so. */
+function manualFrames() {
+  const queue = new Map<number, FrameRequestCallback>();
+  let next = 0;
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    queue.set(++next, callback);
+    return next;
+  });
+  vi.stubGlobal("cancelAnimationFrame", (id: number) => queue.delete(id));
+  return () => {
+    const due = [...queue.values()];
+    queue.clear();
+    act(() => {
+      for (const callback of due) callback(0);
+    });
+  };
+}
+
+function renderChat(apiRoutes: ApiRoutes = routes(), onCommit?: () => void) {
+  const screenUi = <AgentSessionScreen />;
+  const ui = onCommit ? (
+    <Profiler id="chat" onRender={onCommit}>
+      {screenUi}
+    </Profiler>
+  ) : (
+    screenUi
+  );
+  return renderWithApi(ui, {
+    routes: apiRoutes,
+    path: `/agent-sessions/${ID}`,
+    route: "/agent-sessions/:agentSessionId",
+  });
+}
+
+async function bodyOf(request: Request | undefined): Promise<unknown> {
+  if (!request) throw new Error("no request");
+  return JSON.parse(await request.clone().text()) as unknown;
+}
+
+const posts = (requests: Request[], suffix: string) =>
+  requests.filter((r) => r.method === "POST" && new URL(r.url).pathname === `${SESSION}${suffix}`);
+
+/** Opens the header's "⋯" menu, where close, fork, delete and the observed session live. */
+async function openSessionMenu() {
+  await userEvent.click(await screen.findByRole("button", { name: "Session actions" }));
+}
+
+describe("AgentSessionScreen (screenshot-thumbnail)", () => {
+  const SHOT = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
+  const shotLog = () => [
+    aLogRecord("init", { seq: 1 }),
+    aLogRecord("user.message", {
+      seq: 2,
+      body: {
+        text: "What is on this screen?",
+        attachments: [{ kind: "screenshot", media_type: "image/png", bytes: 16 }],
+      },
+    }),
+  ];
+
+  it("screenshot-thumbnail: shows the copy kept in memory, with no image request", async () => {
+    rememberScreenshot(ID, SHOT);
+    const view = renderChat(routes({ [EVENTS]: { items: shotLog(), next_after: null } }));
+
+    const img = await screen.findByRole("img", { name: "Screenshot sent with this message" });
+    expect(img).toHaveAttribute("src", SHOT);
+    expect(view.requests.every((r) => !r.url.startsWith("data:"))).toBe(true);
+    expect(view.requests.some((r) => /\.(png|jpe?g)$|screenshot/.test(r.url))).toBe(false);
+  });
+
+  it("screenshot-thumbnail: after a reload (no copy) the label shows, no image", async () => {
+    rememberScreenshot("another-session", SHOT);
+    renderChat(routes({ [EVENTS]: { items: shotLog(), next_after: null } }));
+
+    expect(await screen.findByText("Screenshot attached")).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: "Screenshot sent with this message" })).toBeNull();
+  });
+
+  it("screenshot-thumbnail: without the marker, neither", async () => {
+    rememberScreenshot(ID, SHOT);
+    renderChat();
+
+    expect(await screen.findByText("Run the tests.")).toBeInTheDocument();
+    expect(screen.queryByText("Screenshot attached")).toBeNull();
+    expect(screen.queryByRole("img", { name: "Screenshot sent with this message" })).toBeNull();
+  });
+});
+
+describe("AgentSessionScreen (transcript)", () => {
+  it("loads the log then streams after its last record, appending deltas to one bubble", async () => {
+    const runFrame = manualFrames();
+    const view = renderChat();
+
+    expect(await screen.findByText("Run the tests.")).toBeInTheDocument();
+    expect(screen.getByText("Starting.")).toBeInTheDocument();
+    const source = view.stream(STREAM);
+    expect(new URL(source.url, window.location.origin).search).toBe("?after=3");
+
+    act(() => {
+      source.open();
+      source.emit(
+        "record.user.message",
+        aLogRecord("user.message", { seq: 4, body: { text: "Again." } }),
+        "4",
+      );
+      source.emit("delta", aDeltaFrame({ after_seq: 4, block: 1, index: 0, text: "Hel" }), "4.0");
+      source.emit("delta", aDeltaFrame({ after_seq: 4, block: 1, index: 1, text: "lo" }), "4.1");
+    });
+    runFrame();
+
+    const bubbles = screen.getAllByRole("article", { name: "Claude" });
+    expect(bubbles).toHaveLength(2);
+    expect(bubbles[1]).toHaveTextContent("Hello");
+
+    act(() => {
+      source.emit(
+        "record.text",
+        aLogRecord("text", { seq: 5, body: { block: 1, text: "Hello there." } }),
+        "5",
+      );
+      source.emit("record.tool.call", aLogRecord("tool.call", { seq: 6 }), "6");
+    });
+
+    expect(screen.getAllByRole("article", { name: "Claude" })).toHaveLength(2);
+    expect(screen.getByText("Hello there.")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Edit src\/app\.py|Edited 1 file/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("reads every log page when the log is longer than one page", async () => {
+    const first = [aLogRecord("user.message", { seq: 1 })];
+    const second = [aLogRecord("text", { seq: 2, body: { block: 0, text: "Page two." } })];
+    const view = renderChat(
+      routes({
+        [EVENTS]: (request: Request) =>
+          new URL(request.url).searchParams.get("after") === "1"
+            ? { items: second, next_after: null }
+            : { items: first, next_after: 1 },
+      }),
+    );
+
+    expect(await screen.findByText("Page two.")).toBeInTheDocument();
+    expect(view.requests.filter((r) => new URL(r.url).pathname === EVENTS)).toHaveLength(2);
+    expect(new URL(view.stream(STREAM).url, window.location.origin).search).toBe("?after=2");
+  });
+
+  it("reloads the snapshot and the log and reopens the stream when the stream resets", async () => {
+    const view = renderChat();
+    await screen.findByText("Starting.");
+    const before = view.stream(STREAM);
+
+    act(() => {
+      before.open();
+      before.emit("reset", { reason: "unknown_position" });
+    });
+
+    await waitFor(() => {
+      expect(view.requests.filter((r) => new URL(r.url).pathname === EVENTS)).toHaveLength(2);
+    });
+    await waitFor(() => {
+      expect(view.stream(STREAM)).not.toBe(before);
+    });
+    expect(before.readyState).toBe(2);
+    expect(screen.getByText("Starting.")).toBeInTheDocument();
+  });
+
+  it("opens no stream and offers Delete when the session has ended", async () => {
+    const view = renderChat(
+      routes({ [SESSION]: anAgentSession({ status: "ended", end_reason: "closed" }) }),
+    );
+
+    await screen.findByText("Starting.");
+    expect(screen.getByText(/Ended · closed/)).toBeInTheDocument();
+    expect(() => view.stream(STREAM)).toThrow();
+    await openSessionMenu();
+    expect(screen.getByRole("button", { name: "Delete session" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Close session" })).toBeNull();
+  });
+
+  it("resume: an ended session resumes by a message and offers Fork…, prefilled, which opens the fork", async () => {
+    const NEXT = anId(2, "0192a5e5");
+    const view = renderChat(
+      routes({
+        [SESSION]: anAgentSession({ status: "failed", end_reason: "failed", mode: "plan" }),
+        "POST /api/v1/agent-sessions": anAgentSession({ id: NEXT, status: "idle" }),
+        [`/api/v1/agent-sessions/${NEXT}`]: anAgentSession({ id: NEXT, status: "idle" }),
+        [`/api/v1/agent-sessions/${NEXT}/events`]: { items: [], next_after: null },
+      }),
+    );
+    await screen.findByText("Starting.");
+    expect(screen.queryByRole("button", { name: /^Resume/ })).toBeNull();
+
+    await openSessionMenu();
+    await userEvent.click(await screen.findByRole("button", { name: "Fork…" }));
+    const dialog = screen.getByRole("dialog", { name: "Fork session" });
+    expect(within(dialog).getByRole("group", { name: "Fork" })).toHaveTextContent("Run the tests");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+
+    await waitFor(() => {
+      expect(view.router.state.location.pathname).toBe(`/agent-sessions/${NEXT}`);
+    });
+    const create = view.requests.find(
+      (r) => r.method === "POST" && new URL(r.url).pathname === "/api/v1/agent-sessions",
+    );
+    expect(await bodyOf(create)).toMatchObject({
+      workdir_id: anAgentSession().workdir_id,
+      mode: "plan",
+      resume_session_id: anAgentSession().claude_session_id,
+      fork: true,
+    });
+  });
+
+  it("AC-681.5 resume: Fork… keeps the session's effort and Ultracode in New session", async () => {
+    window.localStorage.setItem("ah.session.effort", "low");
+    const NEXT = anId(2, "0192a5e5");
+    const view = renderChat(
+      routes({
+        [SESSION]: anAgentSession({
+          status: "failed",
+          end_reason: "failed",
+          effort: "high",
+          ultracode: true,
+        }),
+        "POST /api/v1/agent-sessions": anAgentSession({ id: NEXT, status: "idle" }),
+        [`/api/v1/agent-sessions/${NEXT}`]: anAgentSession({ id: NEXT, status: "idle" }),
+        [`/api/v1/agent-sessions/${NEXT}/events`]: { items: [], next_after: null },
+      }),
+    );
+    await screen.findByText("Starting.");
+
+    await openSessionMenu();
+    await userEvent.click(await screen.findByRole("button", { name: "Fork…" }));
+    const dialog = screen.getByRole("dialog", { name: "Fork session" });
+    expect(within(dialog).getByRole("button", { name: /^Model and effort/ })).toHaveAccessibleName(
+      /, High, Ultracode$/,
+    );
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+
+    await waitFor(() => {
+      expect(view.router.state.location.pathname).toBe(`/agent-sessions/${NEXT}`);
+    });
+    const create = view.requests.find(
+      (r) => r.method === "POST" && new URL(r.url).pathname === "/api/v1/agent-sessions",
+    );
+    expect(await bodyOf(create)).toMatchObject({ effort: "high", ultracode: true, fork: true });
+  });
+
+  it("resume: a live, cloud or log-full session, or a machine that cannot start one, offers no Fork…", async () => {
+    for (const [session, caps] of [
+      [anAgentSession({ status: "idle" }), aCapabilities()],
+      [anAgentSession({ status: "ended", kind: "cloud" }), aCapabilities()],
+      [anAgentSession({ status: "ended", end_reason: "log_full" }), aCapabilities()],
+      [anAgentSession({ status: "ended" }), aCapabilities({ available: false })],
+    ] as const) {
+      const view = renderChat(
+        routes({ [SESSION]: session, "/api/v1/agent-sessions/capabilities": caps }),
+      );
+      await screen.findByText("Starting.");
+      await waitFor(() => {
+        expect(view.requests.some((r) => r.url.includes("/capabilities"))).toBe(true);
+      });
+      await openSessionMenu();
+      expect(screen.queryByRole("button", { name: "Fork…" })).toBeNull();
+      view.unmount();
+    }
+  });
+
+  it("deletes the session after confirmation and goes back to Sessions", async () => {
+    const view = renderChat(
+      routes({
+        [SESSION]: anAgentSession({ status: "ended", end_reason: "closed" }),
+        [`DELETE ${SESSION}`]: () => undefined,
+      }),
+    );
+    await screen.findByText("Starting.");
+
+    await openSessionMenu();
+    await userEvent.click(screen.getByRole("button", { name: "Delete session" }));
+    const dialog = screen.getByRole("alertdialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => {
+      expect(view.router.state.location.pathname).toBe("/sessions");
+    });
+    expect(view.requests.some((r) => r.method === "DELETE")).toBe(true);
+  });
+
+  it("resumes an ended session in place when a message is sent, then streams it", async () => {
+    let reopened = false;
+    const view = renderChat(
+      routes({
+        [SESSION]: () =>
+          reopened
+            ? anAgentSession({ status: "running", last_seq: 4 })
+            : anAgentSession({ status: "ended", end_reason: "server_stopped", last_seq: 3 }),
+        [`POST ${SESSION}/messages`]: () => {
+          reopened = true;
+          return { seq: 4 };
+        },
+      }),
+    );
+    await screen.findByText("Starting.");
+    expect(() => view.stream(STREAM)).toThrow();
+    const box = screen.getByRole("textbox", { name: "Message Claude" });
+    expect(box).toHaveAttribute(
+      "placeholder",
+      "This session has ended. Send a message to resume it.",
+    );
+
+    await userEvent.type(box, "Go on.{Enter}");
+
+    expect(await bodyOf(posts(view.requests, "/messages")[0])).toEqual({ text: "Go on." });
+    await waitFor(() => {
+      expect(() => view.stream(STREAM)).not.toThrow();
+    });
+    expect(view.router.state.location.pathname).toBe(`/agent-sessions/${ID}`);
+  });
+
+  it("offers no resume when the ended session's log is full", async () => {
+    renderChat(routes({ [SESSION]: anAgentSession({ status: "ended", end_reason: "log_full" }) }));
+
+    await screen.findByText("Starting.");
+    expect(screen.getByRole("textbox", { name: "Message Claude" })).toBeDisabled();
+  });
+
+  it("AC-422.14 says there is no timeline yet when the hub's hooks never reported the session", async () => {
+    renderChat(routes({ [SESSION]: anAgentSession({ observed_session_id: null }) }));
+
+    expect(await screen.findByText("No timeline yet")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Open timeline" })).toBeNull();
+  });
+
+  it("AC-422.14 links the agent session to its observed session as Open timeline", async () => {
+    const view = renderChat(
+      routes({ [SESSION]: anAgentSession({ observed_session_id: anId(1, "5091b986") }) }),
+    );
+
+    await userEvent.click(await screen.findByRole("link", { name: "Open timeline" }));
+    await waitFor(() => {
+      expect(view.router.state.location.pathname).toBe(`/sessions/${anId(1, "5091b986")}`);
+    });
+  });
+});
+
+describe("AgentSessionScreen (streaming-batch)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  async function streamingChat() {
+    const runFrame = manualFrames();
+    let commits = 0;
+    const view = renderChat(routes(), () => {
+      commits += 1;
+    });
+    await screen.findByText("Starting.");
+    const source = view.stream(STREAM);
+    // The stream's health renders at most once a second: let it show "open" first.
+    act(() => {
+      source.open();
+      source.emit("heartbeat", {});
+    });
+    runFrame();
+    const delta = (index: number, text: string) => {
+      source.emit(
+        "delta",
+        aDeltaFrame({ after_seq: 3, block: 1, index, text }),
+        `3.${String(index)}`,
+      );
+    };
+    commits = 0;
+    parses.count = 0;
+    return { source, delta, runFrame, commits: () => commits };
+  }
+
+  it("commits 100 deltas of one frame as one render with at most one parse", async () => {
+    const chat = await streamingChat();
+
+    act(() => {
+      for (let i = 0; i < 100; i++) chat.delta(i, "a");
+    });
+    expect(chat.commits()).toBe(0);
+    chat.runFrame();
+
+    expect(chat.commits()).toBe(1);
+    expect(parses.count).toBeLessThanOrEqual(1);
+    const bubbles = screen.getAllByRole("article", { name: "Claude" });
+    expect(bubbles[1]).toHaveTextContent("a".repeat(100));
+  });
+
+  it("flushes the queued deltas before a record, in order, without waiting for the frame", async () => {
+    const chat = await streamingChat();
+
+    act(() => {
+      chat.delta(0, "Hel");
+      chat.delta(1, "lo");
+      chat.source.emit("record.tool.call", aLogRecord("tool.call", { seq: 4 }), "4");
+    });
+
+    const bubble = screen.getAllByRole("article", { name: "Claude" })[1];
+    expect(bubble).toHaveTextContent("Hello");
+    const card = screen.getByRole("button", { name: /Edit src\/app\.py|Edited 1 file/ });
+    expect(bubble?.compareDocumentPosition(card)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+});
+
+describe("AgentSessionScreen (layout)", () => {
+  it("keeps the header and the composer outside the one scrolling transcript column", async () => {
+    const todos = aLogRecord("todos", { seq: 4 });
+    const view = renderChat(
+      routes({
+        [SESSION]: anAgentSession({ status: "running", last_seq: 4 }),
+        [EVENTS]: { items: [...log(), todos], next_after: null },
+      }),
+    );
+    const conversation = await screen.findByRole("log", { name: "Conversation" });
+
+    const header = view.container.querySelector("header.as-header");
+    if (!(header instanceof HTMLElement)) throw new Error("no chat header");
+    expect(within(header).getByRole("heading", { level: 1 })).toBeInTheDocument();
+    expect(within(header).getByText("Running")).toBeInTheDocument();
+    expect(within(header).getByRole("group", { name: /Cost and tokens/ })).toBeInTheDocument();
+    await userEvent.click(within(header).getByRole("button", { name: "Session actions" }));
+    expect(within(header).getByRole("button", { name: "Close session" })).toBeInTheDocument();
+
+    const scroller = conversation.closest(".as-scroll");
+    expect(scroller).not.toBeNull();
+    expect(scroller?.contains(header)).toBe(false);
+    const composer = screen.getByRole("form", { name: "Message composer" });
+    expect(scroller?.contains(composer)).toBe(false);
+    expect(composer.closest("footer.as-footer")).not.toBeNull();
+    expect(conversation).toHaveClass("as-column");
+
+    // The todo list sits with the live bar above the composer, not in the header.
+    expect(within(header).queryByRole("region", { name: "Todo list" })).toBeNull();
+    const footer = composer.closest("footer.as-footer");
+    if (!(footer instanceof HTMLElement)) throw new Error("no chat footer");
+    const list = within(footer).getByRole("region", { name: "Todo list" });
+    expect(list.querySelector("details")).not.toHaveAttribute("open");
+    expect(within(list).getByText(/0 of 1 done/)).toBeVisible();
+  });
+});
+
+/** Where each permission card sits in the transcript: the older one above the newer one. */
+const CARD_TOP: Record<string, number> = { "req-1": 300, "req-2": 700 };
+
+/** jsdom lays nothing out: a 1000 px transcript in a 400 px scroller, frames run at once. */
+function stubScrolling() {
+  vi.spyOn(Element.prototype, "scrollHeight", "get").mockReturnValue(1000);
+  vi.spyOn(Element.prototype, "clientHeight", "get").mockReturnValue(400);
+  // A card's box against the scroller's (at 0): its place in the content less the scroll.
+  vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+    const card = this instanceof HTMLElement ? CARD_TOP[this.dataset.requestId ?? ""] : undefined;
+    return DOMRect.fromRect({ y: card === undefined ? 0 : card - scrolled.top });
+  });
+  const writes = vi.spyOn(Element.prototype, "scrollTop", "set").mockImplementation(function (
+    this: Element,
+    value,
+  ) {
+    // The live feed above the composer scrolls on its own, not the conversation.
+    if (this.closest(".as-live")) return;
+    scrolled.top = Math.min(value, 600);
+  });
+  vi.spyOn(Element.prototype, "scrollTop", "get").mockImplementation(() => scrolled.top);
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    callback(0);
+    return 1;
+  });
+  return writes;
+}
+
+/** The one scroll position stubScrolling's elements share. */
+const scrolled = { top: 0 };
+
+/** The reader scrolls the transcript up to `top`. */
+function scrollUp(scroller: Element, top = 100) {
+  scrolled.top = top;
+  fireEvent.scroll(scroller);
+}
+
+describe("AgentSessionScreen (open-position)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("opens the saved transcript at its latest entry", async () => {
+    const writes = stubScrolling();
+    renderChat();
+    const conversation = await screen.findByRole("log", { name: "Conversation" });
+
+    const scroller = conversation.closest(".as-scroll");
+    await waitFor(() => {
+      expect(writes.mock.contexts).toContain(scroller);
+    });
+    expect(writes).toHaveBeenLastCalledWith(1000);
+  });
+
+  it("opens at the oldest pending permission card when one waits", async () => {
+    const writes = stubScrolling();
+    const older = aLogRecord("permission.request", { seq: 4 });
+    renderChat(
+      routes({
+        [SESSION]: anAgentSession({
+          status: "waiting_permission",
+          last_seq: 4,
+          open_permission: aPermissionRequest({ request_id: "req-2", summary: "ls" }),
+        }),
+        [EVENTS]: { items: [...log(), older], next_after: null },
+      }),
+    );
+
+    const cards = await screen.findAllByRole("region", { name: /Claude wants to use Bash/ });
+    expect(cards).toHaveLength(2);
+    const scroller = cards[0]?.closest(".as-scroll");
+    await waitFor(() => {
+      expect(writes.mock.contexts).toContain(scroller);
+    });
+    // The older card's top (300), less a 16 px margin; never the newer card (700) or the bottom.
+    expect(writes.mock.calls).toEqual([[284]]);
+  });
+});
+
+describe("AgentSessionScreen (jump-to-latest)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    scrolled.top = 0;
+  });
+
+  async function detachedChat() {
+    stubScrolling();
+    const view = renderChat();
+    const conversation = await screen.findByRole("log", { name: "Conversation" });
+    const scroller = conversation.closest(".as-scroll");
+    if (!scroller) throw new Error("no scroller");
+    await waitFor(() => {
+      expect(scrolled.top).toBe(600);
+    });
+    expect(screen.queryByRole("button", { name: /Jump to latest/ })).toBeNull();
+    scrollUp(scroller);
+    return { view, scroller };
+  }
+
+  it("counts the entries that arrive while detached and jumps to the latest", async () => {
+    const { view, scroller } = await detachedChat();
+    expect(screen.getByRole("button", { name: "Jump to latest" })).toBeInTheDocument();
+
+    act(() => {
+      const source = view.stream(STREAM);
+      source.emit("record.user.message", aLogRecord("user.message", { seq: 4 }), "4");
+      source.emit(
+        "record.text",
+        aLogRecord("text", { seq: 5, body: { block: 1, text: "On it." } }),
+        "5",
+      );
+      source.emit("record.tool.call", aLogRecord("tool.call", { seq: 6 }), "6");
+    });
+    expect(scrolled.top).toBe(100);
+    const jump = screen.getByRole("button", { name: "Jump to latest, 3 new" });
+    expect(jump).toHaveTextContent("Jump to latest · 3 new");
+
+    await userEvent.click(jump);
+
+    expect(scrolled.top).toBe(600);
+    expect(screen.queryByRole("button", { name: /Jump to latest/ })).toBeNull();
+    // The button went away: focus moved to the transcript, not to <body>.
+    expect(scroller).toHaveFocus();
+    scrollUp(scroller);
+    expect(screen.getByRole("button", { name: "Jump to latest" })).toBeInTheDocument();
+  });
+
+  it("jumps with End in the transcript, smoothly unless the reader asks for less motion", async () => {
+    const { scroller } = await detachedChat();
+    const smooth = vi.fn();
+    Object.defineProperty(scroller, "scrollTo", { value: smooth, configurable: true });
+
+    fireEvent.keyDown(scroller, { key: "End" });
+
+    expect(smooth).toHaveBeenCalledWith({ top: 1000, behavior: "smooth" });
+    expect(screen.queryByRole("button", { name: /Jump to latest/ })).toBeNull();
+
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("reduce") }));
+    scrollUp(scroller, 50);
+    await userEvent.click(screen.getByRole("button", { name: "Jump to latest" }));
+
+    expect(smooth).toHaveBeenCalledTimes(1);
+    expect(scrolled.top).toBe(600);
+  });
+
+  it("leaves End to a text field inside the transcript", async () => {
+    stubScrolling();
+    renderChat(
+      routes({
+        [SESSION]: anAgentSession({
+          status: "waiting_permission",
+          last_seq: 3,
+          open_permission: aPermissionRequest(),
+        }),
+      }),
+    );
+    const card = await screen.findByRole("region", { name: /Claude wants to use Bash/ });
+    const scroller = card.closest(".as-scroll");
+    if (!scroller) throw new Error("no scroller");
+    const smooth = vi.fn();
+    Object.defineProperty(scroller, "scrollTo", { value: smooth, configurable: true });
+    scrollUp(scroller);
+    expect(screen.getByRole("button", { name: "Jump to latest" })).toBeInTheDocument();
+
+    const input = within(card).getByLabelText("Message to Claude if you deny (optional)");
+    const notPrevented = fireEvent.keyDown(input, { key: "End" });
+
+    expect(notPrevented).toBe(true);
+    expect(smooth).not.toHaveBeenCalled();
+    expect(scrolled.top).toBe(100);
+    expect(screen.getByRole("button", { name: "Jump to latest" })).toBeInTheDocument();
+  });
+});
+
+describe("AgentSessionScreen (permission)", () => {
+  it("shows the snapshot's raw request over the stored copy and posts one answer", async () => {
+    const stored = aLogRecord("permission.request", {
+      seq: 4,
+      body: {
+        request_id: "req-1",
+        request_kind: "tool",
+        suggestions: [],
+        summary: "echo [redacted: token]",
+        tool: "Bash",
+      },
+    });
+    const view = renderChat(
+      routes({
+        [SESSION]: anAgentSession({
+          status: "waiting_permission",
+          last_seq: 4,
+          open_permission: aPermissionRequest({ summary: "echo raw-value" }),
+        }),
+        [EVENTS]: { items: [...log(), stored], next_after: null },
+        [`POST ${SESSION}/permissions/req-1`]: anAgentSession({ status: "running" }),
+      }),
+    );
+
+    const card = await screen.findByRole("region", { name: /Claude wants to use Bash/ });
+    // A Bash command is coloured as shell (AC-596.5.19): its text spans the code element.
+    expect(within(card).getByText(codeText("echo raw-value"))).toBeInTheDocument();
+    await waitFor(() => {
+      expect(card).toHaveFocus();
+    });
+
+    const allow = within(card).getByRole("button", { name: "Allow once" });
+    await userEvent.click(allow);
+    await userEvent.click(allow);
+
+    const sent = posts(view.requests, "/permissions/req-1");
+    expect(sent).toHaveLength(1);
+    expect(await bodyOf(sent[0])).toEqual({ decision: "allow" });
+    expect(allow).toBeDisabled();
+  });
+
+  it("shows a request that arrives on the stream", async () => {
+    const view = renderChat();
+    await screen.findByText("Starting.");
+
+    act(() => {
+      view
+        .stream(STREAM)
+        .emit("record.permission.request", aLogRecord("permission.request", { seq: 4 }), "4");
+      view.stream(STREAM).emit("status", { status: "waiting_permission" });
+    });
+
+    expect(screen.getByRole("region", { name: /Claude wants to use Bash/ })).toBeInTheDocument();
+    expect(screen.getAllByText("Waiting for you").length).toBeGreaterThan(0);
+  });
+});
+
+describe("AgentSessionScreen (composer)", () => {
+  it("sends on Enter and keeps a new line on Shift+Enter", async () => {
+    const view = renderChat(routes({ [`POST ${SESSION}/messages`]: { seq: 4 } }));
+    await screen.findByText("Starting.");
+
+    const box = screen.getByRole("textbox", { name: "Message Claude" });
+    await userEvent.type(box, "first{Shift>}{Enter}{/Shift}second");
+    expect(box).toHaveValue("first\nsecond");
+    await userEvent.type(box, "{Enter}");
+
+    await waitFor(() => {
+      expect(posts(view.requests, "/messages")).toHaveLength(1);
+    });
+    expect(await bodyOf(posts(view.requests, "/messages")[0])).toEqual({
+      text: "first\nsecond",
+    });
+  });
+
+  it("posts an attached file with the message and lists it while it sends (AC-419.7, AC-419.10)", async () => {
+    const view = renderChat(routes({ [`POST ${SESSION}/messages`]: { seq: 4 } }));
+    await screen.findByText("Starting.");
+    const box = screen.getByRole("textbox", { name: "Message Claude" });
+    expect(screen.getByRole("button", { name: "Attach a file" })).toBeEnabled();
+
+    fireEvent.paste(box, {
+      clipboardData: { files: [new File(["# Brief"], "brief.md", { type: "text/markdown" })] },
+    });
+    await screen.findByRole("button", { name: "Remove brief.md" });
+    await userEvent.type(box, "Read it.{Enter}");
+
+    await waitFor(() => {
+      expect(posts(view.requests, "/messages")).toHaveLength(1);
+    });
+    expect(await bodyOf(posts(view.requests, "/messages")[0])).toEqual({
+      text: "Read it.",
+      files: [{ name: "brief.md", media_type: "text/plain", data: btoa("# Brief") }],
+    });
+    const sent = await screen.findByRole("list", { name: "Files sent with this message" });
+    expect(within(sent).getByText("brief.md")).toBeInTheDocument();
+  });
+
+  it("offers no Attach in a cloud session (AC-419.7)", async () => {
+    renderChat(
+      routes({ [SESSION]: anAgentSession({ status: "idle", kind: "cloud", last_seq: 3 }) }),
+    );
+    await screen.findByText("Starting.");
+
+    expect(screen.queryByRole("button", { name: "Attach a file" })).toBeNull();
+  });
+
+  it("AC-681.4 AC-681.9 shows the session's effort and Ultracode on the model pill and in its menu", async () => {
+    renderChat(
+      routes({
+        [SESSION]: anAgentSession({ status: "idle", last_seq: 3, effort: "high", ultracode: true }),
+      }),
+    );
+    await screen.findByText("Starting.");
+    const pill = screen.getByRole("button", { name: /^Model and effort/ });
+
+    expect(pill).toHaveAccessibleName(/, High, Ultracode$/);
+    expect(pill).toHaveTextContent("High");
+    await userEvent.click(pill);
+    await userEvent.click(screen.getByRole("menuitem", { name: /Effort/ }));
+
+    expect(screen.getByRole("menuitemradio", { name: /^High/ })).toBeChecked();
+    expect(screen.getByRole("menuitemcheckbox", { name: "Ultracode" })).toBeChecked();
+  });
+
+  it("AC-681.10 lists Fable in the model menu when the capabilities cannot be read", async () => {
+    renderChat(
+      routes({
+        "/api/v1/agent-sessions/capabilities": aProblem({ status: 500, title: "Server error" }),
+      }),
+    );
+    await screen.findByText("Starting.");
+
+    await userEvent.click(screen.getByRole("button", { name: /^Model and effort/ }));
+
+    expect(screen.getByRole("menuitemradio", { name: "Fable" })).toBeInTheDocument();
+  });
+
+  it("focuses the composer on open", async () => {
+    renderChat();
+
+    expect(await screen.findByRole("textbox", { name: "Message Claude" })).toHaveFocus();
+  });
+
+  it("leaves focus alone on open while a permission is pending", async () => {
+    renderChat(
+      routes({
+        [SESSION]: anAgentSession({
+          status: "waiting_permission",
+          open_permission: aPermissionRequest({ request_id: "req-2", summary: "ls" }),
+        }),
+      }),
+    );
+
+    await screen.findByRole("region", { name: /Claude wants to use Bash/ });
+    expect(screen.getByRole("textbox", { name: "Message Claude" })).not.toHaveFocus();
+  });
+
+  it("interrupts with an empty JSON body only while a turn runs", async () => {
+    const view = renderChat(
+      routes({ [`POST ${SESSION}/interrupt`]: anAgentSession({ status: "idle" }) }),
+    );
+    await screen.findByText("Starting.");
+
+    await userEvent.click(screen.getByRole("button", { name: "Stop" }));
+
+    await waitFor(() => {
+      expect(posts(view.requests, "/interrupt")).toHaveLength(1);
+    });
+    const sent = posts(view.requests, "/interrupt")[0];
+    expect(sent?.headers.get("content-type")).toContain("application/json");
+    expect(await bodyOf(sent)).toEqual({});
+
+    act(() => {
+      view.stream(STREAM).emit("status", { status: "idle" });
+    });
+    expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
+  });
+
+  it("stops on Esc in the empty composer and notes the interrupted turn after its result", async () => {
+    const view = renderChat(
+      routes({ [`POST ${SESSION}/interrupt`]: anAgentSession({ status: "running" }) }),
+    );
+    await screen.findByText("Starting.");
+
+    await userEvent.type(screen.getByRole("textbox", { name: "Message Claude" }), "{Escape}");
+    await waitFor(() => {
+      expect(posts(view.requests, "/interrupt")).toHaveLength(1);
+    });
+    act(() => {
+      const source = view.stream(STREAM);
+      source.emit("record.interrupt", aLogRecord("interrupt", { seq: 4 }), "4");
+      source.emit("record.result", aLogRecord("result", { seq: 5 }), "5");
+    });
+
+    expect(screen.getByText("Turn interrupted")).toBeInTheDocument();
+  });
+
+  it("posts settings when the mode or the model changes", async () => {
+    const view = renderChat(
+      routes({ [`POST ${SESSION}/settings`]: anAgentSession({ status: "running" }) }),
+    );
+    await screen.findByText("Starting.");
+
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Mode" }), "plan");
+    await userEvent.click(screen.getByRole("button", { name: /^Model and effort/ }));
+    await userEvent.click(screen.getByRole("menuitemradio", { name: "Opus" }));
+    await userEvent.click(screen.getByRole("button", { name: /^Model and effort/ }));
+    await userEvent.click(screen.getByRole("menuitem", { name: /Effort/ }));
+    await userEvent.click(screen.getByRole("menuitemradio", { name: /^High/ }));
+
+    await waitFor(() => {
+      expect(posts(view.requests, "/settings")).toHaveLength(3);
+    });
+    const [mode, model, effort] = posts(view.requests, "/settings");
+    expect(await bodyOf(mode)).toEqual({ mode: "plan" });
+    expect(await bodyOf(model)).toEqual({ model: "opus" });
+    expect(await bodyOf(effort)).toEqual({ effort: "high" });
+    window.localStorage.removeItem("ah.session.effort");
+  });
+
+  it("shows the reconnect banner while the stream is lost and hides it once it resumes", async () => {
+    const view = renderChat();
+    await screen.findByText("Starting.");
+    const source = view.stream(STREAM);
+    act(() => {
+      source.open();
+    });
+    expect(screen.queryByText(/Connection to this session lost/)).toBeNull();
+
+    act(() => {
+      source.fail();
+    });
+    expect(screen.getByText(/Connection to this session lost/)).toBeInTheDocument();
+
+    act(() => {
+      source.open();
+    });
+    expect(screen.queryByText(/Connection to this session lost/)).toBeNull();
+  });
+
+  it("has a polite live region and no serious axe violation (a11y)", async () => {
+    const view = renderChat();
+    await screen.findByText("Starting.");
+
+    expect(screen.getByRole("log", { name: "Conversation" })).toHaveAttribute(
+      "aria-live",
+      "polite",
+    );
+    expect(await seriousViolations(view.container)).toEqual([]);
+  });
+});
+
+describe("AgentSessionScreen (chat-shortcuts)", () => {
+  /** Two requests wait: req-1 (the log's, older) and req-2 (the snapshot's). */
+  function twoPending(overrides: ApiRoutes = {}) {
+    return renderChat(
+      routes({
+        [SESSION]: anAgentSession({
+          status: "waiting_permission",
+          last_seq: 4,
+          open_permission: aPermissionRequest({ request_id: "req-2", summary: "ls" }),
+        }),
+        [EVENTS]: {
+          items: [...log(), aLogRecord("permission.request", { seq: 4 })],
+          next_after: null,
+        },
+        [`POST ${SESSION}/permissions/req-1`]: anAgentSession({ status: "running" }),
+        [`POST ${SESSION}/permissions/req-2`]: anAgentSession({ status: "running" }),
+        ...overrides,
+      }),
+    );
+  }
+  const cards = () => screen.findAllByRole("region", { name: /Claude wants to use Bash/ });
+  const box = () => screen.getByRole("textbox", { name: "Message Claude" });
+
+  it("allows the oldest pending request once with Ctrl+Alt+Enter, even from the composer", async () => {
+    const view = twoPending();
+    await cards();
+    await userEvent.type(box(), "for later");
+
+    const notPrevented = fireEvent.keyDown(box(), { key: "Enter", ctrlKey: true, altKey: true });
+
+    expect(notPrevented).toBe(false);
+    await waitFor(() => {
+      expect(posts(view.requests, "/permissions/req-1")).toHaveLength(1);
+    });
+    expect(await bodyOf(posts(view.requests, "/permissions/req-1")[0])).toEqual({
+      decision: "allow",
+    });
+    expect(posts(view.requests, "/permissions/req-2")).toHaveLength(0);
+    expect(posts(view.requests, "/messages")).toHaveLength(0);
+    expect(box()).toHaveValue("for later");
+  });
+
+  it("denies the oldest pending request with Cmd+Alt+Backspace", async () => {
+    const view = twoPending();
+    await cards();
+
+    fireEvent.keyDown(document.body, { key: "Backspace", metaKey: true, altKey: true });
+
+    await waitFor(() => {
+      expect(posts(view.requests, "/permissions/req-1")).toHaveLength(1);
+    });
+    expect(await bodyOf(posts(view.requests, "/permissions/req-1")[0])).toEqual({
+      decision: "deny",
+    });
+  });
+
+  it("leaves the chords alone when nothing is pending, or without both modifiers", async () => {
+    const view = renderChat();
+    await screen.findByText("Starting.");
+
+    expect(fireEvent.keyDown(box(), { key: "Enter", ctrlKey: true, altKey: true })).toBe(true);
+    expect(fireEvent.keyDown(box(), { key: "Backspace", metaKey: true, altKey: true })).toBe(true);
+    expect(view.requests.filter((r) => r.method === "POST")).toHaveLength(0);
+
+    const pending = twoPending();
+    await cards();
+    fireEvent.keyDown(document.body, { key: "Enter", altKey: true });
+    fireEvent.keyDown(document.body, { key: "Backspace", ctrlKey: true });
+    expect(pending.requests.filter((r) => r.method === "POST")).toHaveLength(0);
+  });
+
+  it("names the chords on the oldest card's buttons only", async () => {
+    twoPending();
+    const [oldest, newer] = await cards();
+    if (!oldest || !newer) throw new Error("two cards expected");
+
+    expect(within(oldest).getByRole("button", { name: "Allow once" })).toHaveAttribute(
+      "aria-keyshortcuts",
+      "Control+Alt+Enter Meta+Alt+Enter",
+    );
+    expect(within(oldest).getByRole("button", { name: "Deny" })).toHaveAttribute(
+      "aria-keyshortcuts",
+      "Control+Alt+Backspace Meta+Alt+Backspace",
+    );
+    expect(within(newer).getByRole("button", { name: "Allow once" })).not.toHaveAttribute(
+      "aria-keyshortcuts",
+    );
+  });
+
+  it("answers the focused card with a and d, never from a field inside it", async () => {
+    const view = twoPending();
+    const [, newer] = await cards();
+    if (!newer) throw new Error("two cards expected");
+
+    const message = within(newer).getByLabelText("Message to Claude if you deny (optional)");
+    await userEvent.type(message, "ad");
+    expect(posts(view.requests, "/permissions/req-2")).toHaveLength(0);
+    await userEvent.clear(message);
+
+    newer.focus();
+    await userEvent.keyboard("d");
+
+    await waitFor(() => {
+      expect(posts(view.requests, "/permissions/req-2")).toHaveLength(1);
+    });
+    expect(await bodyOf(posts(view.requests, "/permissions/req-2")[0])).toEqual({
+      decision: "deny",
+    });
+    expect(posts(view.requests, "/permissions/req-1")).toHaveLength(0);
+  });
+
+  it("allows the focused card with a", async () => {
+    const view = twoPending();
+    const [oldest] = await cards();
+    oldest?.focus();
+
+    await userEvent.keyboard("a");
+
+    await waitFor(() => {
+      expect(posts(view.requests, "/permissions/req-1")).toHaveLength(1);
+    });
+    expect(await bodyOf(posts(view.requests, "/permissions/req-1")[0])).toEqual({
+      decision: "allow",
+    });
+  });
+
+  it("leaves the chords to the open command palette", async () => {
+    const view = renderWithApi(
+      <AppShell>
+        <AgentSessionScreen />
+      </AppShell>,
+      {
+        routes: {
+          ...routes({
+            [SESSION]: anAgentSession({
+              status: "waiting_permission",
+              last_seq: 3,
+              open_permission: aPermissionRequest({ request_id: "req-2" }),
+            }),
+            [`POST ${SESSION}/permissions/req-2`]: anAgentSession({ status: "running" }),
+          }),
+          "/api/v1/projects": aPage([aProjectSummary()]),
+        },
+        path: `/agent-sessions/${ID}`,
+        route: "/agent-sessions/:agentSessionId",
+      },
+    );
+    await cards();
+    fireEvent.keyDown(document.body, { key: "k", ctrlKey: true });
+    const palette = screen.getByRole("dialog", { name: "Command palette" });
+    const input = within(palette).getByRole("combobox");
+
+    fireEvent.keyDown(input, { key: "Backspace", metaKey: true, altKey: true });
+    await act(() => Promise.resolve());
+
+    expect(posts(view.requests, "/permissions/req-2")).toHaveLength(0);
+  });
+
+  it("leaves Ctrl+Alt+Enter to the open slash menu", async () => {
+    const view = twoPending();
+    await cards();
+    await userEvent.type(box(), "/");
+    expect(screen.getByRole("listbox", { name: "Commands" })).toBeInTheDocument();
+
+    fireEvent.keyDown(box(), { key: "Enter", ctrlKey: true, altKey: true });
+    await act(() => Promise.resolve());
+
+    expect(posts(view.requests, "/permissions/req-1")).toHaveLength(0);
+  });
+
+  it("ignores a repeated or composing chord", async () => {
+    const view = twoPending();
+    await cards();
+
+    fireEvent.keyDown(document.body, { key: "Enter", ctrlKey: true, altKey: true, repeat: true });
+    fireEvent.keyDown(document.body, {
+      key: "Backspace",
+      metaKey: true,
+      altKey: true,
+      isComposing: true,
+    });
+    await act(() => Promise.resolve());
+
+    expect(view.requests.filter((r) => r.method === "POST")).toHaveLength(0);
+  });
+
+  it.each([
+    ["plan_approval", "ExitPlanMode", "Claude finished a plan", "Keep planning"],
+    ["ask_user_question", "AskUserQuestion", "Claude has a question", "Skip question"],
+  ] as const)("answers a %s card neither by chord nor by d", async (kind, tool, name, deny) => {
+    const view = renderChat(
+      routes({
+        [SESSION]: anAgentSession({
+          status: "waiting_permission",
+          last_seq: 3,
+          open_permission: aPermissionRequest({
+            request_id: "req-k",
+            request_kind: kind,
+            tool,
+            summary: "Asked",
+            suggestions: [],
+            input: { plan: "## Plan", questions: [{ question: "Which?", options: [] }] },
+          }),
+        }),
+        [`POST ${SESSION}/permissions/req-k`]: anAgentSession({ status: "running" }),
+      }),
+    );
+    const card = await screen.findByRole("region", { name });
+    expect(within(card).getByRole("button", { name: deny })).not.toHaveAttribute(
+      "aria-keyshortcuts",
+    );
+
+    fireEvent.keyDown(document.body, { key: "Backspace", ctrlKey: true, altKey: true });
+    fireEvent.keyDown(document.body, { key: "Enter", metaKey: true, altKey: true });
+    card.focus();
+    fireEvent.keyDown(card, { key: "d" });
+    fireEvent.keyDown(card, { key: "a" });
+    await act(() => Promise.resolve());
+
+    expect(posts(view.requests, "/permissions/req-k")).toHaveLength(0);
+  });
+
+  it("allows the oldest pending tool permission past an older question card", async () => {
+    const view = renderChat(
+      routes({
+        [SESSION]: anAgentSession({
+          status: "waiting_permission",
+          last_seq: 4,
+          open_permission: aPermissionRequest({ request_id: "req-2", summary: "ls" }),
+        }),
+        [EVENTS]: {
+          items: [
+            ...log(),
+            aLogRecord("permission.request", {
+              seq: 4,
+              body: {
+                request_id: "req-q",
+                request_kind: "ask_user_question",
+                tool: "AskUserQuestion",
+                input: { questions: [{ question: "Which?", options: [] }] },
+              },
+            }),
+          ],
+          next_after: null,
+        },
+        [`POST ${SESSION}/permissions/req-q`]: anAgentSession({ status: "running" }),
+        [`POST ${SESSION}/permissions/req-2`]: anAgentSession({ status: "running" }),
+      }),
+    );
+    await screen.findByRole("region", { name: /Claude wants to use Bash/ });
+
+    fireEvent.keyDown(document.body, { key: "Enter", ctrlKey: true, altKey: true });
+
+    await waitFor(() => {
+      expect(posts(view.requests, "/permissions/req-2")).toHaveLength(1);
+    });
+    expect(posts(view.requests, "/permissions/req-q")).toHaveLength(0);
+  });
+
+  it("focuses the composer on Shift+Esc without stopping the turn", async () => {
+    const view = twoPending({ [`POST ${SESSION}/interrupt`]: anAgentSession({ status: "idle" }) });
+    const [oldest] = await cards();
+    oldest?.focus();
+
+    await userEvent.keyboard("{Shift>}{Escape}{/Shift}");
+    expect(box()).toHaveFocus();
+    await userEvent.keyboard("{Shift>}{Escape}{/Shift}");
+
+    expect(box()).toHaveFocus();
+    expect(posts(view.requests, "/interrupt")).toHaveLength(0);
+  });
+
+  it("recalls the last prompt with ArrowUp in an empty composer only", async () => {
+    renderChat();
+    await screen.findByText("Starting.");
+
+    await userEvent.type(box(), "draft{ArrowUp}");
+    expect(box()).toHaveValue("draft");
+
+    await userEvent.clear(box());
+    await userEvent.keyboard("{ArrowUp}");
+    expect(box()).toHaveValue("Run the tests.");
+  });
+
+  it("keeps focus in a composer holding text when a request arrives", async () => {
+    const view = renderChat();
+    await screen.findByText("Starting.");
+    await userEvent.type(box(), "half a thought");
+
+    act(() => {
+      view
+        .stream(STREAM)
+        .emit("record.permission.request", aLogRecord("permission.request", { seq: 4 }), "4");
+    });
+
+    expect(await screen.findByRole("region", { name: /Claude wants to use Bash/ })).toBeVisible();
+    expect(box()).toHaveFocus();
+  });
+
+  it("moves focus to a request that arrives while the composer is empty", async () => {
+    const view = renderChat();
+    await screen.findByText("Starting.");
+    expect(box()).toHaveFocus();
+
+    act(() => {
+      view
+        .stream(STREAM)
+        .emit("record.permission.request", aLogRecord("permission.request", { seq: 4 }), "4");
+    });
+
+    expect(await screen.findByRole("region", { name: /Claude wants to use Bash/ })).toHaveFocus();
+  });
+});
+
+describe("AgentSessionScreen (steps-drawer)", () => {
+  const drawer = () => screen.queryByRole("complementary", { name: "Steps" });
+  const box = () => screen.getByRole("textbox", { name: "Message Claude" });
+
+  it("AC-PG-32.1: the live bar sits above the composer while the turn runs", async () => {
+    renderChat();
+    const bar = await screen.findByRole("region", { name: "Live activity" });
+    const composer = await screen.findByRole("textbox", { name: "Message Claude" });
+    expect(bar.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("AC-PG-32.2: Ctrl+Alt+. and Cmd+Alt+. open and close Steps, from anywhere on the page", async () => {
+    renderChat();
+    await screen.findByText("Starting.");
+    expect(drawer()).toBeNull();
+
+    fireEvent.keyDown(document.body, { key: "≥", code: "Period", ctrlKey: true, altKey: true });
+    expect(drawer()).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Steps" })).toHaveFocus();
+
+    fireEvent.keyDown(document.body, { key: "≥", code: "Period", metaKey: true, altKey: true });
+    expect(drawer()).toBeNull();
+    // Without both modifiers, the key is left alone.
+    fireEvent.keyDown(document.body, { key: ".", code: "Period", altKey: true });
+    expect(drawer()).toBeNull();
+  });
+
+  it("AC-PG-32.2, AC-422.13: the live bar opens Steps, and the open state is remembered", async () => {
+    renderChat();
+    const bar = within(await screen.findByRole("region", { name: "Live activity" })).getByRole(
+      "button",
+    );
+    expect(screen.queryByRole("button", { name: /^Steps, \d+, turn running$/ })).toBeNull();
+    await userEvent.click(bar);
+    expect(drawer()).toBeInTheDocument();
+    expect(window.localStorage.getItem("ah.chat.steps")).toBe("open");
+
+    await userEvent.click(
+      within(screen.getByRole("complementary", { name: "Steps" })).getByRole("button", {
+        name: "Close",
+      }),
+    );
+    expect(drawer()).toBeNull();
+    expect(window.localStorage.getItem("ah.chat.steps")).toBe("closed");
+
+    await userEvent.click(
+      within(screen.getByRole("region", { name: "Live activity" })).getByRole("button"),
+    );
+    expect(drawer()).toBeInTheDocument();
+    expect(window.localStorage.getItem("ah.chat.steps")).toBe("open");
+  });
+
+  it("AC-423.1, AC-423.2, AC-423.3: a click outside closes Steps, which stays closed on the next load", async () => {
+    window.localStorage.setItem("ah.chat.steps", "open");
+    const first = renderChat();
+    await screen.findByText("Starting.");
+    expect(drawer()).toBeInTheDocument();
+
+    // Inside the drawer, or on something with its own action (the composer), it stays open.
+    await userEvent.click(screen.getByRole("heading", { name: "Steps" }));
+    await userEvent.click(box());
+    expect(drawer()).toBeInTheDocument();
+
+    await userEvent.click(screen.getByText("Starting."));
+    expect(drawer()).toBeNull();
+    expect(window.localStorage.getItem("ah.chat.steps")).toBe("closed");
+
+    first.unmount();
+    renderChat();
+    await screen.findByText("Starting.");
+    expect(drawer()).toBeNull();
+  });
+
+  it("AC-PG-32.2, AC-PG-32.4: left open, Steps reopens on load and leaves the keyboard in the composer", async () => {
+    window.localStorage.setItem("ah.chat.steps", "open");
+    renderChat();
+    await screen.findByText("Starting.");
+    expect(drawer()).toBeInTheDocument();
+    await waitFor(() => {
+      expect(box()).toHaveFocus();
+    });
+  });
+});
+
+describe("AgentSessionScreen (axe)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    scrolled.top = 0;
+  });
+
+  /** The log, named by its visually hidden h2, and no serious axe violation in the page. */
+  async function accessible(container: Element, busy: boolean) {
+    const conversation = screen.getByRole("log", { name: "Conversation" });
+    const heading = screen.getByRole("heading", { level: 2, name: "Conversation" });
+    expect(heading).toHaveClass("ah-sr");
+    expect(conversation).toHaveAttribute("aria-labelledby", heading.id);
+    expect(conversation).toHaveAttribute("aria-busy", String(busy));
+    expect(await seriousViolations(container)).toEqual([]);
+  }
+
+  it("is accessible when empty", async () => {
+    const view = renderChat(
+      routes({
+        [SESSION]: anAgentSession({ status: "idle", last_seq: 0 }),
+        [EVENTS]: { items: [], next_after: null },
+      }),
+    );
+    await screen.findByText(/No messages yet/);
+    await accessible(view.container, false);
+  });
+
+  it("is accessible while a block streams", async () => {
+    const runFrame = manualFrames();
+    const view = renderChat();
+    await screen.findByText("Starting.");
+    act(() => {
+      view.stream(STREAM).open();
+      view
+        .stream(STREAM)
+        .emit("delta", aDeltaFrame({ after_seq: 3, block: 1, text: "Hel" }), "3.0");
+    });
+    runFrame();
+    expect(screen.getAllByRole("article", { name: "Claude" })[1]).toHaveTextContent("Hel");
+    await accessible(view.container, true);
+  });
+
+  it("is accessible while a permission waits", async () => {
+    const view = renderChat(
+      routes({
+        [SESSION]: anAgentSession({
+          status: "waiting_permission",
+          open_permission: aPermissionRequest(),
+        }),
+      }),
+    );
+    await screen.findByRole("region", { name: /Claude wants to use Bash/ });
+    await accessible(view.container, false);
+  });
+
+  it("is accessible when detached, with the jump button", async () => {
+    stubScrolling();
+    const view = renderChat();
+    const conversation = await screen.findByRole("log", { name: "Conversation" });
+    const scroller = conversation.closest(".as-scroll");
+    if (!scroller) throw new Error("no scroller");
+    await waitFor(() => {
+      expect(scrolled.top).toBe(600);
+    });
+    scrollUp(scroller);
+    expect(screen.getByRole("button", { name: "Jump to latest" })).toBeVisible();
+    await accessible(view.container, false);
+  });
+
+  it("is accessible with the slash menu open", async () => {
+    const view = renderChat();
+    await screen.findByText("Starting.");
+    await userEvent.type(screen.getByRole("textbox", { name: "Message Claude" }), "/");
+    expect(screen.getByRole("option", { name: "/feature" })).toBeVisible();
+    await accessible(view.container, false);
+  });
+
+  it("is accessible once ended", async () => {
+    const view = renderChat(
+      routes({ [SESSION]: anAgentSession({ status: "ended", end_reason: "closed" }) }),
+    );
+    await screen.findByText(/Ended · closed/);
+    await accessible(view.container, false);
+  });
+
+  it("opens the activity and changed-files panels as drawers over the chat that never move it (AC-265.5)", () => {
+    const css = readFileSync(
+      join(process.cwd(), "src/screens/agent-session/agent-session.css"),
+      "utf8",
+    );
+    const rule = (selector: string) =>
+      new RegExp(`(?:^|\\n)${selector.replace(/[.()>:]/g, "\\$&")} \\{([^}]*)\\}`).exec(css)?.[1] ??
+      "";
+    expect(rule(".as-page:has(> .as-body-panel)")).toContain(
+      "grid-template-columns: minmax(0, 1fr);",
+    );
+    const panel = rule(".as-drawer");
+    expect(panel).toContain("grid-area: 1 / 1 / -1 / -1;");
+    expect(panel).toContain("justify-self: end;");
+    expect(panel).toContain("width: var(--as-panel-w);");
+  });
+
+  it("animates no caret or working dot under reduced motion", () => {
+    const css = readFileSync(
+      join(process.cwd(), "src/screens/agent-session/agent-session.css"),
+      "utf8",
+    );
+    const animated = [...css.matchAll(/([^{}]+)\{[^{}]*\banimation:(?!\s*none)[^;]+;/g)].map(
+      (match) => match[1]?.trim(),
+    );
+    expect(animated).toEqual([
+      ".as-caret",
+      ".as-working::before",
+      ".as-spin",
+      ".as-drawer",
+      ".as-live-pulse",
+      ".as-feed-running > .as-feed-call .as-feed-mark",
+    ]);
+    const reduced =
+      /@media \(prefers-reduced-motion: reduce\) \{\s*([^{]+)\{\s*animation: none;/.exec(css);
+    expect(reduced?.[1]?.split(",").map((selector) => selector.trim())).toEqual(animated);
+  });
+});
+
+describe("AgentSessionScreen (sending-feedback)", () => {
+  it("shows Sending… until the echoed record, which reads Queued while the turn runs", async () => {
+    const view = renderChat(routes({ [`POST ${SESSION}/messages`]: { seq: 4 } }));
+    const box = await screen.findByRole("textbox", { name: "Message Claude" });
+
+    await userEvent.type(box, "Also lint{Enter}");
+
+    const log = screen.getByRole("log", { name: "Conversation" });
+    const bubble = { selector: ".as-msg *" };
+    expect(within(log).queryByText("Also lint")).toBeNull();
+    expect(screen.getByText("Also lint", bubble).closest(".as-msg")).toHaveTextContent("Sending…");
+    await waitFor(() => {
+      expect(posts(view.requests, "/messages")).toHaveLength(1);
+    });
+    act(() => {
+      view
+        .stream(STREAM)
+        .emit(
+          "record.user.message",
+          aLogRecord("user.message", { seq: 4, body: { text: "Also lint" } }),
+          "4",
+        );
+    });
+    expect(screen.getAllByText("Also lint", bubble)).toHaveLength(1);
+    expect(screen.queryByText("Sending…", bubble)).toBeNull();
+    expect(within(log).getByText("Also lint").closest(".as-msg")).toHaveTextContent(
+      "Queued: Claude reads it after this turn",
+    );
+  });
+
+  it("shows a message once when its record arrives before the answer to its POST", async () => {
+    const view = renderChat(routes({ [`POST ${SESSION}/messages`]: "pending" }));
+    const box = await screen.findByRole("textbox", { name: "Message Claude" });
+
+    await userEvent.type(box, "Also lint{Enter}");
+    await waitFor(() => {
+      expect(posts(view.requests, "/messages")).toHaveLength(1);
+    });
+    act(() => {
+      view
+        .stream(STREAM)
+        .emit(
+          "record.user.message",
+          aLogRecord("user.message", { seq: 4, body: { text: "Also lint" } }),
+          "4",
+        );
+    });
+
+    const bubbles = [...view.container.querySelectorAll(".as-msg")];
+    expect(bubbles.filter((bubble) => bubble.textContent.includes("Also lint"))).toHaveLength(1);
+    expect(bubbles.filter((bubble) => bubble.textContent.includes("Sending…"))).toEqual([]);
+  });
+
+  it("removes the Sending… bubble and keeps the text when the send fails", async () => {
+    renderChat(routes({ [`POST ${SESSION}/messages`]: aProblem({ status: 409, title: "Busy" }) }));
+    const box = await screen.findByRole("textbox", { name: "Message Claude" });
+
+    await userEvent.type(box, "Also lint{Enter}");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Busy");
+    expect(screen.queryByText("Sending…")).toBeNull();
+    expect(box).toHaveValue("Also lint");
+  });
+});
+
+describe("AgentSessionScreen (unavailable)", () => {
+  it("tells the user to open the token link once when the cookie is missing", async () => {
+    renderChat(
+      routes({
+        [SESSION]: aProblem({ status: 401, title: "Session control is locked" }),
+        [EVENTS]: aProblem({ status: 401, title: "Session control is locked" }),
+      }),
+    );
+
+    expect(await screen.findByText(/it ends with \?token=/)).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Message Claude" })).toBeNull();
+  });
+
+  it("says session control is off in the container", async () => {
+    const off = aProblem({
+      status: 404,
+      title: "Session control is off",
+      type: "urn:agent-hub:problem:agent-sessions-off",
+    });
+    renderChat(routes({ [SESSION]: off, [EVENTS]: off }));
+
+    expect(await screen.findByText(/off in the container/)).toBeInTheDocument();
+  });
+
+  it("says the session does not exist when it is unknown", async () => {
+    const missing = aProblem({ status: 404, title: "Agent session not found" });
+    renderChat(routes({ [SESSION]: missing, [EVENTS]: missing }));
+
+    expect(await screen.findByText("Agent session not found")).toBeInTheDocument();
+  });
+});
+
+describe("AgentSessionScreen (changed-files)", () => {
+  it("opens the files Claude changed in a drawer, which a run line swaps for its activity (AC-265.7, AC-265.13)", async () => {
+    renderChat(
+      routes({
+        [EVENTS]: {
+          items: [...log(), aLogRecord("tool.call", { seq: 4 })],
+          next_after: null,
+        },
+      }),
+    );
+
+    const button = await screen.findByRole("button", { name: /^Review changes:/ });
+    expect(button).toHaveAccessibleName(
+      "Review changes: 1 file, 1 lines added, 1 removed, 1 to review",
+    );
+    expect(button).toHaveTextContent("Review changes+1−1· 1 to review");
+    await userEvent.click(button);
+
+    const panel = screen.getByRole("complementary", { name: "Changed files" });
+    await userEvent.click(within(panel).getByRole("button", { name: /app\.py/ }));
+    expect(within(panel).getByRole("region", { name: "src/app.py" })).toBeInTheDocument();
+    expect(button).toHaveAttribute("aria-expanded", "true");
+
+    await userEvent.click(screen.getByRole("button", { name: /^Edit/ }));
+    expect(screen.queryByRole("complementary", { name: "Changed files" })).toBeNull();
+    expect(screen.getByRole("complementary", { name: "Activity" })).toBeInTheDocument();
+  });
+
+  it("AC-423.1: a click on the conversation outside them closes the review and the Activity drawers", async () => {
+    renderChat(
+      routes({
+        [EVENTS]: {
+          items: [...log(), aLogRecord("tool.call", { seq: 4 })],
+          next_after: null,
+        },
+      }),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: /^Review changes:/ }));
+    expect(screen.getByRole("complementary", { name: "Changed files" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByText("Starting."));
+    expect(screen.queryByRole("complementary", { name: "Changed files" })).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: /^Edit/ }));
+    expect(screen.getByRole("complementary", { name: "Activity" })).toBeInTheDocument();
+    await userEvent.click(screen.getByText("Starting."));
+    expect(screen.queryByRole("complementary", { name: "Activity" })).toBeNull();
+  });
+});
+
+describe("AgentSessionScreen (run-files-card)", () => {
+  it("shows the files a turn edited under its line, each opening the review on that file (AC-265.11)", async () => {
+    renderChat(
+      routes({
+        [EVENTS]: {
+          items: [...log(), aLogRecord("tool.call", { seq: 4 })],
+          next_after: null,
+        },
+      }),
+    );
+
+    const card = await screen.findByRole("region", { name: "Files edited in this turn" });
+    expect(within(card).getByText("Edited 1 file")).toBeInTheDocument();
+
+    await userEvent.click(
+      within(card).getByRole("button", { name: "Open src/app.py, modified, +1 −1, not viewed" }),
+    );
+
+    const panel = screen.getByRole("complementary", { name: "Changed files" });
+    const file = within(panel).getByRole("region", { name: "src/app.py" });
+    expect(file).toHaveFocus();
+
+    await userEvent.click(within(file).getByRole("checkbox", { name: "Viewed" }));
+    expect(
+      within(card).getByRole("button", { name: "Open src/app.py, modified, +1 −1, viewed" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Review changes:/ })).toHaveAccessibleName(
+      "Review changes: 1 file, 1 lines added, 1 removed, all reviewed",
+    );
+  });
+});
+
+describe("AgentSessionScreen (review-comments)", () => {
+  it("sends a comment on a changed line to the session's Claude, as a message of the chat (AC-265.16)", async () => {
+    const user = userEvent.setup();
+    const view = renderChat(
+      routes({
+        [EVENTS]: {
+          items: [...log(), aLogRecord("tool.call", { seq: 4 })],
+          next_after: null,
+        },
+        [`POST ${SESSION}/messages`]: { seq: 5 },
+      }),
+    );
+
+    const card = await screen.findByRole("region", { name: "Files edited in this turn" });
+    await user.click(within(card).getByRole("button", { name: /^Open src\/app\.py/ }));
+    const panel = screen.getByRole("complementary", { name: "Changed files" });
+    await user.click(within(panel).getByRole("button", { name: "Comment on diff line 3" }));
+    await user.type(
+      within(panel).getByRole("textbox", { name: "Comment on Diff line 3" }),
+      "Why 2?{Control>}{Enter}{/Control}",
+    );
+
+    await waitFor(() => {
+      expect(posts(view.requests, "/messages")).toHaveLength(1);
+    });
+    expect(await bodyOf(posts(view.requests, "/messages")[0])).toEqual({
+      text: "Review comment on `src/app.py`, change 1, diff lines 3:\n\n```diff\n+a = 2\n```\n\nWhy 2?",
+    });
+    const sending = await within(panel).findByRole("region", {
+      name: "Review thread on Diff line 3",
+    });
+    expect(within(sending).getByText("Why 2?")).toBeInTheDocument();
+  });
+
+  it("keeps the review read-only once the session ended and cannot resume (AC-265.16)", async () => {
+    const user = userEvent.setup();
+    renderChat(
+      routes({
+        [SESSION]: anAgentSession({ status: "ended", end_reason: "log_full" }),
+        [EVENTS]: {
+          items: [...log(), aLogRecord("tool.call", { seq: 4 })],
+          next_after: null,
+        },
+      }),
+    );
+
+    const card = await screen.findByRole("region", { name: "Files edited in this turn" });
+    await user.click(within(card).getByRole("button", { name: /^Open src\/app\.py/ }));
+    const panel = screen.getByRole("complementary", { name: "Changed files" });
+    expect(panel).toHaveTextContent("+a = 2");
+    expect(within(panel).queryByRole("button", { name: /^Comment on/ })).toBeNull();
+  });
+});
+
+describe("AgentSessionScreen (chat-refs)", () => {
+  it("links a ticket Claude names to Linear, never one in your own message", async () => {
+    renderChat(
+      routes({
+        [SESSION]: anAgentSession({ status: "idle", last_seq: 3 }),
+        [EVENTS]: {
+          items: [
+            aLogRecord("init", { seq: 1 }),
+            aLogRecord("user.message", { seq: 2, body: { text: "Where is AGH-7?" } }),
+            aLogRecord("text", { seq: 3, body: { block: 0, text: "Moved AGH-7 to review." } }),
+          ],
+          next_after: null,
+        },
+        "/api/v1/projects/agent-hub": aProjectDetail(),
+        "/api/v1/tracker/linear": {
+          connected: true,
+          source: "settings",
+          account: {
+            name: "Ada Example",
+            email: "ada@example.com",
+            workspace: "Example",
+            url: "https://linear.app/example",
+          },
+          problem: null,
+          problem_kind: null,
+          checked_at: "2026-10-17T12:00:00Z",
+          key_path: "/home/dev/.config/agent-hub/linear-api-key",
+        },
+      }),
+    );
+
+    const link = await screen.findByRole("link", { name: /^AGH-7\b/ });
+    expect(link).toHaveAttribute("href", "https://linear.app/example/issue/AGH-7");
+    expect(screen.getAllByRole("link", { name: /^AGH-7\b/ })).toHaveLength(1);
+    expect(screen.getByText("Where is AGH-7?")).toBeInTheDocument();
+  });
+});
+
+describe("AgentSessionScreen (hub-slash-menu)", () => {
+  it("lists the hub's skills and agents first in the / menu, tagged from the hub", async () => {
+    renderChat(
+      routes({
+        [SESSION]: anAgentSession({ status: "idle", last_seq: 2 }),
+        [EVENTS]: {
+          items: [
+            aLogRecord("init", {
+              seq: 1,
+              body: { slash_commands: ["compact", "hub-workflow:change"] },
+            }),
+            aLogRecord("result", { seq: 2, body: { subtype: "success" } }),
+          ],
+          next_after: null,
+        },
+        "/api/v1/projects/agent-hub/skills": aSkillCatalog({
+          project: "agent-hub",
+          items: [
+            aCatalogItem({ name: "change", description: "Make a small change" }),
+            aCatalogItem({ kind: "agent", name: "researcher", mode: null }),
+          ],
+        }),
+      }),
+    );
+    const box = await screen.findByRole("textbox", { name: "Message Claude" });
+
+    await userEvent.type(box, "/");
+
+    const options = within(screen.getByRole("listbox", { name: "Commands" })).getAllByRole(
+      "option",
+    );
+    expect(options.map((option) => option.querySelector(".as-slash-command")?.textContent)).toEqual(
+      ["/change", "/agent-researcher", "/compact"],
+    );
+    expect(screen.getByRole("option", { name: "/change, from the hub" })).toBeInTheDocument();
+  });
+});
+
+describe("AgentSessionScreen (background-tasks)", () => {
+  const TASK_STOP = `${SESSION}/tasks/t1/stop`;
+  const backgroundLog = () => [
+    aLogRecord("init", { seq: 1 }),
+    aLogRecord("user.message", { seq: 2, body: { text: "Run the checks in the background." } }),
+    aLogRecord("task", {
+      seq: 3,
+      body: {
+        task_id: "t1",
+        status: "running",
+        description: "Rerun the checks",
+        task_type: "local_bash",
+      },
+    }),
+    aLogRecord("result", { seq: 4, body: { subtype: "success" } }),
+  ];
+  const backgroundRoutes = () =>
+    routes({
+      [SESSION]: anAgentSession({ status: "idle", last_seq: 4 }),
+      [EVENTS]: { items: backgroundLog(), next_after: null },
+      [`POST ${TASK_STOP}`]: anAgentSession({ status: "idle", last_seq: 4 }),
+    });
+
+  it("reads an idle session with a task running as at work, and the header chip opens the drawer", async () => {
+    renderChat(backgroundRoutes());
+
+    expect(await screen.findByText("Background · 1 command")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Background tasks, 1 running" }));
+
+    const drawer = screen.getByRole("complementary", { name: "Background tasks" });
+    expect(within(drawer).getByText("Rerun the checks")).toBeInTheDocument();
+  });
+
+  it("AC-423.1: a click outside the Background drawer closes it", async () => {
+    renderChat(backgroundRoutes());
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Background tasks, 1 running" }),
+    );
+    expect(screen.getByRole("complementary", { name: "Background tasks" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByText("Run the checks in the background."));
+
+    expect(screen.queryByRole("complementary", { name: "Background tasks" })).toBeNull();
+  });
+
+  it("stops a running task from the drawer with an empty JSON body", async () => {
+    const view = renderChat(backgroundRoutes());
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Background tasks, 1 running" }),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Stop Rerun the checks" }));
+
+    await waitFor(() => {
+      expect(posts(view.requests, "/tasks/t1/stop")).toHaveLength(1);
+    });
+    expect(await bodyOf(posts(view.requests, "/tasks/t1/stop")[0])).toEqual({});
+  });
+
+  it("lists the task in the live bar between turns, which opens the drawer", async () => {
+    renderChat(backgroundRoutes());
+
+    const bar = await screen.findByRole("region", { name: "Live activity" });
+    expect(bar).toHaveTextContent("Running in the background: 1 command");
+    await userEvent.click(within(bar).getByRole("button"));
+
+    expect(screen.getByRole("complementary", { name: "Background tasks" })).toBeInTheDocument();
+  });
+
+  it("AC-422.16 leaves the running task to the live bar: no second card at the conversation's end", async () => {
+    renderChat(backgroundRoutes());
+
+    await screen.findByRole("region", { name: "Live activity" });
+    expect(screen.queryByRole("button", { name: "1 background command running" })).toBeNull();
+  });
+});
+
+describe("AgentSessionScreen (session-name)", () => {
+  it("names a session on a ticket by the ticket's title and links its feature", async () => {
+    const observed = anId(1, "5091b986");
+    renderChat(
+      routes({
+        [SESSION]: anAgentSession({ observed_session_id: observed, title: "Run the tests" }),
+        [`/api/v1/sessions/${observed}`]: aSession({
+          id: observed,
+          label: aSessionLabel({ issue: "AGH-202", branch: "dev/agh-202-ticket-summaries" }),
+        }),
+        "/api/v1/features": aPage([aFeature({ issues: ["AGH-202"] })]),
+        "/api/v1/features/agent-hub/control-plane/tickets": aFeatureTickets({
+          tickets: [aTicketRow()],
+        }),
+      }),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "AGH-202: Serve the ticket summaries" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /control-plane/ })).toHaveAttribute(
+      "href",
+      "/features/agent-hub/control-plane",
+    );
+  });
+  it("AGH-800 names a session on a ticket of the feature's plan (not in its issues) by the ticket's title, not Claude's", async () => {
+    const observed = anId(1, "5091b986");
+    renderChat(
+      routes({
+        [SESSION]: anAgentSession({ observed_session_id: observed, title: "Unblock the helper" }),
+        [`/api/v1/sessions/${observed}`]: aSession({
+          id: observed,
+          label: aSessionLabel({ issue: "AGH-202", branch: "main", title: "Unblock the helper" }),
+        }),
+        "/api/v1/features": aPage([aFeature({ issues: ["AGH-200"] })]),
+        "/api/v1/features/agent-hub/control-plane/tickets": aFeatureTickets({
+          tickets: [aTicketRow()],
+        }),
+      }),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "AGH-202: Serve the ticket summaries" }),
+    ).toBeInTheDocument();
+  });
+  it("hides the mode switch of a session held to a tool policy (scenario investigation)", async () => {
+    renderChat(routes({ [SESSION]: anAgentSession({ status: "idle", restricted: true }) }));
+
+    expect(await screen.findByRole("button", { name: /^Model and effort/ })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Mode" })).toBeNull();
+  });
+});
+
+describe("AgentSessionScreen (the header as a toolbar and a heading, AGH-422)", () => {
+  it("AC-422.13 names the session by containment, the title on its own line, the facts under it", async () => {
+    renderChat(
+      routes({
+        [SESSION]: anAgentSession({
+          status: "running",
+          last_seq: 3,
+          title: "Fix the CSV export test",
+          observed_session_id: anId(1, "5091b986"),
+        }),
+      }),
+    );
+
+    const crumbs = await screen.findByRole("navigation", { name: "Breadcrumb" });
+    expect(within(crumbs).getByRole("link", { name: "Portfolio" })).toHaveAttribute("href", "/");
+    expect(crumbs).toHaveTextContent(`Session ${ID.slice(0, 8)}`);
+    expect(crumbs).not.toHaveTextContent("Fix the CSV export test");
+    const title = screen.getByRole("heading", { level: 1, name: "Fix the CSV export test" });
+    expect(title).toHaveClass("as-title");
+    // The status and the cost sit under the title, not beside it.
+    const meta = title.nextElementSibling;
+    expect(meta).toHaveClass("as-heading-meta");
+    expect(
+      within(meta as HTMLElement).getByRole("group", { name: "Cost and tokens (estimate)" }),
+    ).toBeInTheDocument();
+  });
+
+  it("AC-422.14 keeps the mode and model on the composer only, and the cost details in the menu", async () => {
+    renderChat(
+      routes({
+        [SESSION]: anAgentSession({
+          status: "running",
+          last_seq: 3,
+          observed_session_id: anId(1, "5091b986"),
+        }),
+      }),
+    );
+    await screen.findByRole("heading", { level: 1 });
+    const header = document.querySelector<HTMLElement>("header.as-header");
+    if (!header) throw new Error("no chat header");
+    expect(within(header).queryByText(/Ask before edits/)).toBeNull();
+
+    await userEvent.click(within(header).getByRole("button", { name: "Session actions" }));
+    expect(screen.getByRole("link", { name: "Open cost details" })).toHaveAttribute(
+      "href",
+      `/sessions/${anId(1, "5091b986")}?tab=cost`,
+    );
+  });
+});
+
+describe("AgentSessionScreen (the sessions rail, AGH-422)", () => {
+  it("AC-422.18 puts the sessions rail beside the chat, the page itself never scrolling", async () => {
+    const { container } = renderChat(
+      routes({ "/api/v1/agent-sessions": { items: [anAgentSession({ status: "running" })] } }),
+    );
+    expect(await screen.findByRole("navigation", { name: "Sessions" })).toBeInTheDocument();
+    const layout = container.querySelector(".as-chat-layout");
+    expect(layout?.firstElementChild).toHaveClass("as-rail");
+    expect(layout?.querySelector(":scope > .as-page")).not.toBeNull();
+  });
+});

@@ -1,0 +1,415 @@
+import json
+import re
+from collections.abc import Iterator
+from typing import Any
+
+from agent_hub.core.hub_config.doctor_rules import MAX_LINES_KEY_LENGTH, MAX_LINES_KEYS
+from agent_hub.core.hub_config.environments import MAX_NAME_CHARS, MAX_VALUE_CHARS, MAX_VALUES
+from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_config.platform_repository import PLATFORM_REPOSITORY_PATTERN
+from agent_hub.core.hub_config.schedules import MAX_START_INPUTS
+from agent_hub.core.hub_config.schema import export_schema_text
+from agent_hub.core.testing.shipped_schemas import read_shipped_schema
+
+COMMENT_KEYS = {"^_": {}}
+
+
+def object_nodes(node: object, path: str = "$") -> Iterator[tuple[str, dict[str, Any]]]:
+    """Every schema node with ``type: object``, with a readable path, root included."""
+    if isinstance(node, list):
+        for index, item in enumerate(node):
+            yield from object_nodes(item, f"{path}[{index}]")
+    elif isinstance(node, dict):
+        if node.get("type") == "object":
+            yield path, node
+        for key, value in node.items():
+            yield from object_nodes(value, f"{path}.{key}")
+
+
+def test_matches_model_export_when_shipped_file_read() -> None:
+    assert read_shipped_schema() == HubConfig.model_json_schema()
+
+
+def test_lists_repo_agents_as_rule_settings_when_schema_shipped() -> None:
+    properties = read_shipped_schema()["$defs"]["DoctorRules"]["properties"]
+
+    assert properties["repos.agents"] == {"$ref": "#/$defs/RuleSettings"}
+    assert list(properties)[-6:] == [
+        "repos.agents",
+        "config.stop_gate",
+        "brain.memory",
+        "sandbox.workflow",
+        "workflows.valid",
+        "items.leftovers",
+    ]
+
+
+def test_lists_items_leftovers_as_rule_settings_when_schema_shipped() -> None:
+    properties = read_shipped_schema()["$defs"]["DoctorRules"]["properties"]
+
+    assert properties["items.leftovers"] == {"$ref": "#/$defs/RuleSettings"}
+
+
+def test_lists_instructions_read_cap_as_rule_settings_when_schema_shipped() -> None:
+    properties = read_shipped_schema()["$defs"]["DoctorRules"]["properties"]
+
+    assert properties["instructions.read_cap"] == {"$ref": "#/$defs/RuleSettings"}
+
+
+def test_lists_workflows_shadow_as_rule_settings_when_schema_shipped() -> None:
+    properties = read_shipped_schema()["$defs"]["DoctorRules"]["properties"]
+
+    assert properties["workflows.shadow"] == {"$ref": "#/$defs/RuleSettings"}
+
+
+def test_lists_workflows_valid_as_rule_settings_when_schema_shipped() -> None:
+    properties = read_shipped_schema()["$defs"]["DoctorRules"]["properties"]
+
+    assert properties["workflows.valid"] == {"$ref": "#/$defs/RuleSettings"}
+
+
+def test_lists_brain_memory_as_rule_settings_when_schema_shipped() -> None:
+    properties = read_shipped_schema()["$defs"]["DoctorRules"]["properties"]
+
+    assert properties["brain.memory"] == {"$ref": "#/$defs/RuleSettings"}
+
+
+def test_describes_guard_infra_when_schema_exported() -> None:
+    schema = read_shipped_schema()
+    definitions = schema["$defs"]
+
+    assert schema["properties"]["guard"] == {"$ref": "#/$defs/Guard"}
+    infra = definitions["Guard"]["properties"]["infra"]
+    assert infra["$ref"] == "#/$defs/GuardInfra"
+    assert set(infra) <= {"$ref", "description"}
+    guard_infra = definitions["GuardInfra"]
+    assert guard_infra["additionalProperties"] is False
+    assert guard_infra["patternProperties"] == COMMENT_KEYS
+    assert "required" not in guard_infra
+    for key in ("allow", "prod_markers"):
+        patterns = guard_infra["properties"][key]
+        assert patterns["type"] == "array", key
+        assert patterns["items"]["type"] == "string", key
+        assert patterns["default"] == [], key
+
+
+def test_describes_tracker_states_when_schema_shipped() -> None:
+    schema = read_shipped_schema()
+    definitions = schema["$defs"]
+
+    assert definitions["Tracker"]["properties"]["states"] == {"$ref": "#/$defs/TrackerStates"}
+    tracker_states = definitions["TrackerStates"]
+    assert tracker_states["additionalProperties"] is False
+    assert tracker_states["patternProperties"] == COMMENT_KEYS
+    assert "required" not in tracker_states
+    for key, default in (("started", "In Progress"), ("review", "In Review")):
+        state = tracker_states["properties"][key]
+        assert state["type"] == "string", key
+        assert state["minLength"] == 1, key
+        assert state["default"] == default, key
+    # The key is optional with defaults, so the schema version does not move.
+    assert schema["properties"]["schema_version"]["const"] == 1
+
+
+def test_lists_sandbox_workflow_as_rule_settings_when_schema_shipped() -> None:
+    properties = read_shipped_schema()["$defs"]["DoctorRules"]["properties"]
+
+    assert properties["sandbox.workflow"] == {"$ref": "#/$defs/RuleSettings"}
+
+
+def test_lists_permissions_writing_as_rule_settings_when_schema_shipped() -> None:
+    properties = read_shipped_schema()["$defs"]["DoctorRules"]["properties"]
+
+    assert properties["permissions.writing"] == {"$ref": "#/$defs/RuleSettings"}
+
+
+# The name-keyed maps of environments.md, by schema path, and the object each name maps to.
+ENVIRONMENT_MAPS = {
+    "$.properties.environments": "#/$defs/Environment",
+    "$.$defs.Repo.properties.services": "#/$defs/Service",
+    "$.$defs.Service.properties.endpoints": "#/$defs/Endpoint",
+}
+
+
+# The run inputs of ``schedules`` and ``events`` (project-config.md), by schema path.
+START_INPUT_MAPS = (
+    "$.$defs.Schedule.properties.inputs",
+    "$.$defs.EventStart.properties.inputs",
+)
+
+
+def test_describes_schedule_inputs_when_schema_exported() -> None:
+    schema = read_shipped_schema()
+
+    assert schema["properties"]["schedules"]["items"] == {"$ref": "#/$defs/Schedule"}
+    assert schema["properties"]["events"]["items"] == {"$ref": "#/$defs/EventStart"}
+    for path in START_INPUT_MAPS:
+        _, _, definition, _, _ = path.split(".")
+        inputs = schema["$defs"][definition]["properties"]["inputs"]
+        assert inputs["propertyNames"] == {"pattern": "^[a-z][a-z0-9_]{0,63}$"}, path
+        assert inputs["maxProperties"] == MAX_START_INPUTS, path
+        assert inputs["patternProperties"] == COMMENT_KEYS, path
+        types = [branch["type"] for branch in inputs["additionalProperties"]["anyOf"]]
+        assert types == ["boolean", "number", "string"], path
+
+
+# An environment's values, which fill scenario inputs (environments.md § Values).
+VALUES_MAP = "$.$defs.Environment.properties.values"
+
+
+def test_describes_environment_values_when_schema_exported() -> None:
+    values = read_shipped_schema()["$defs"]["Environment"]["properties"]["values"]
+
+    assert values["propertyNames"] == {"pattern": "^[a-z][a-z0-9_]{0,63}$"}
+    assert values["maxProperties"] == MAX_VALUES
+    assert values["patternProperties"] == COMMENT_KEYS
+    assert values["additionalProperties"]["type"] == "string"
+    assert values["additionalProperties"]["minLength"] == 1
+    assert values["additionalProperties"]["maxLength"] == MAX_VALUE_CHARS
+
+
+def test_forbids_extra_keys_when_object_has_fixed_keys() -> None:
+    schema = read_shipped_schema()
+    maps: list[tuple[str, dict[str, Any]]] = []
+
+    for path, node in object_nodes(schema):
+        assert node.get("patternProperties") == COMMENT_KEYS, path
+        if "properties" in node:
+            assert node["additionalProperties"] is False, path
+        else:
+            maps.append((path, node))
+
+    # AGH-281: the name-keyed maps of docs/design/environments.md, pinned by
+    # test_describes_environment_maps_when_schema_exported.
+    maps = [(path, node) for path, node in maps if path not in ENVIRONMENT_MAPS]
+    # AGH-481: the run inputs of schedules and events, pinned by
+    # test_describes_schedule_inputs_when_schema_exported.
+    maps = [(path, node) for path, node in maps if path not in START_INPUT_MAPS]
+    # Pinned by test_describes_environment_values_when_schema_exported.
+    maps = [(path, node) for path, node in maps if path != VALUES_MAP]
+    [(path, max_lines)] = maps
+    assert path.endswith(".InstructionsSizeSettings.properties.max_lines")
+    # E30: the model's bounds, pinned by number in test_doctor_rules.py.
+    assert max_lines["propertyNames"] == {"minLength": 1, "maxLength": MAX_LINES_KEY_LENGTH}
+    assert max_lines["maxProperties"] == MAX_LINES_KEYS
+    assert max_lines["additionalProperties"] == {"exclusiveMinimum": 0, "type": "integer"}
+
+
+def test_declares_optional_schema_key_when_root_exported() -> None:
+    schema = read_shipped_schema()
+
+    assert schema["properties"]["$schema"] == {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+    }
+    assert "$schema" not in schema["required"]
+
+
+def test_exports_same_text_when_called_twice() -> None:
+    first = export_schema_text()
+
+    assert export_schema_text() == first
+    assert first.endswith("}\n")
+    assert json.loads(first) == HubConfig.model_json_schema()
+
+
+def test_describes_repo_branch_as_inherited_when_schema_exported() -> None:
+    definitions = read_shipped_schema()["$defs"]
+    repo = definitions["Repo"]
+    project_branch = definitions["Project"]["properties"]["default_branch"]
+
+    branch = repo["properties"]["default_branch"]
+
+    assert "default_branch" not in repo["required"]
+    assert branch["type"] == "string"
+    assert branch["pattern"] == project_branch["pattern"]
+    assert "default" not in branch
+    assert "title" not in branch
+    assert "anyOf" not in branch
+    assert "project.default_branch" in branch["description"]
+
+
+def test_leaves_identity_keys_optional_when_schema_exported() -> None:
+    project = read_shipped_schema()["$defs"]["Project"]
+    patterns = {
+        "branch_prefix": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*/$",
+        "author_name": "^[^\\x00-\\x1f\\x7f]+$",
+        "author_email": "^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$",
+    }
+
+    assert project["required"] == ["name", "hub_repo"]
+    for key, pattern in patterns.items():
+        node = project["properties"][key]
+        assert node["type"] == "string", key
+        assert node["pattern"] == pattern, key
+        assert "default" not in node, key
+        assert "title" not in node, key
+        assert "anyOf" not in node, key
+        assert "hub.local.json" in node["description"], key
+    assert project["properties"]["author_name"]["minLength"] == 1
+
+
+def test_requires_one_team_key_when_schema_exported() -> None:
+    tracker = read_shipped_schema()["$defs"]["Tracker"]
+    team = tracker["properties"]["team"]
+
+    teams = tracker["properties"]["teams"]
+
+    assert tracker["required"] == ["kind"]
+    assert tracker["oneOf"] == [{"required": ["team"]}, {"required": ["teams"]}]
+    assert teams["type"] == "array"
+    assert teams["minItems"] == 1
+    assert teams["items"]["pattern"] == team["pattern"]
+    for node in (team, teams):
+        assert "default" not in node
+        assert "title" not in node
+        assert "anyOf" not in node
+    assert "tracker.teams" in team["description"]
+    assert "tracker.team." in teams["description"]
+
+
+CONVENTION_DESCRIPTIONS = {
+    "branch": (
+        "{prefix}, {ISSUE}, {issue_lower}, {slug}",
+        "needs {ISSUE} or {issue_lower}",
+        "Default {prefix}{issue_lower}-{slug}.",
+    ),
+    "commit_title": (
+        "{ISSUE}, {type}, {scope}, {summary}",
+        "needs {summary}",
+        "Default {type}({scope}): {summary} ({ISSUE}).",
+    ),
+    "pr_title": (
+        "{ISSUE}, {type}, {scope}, {summary}",
+        "needs {summary}",
+        "Default: the effective commit_title.",
+    ),
+}
+
+
+def test_exports_optional_conventions_when_schema_exported() -> None:
+    definitions = read_shipped_schema()["$defs"]
+    conventions = definitions["Conventions"]
+
+    for owner in ("Project", "Repo"):
+        node = definitions[owner]["properties"]["conventions"]
+        assert node["$ref"] == "#/$defs/Conventions", owner
+        assert "conventions" not in definitions[owner]["required"], owner
+        assert "anyOf" not in node, owner
+        assert "default" not in node, owner
+        assert "title" not in node, owner
+    assert "repo" in definitions["Project"]["properties"]["conventions"]["description"]
+    assert "project.conventions" in definitions["Repo"]["properties"]["conventions"]["description"]
+    assert "required" not in conventions
+    assert conventions["additionalProperties"] is False
+    assert conventions["patternProperties"] == COMMENT_KEYS
+    assert conventions["properties"].keys() == CONVENTION_DESCRIPTIONS.keys()
+    for key, parts in CONVENTION_DESCRIPTIONS.items():
+        node = conventions["properties"][key]
+        assert node.keys() == {"type", "description"}, key
+        assert node["type"] == "string", key
+        for part in parts:
+            assert part in node["description"], (key, part)
+
+
+def test_exports_optional_platform_repository_when_schema_exported() -> None:
+    platform = read_shipped_schema()["$defs"]["Platform"]
+
+    assert platform["required"] == ["version"]
+    assert platform["properties"]["repository"] == {
+        "type": "string",
+        "pattern": f"^{PLATFORM_REPOSITORY_PATTERN}$",
+        "maxLength": 200,
+        "description": "The platform's git source: the repository root as"
+        " git+https://<host>/<path>, at most 200 characters. The hub runs"
+        " <repository>@v<platform.version>#subdirectory=packages/agent-hub. Absent: the"
+        " agent-hub release repository (docs/design/project-config.md).",
+    }
+
+
+def test_exports_optional_gate_keys_when_schema_exported() -> None:
+    schema = read_shipped_schema()
+    repo = schema["$defs"]["Repo"]
+    check_fast = repo["properties"]["check_fast"]
+    timeout = repo["properties"]["check_fast_timeout"]
+
+    assert "check_fast" not in repo["required"]
+    assert "check_fast_timeout" not in repo["required"]
+    assert "check" in repo["required"]
+    assert check_fast["type"] == "string"
+    assert "minLength" not in check_fast
+    assert "anyOf" not in check_fast
+    assert "default" not in check_fast
+    assert re.search(check_fast["pattern"], "")
+    assert re.search(check_fast["pattern"], "  ")
+    assert not re.search(check_fast["pattern"], "make\ncheck")
+    assert timeout == {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 160,
+        "description": timeout["description"],
+    }
+    assert "check_fast" in timeout["description"]
+    assert schema["properties"]["schema_version"]["const"] == 1
+
+
+def test_rejects_blank_check_when_schema_exported() -> None:
+    check = read_shipped_schema()["$defs"]["Repo"]["properties"]["check"]
+
+    assert check["type"] == "string"
+    for value in ("make check", " make check "):
+        assert re.search(check["pattern"], value), value
+    for value in ("", " ", "\t", " \t ", "make\ncheck"):
+        assert not re.search(check["pattern"], value), value
+
+
+def test_agrees_with_str_strip_when_check_pattern_read() -> None:
+    """The schema rejects exactly the ``check`` values the model's ``strip()`` rule rejects.
+
+    The space class is spelled out: JSON Schema's ECMA ``\\s`` and Python's ``str.isspace``
+    disagree on U+0085 and U+FEFF.
+    """
+    pattern = read_shipped_schema()["$defs"]["Repo"]["properties"]["check"]["pattern"]
+    control = re.compile(r"[\x00-\x1f\x7f]")
+
+    assert "\\s" not in pattern
+    for code in range(0x110000):
+        char = chr(code)
+        if control.match(char) or 0xD800 <= code <= 0xDFFF:
+            continue
+        assert bool(re.fullmatch(pattern, char)) is not char.isspace(), hex(code)
+
+
+def test_describes_environment_maps_when_schema_exported() -> None:
+    maps = {
+        path: node
+        for path, node in object_nodes(read_shipped_schema())
+        if "properties" not in node and path in ENVIRONMENT_MAPS
+    }
+
+    assert set(maps) == set(ENVIRONMENT_MAPS)
+    for path, node in maps.items():
+        assert node["patternProperties"] == COMMENT_KEYS, path
+        assert node["additionalProperties"] == {"$ref": ENVIRONMENT_MAPS[path]}, path
+        assert node["propertyNames"] == {
+            "maxLength": MAX_NAME_CHARS,
+            "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$",
+        }, path
+
+
+def test_exports_optional_ui_paths_when_schema_exported() -> None:
+    repo = read_shipped_schema()["$defs"]["Repo"]
+    ui_paths = repo["properties"]["ui_paths"]
+
+    assert "ui_paths" not in repo["required"]
+    assert ui_paths["type"] == "array"
+    assert ui_paths["minItems"] == 1
+    assert ui_paths["maxItems"] == 50
+    assert "default" not in ui_paths
+    assert "anyOf" not in ui_paths
+    item = ui_paths["items"]
+    assert item["maxLength"] == 200
+    assert re.search(item["pattern"], "apps/web/**")
+    assert not re.search(item["pattern"], "/apps/web/**")
+    assert not re.search(item["pattern"], "")
