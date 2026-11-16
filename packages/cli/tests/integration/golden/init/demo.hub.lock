@@ -255,7 +255,7 @@
     "hub": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "18d41b5fb737462fb95c708d8b8709487e27fe1d4d17a549a065a54abf839f2d"
+      "sha256": "7b6b9d91faa979c5349831f593fb55497eb87513d43968192e50fb88ba635977"
     },
     "hub.json": {
       "ownership": "seeded"
