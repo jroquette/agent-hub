@@ -11,6 +11,13 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Changed
+
+- `./hub web` can drive sessions with no extra step (AGH-863): the shim installs the pinned release with the
+  `sessions` extra (Claude Agent SDK, about 240 MiB, downloaded once into uv's cache) when `web` is the command, so
+  New session, messages and resume work out of the box with `claude` on `PATH`. Every other `./hub` command keeps the
+  plain package. When you bump `platform.version`, run `hub sync` to get the new shim.
+
 ## [0.38.0] - 2026-11-16
 
 ### Changed

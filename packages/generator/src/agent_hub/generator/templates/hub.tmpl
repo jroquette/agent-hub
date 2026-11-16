@@ -9,8 +9,9 @@
 # call). Tag path (any other lock, or none): the resolve step (hub --version), then the real call;
 # a release that cannot be resolved is exit 1, the real call never made, and the reason tells a
 # uv folder the sandbox keeps from being written from an access failure. Otherwise the exit code
-# is the real call's. Run it by its real path: its folder is the hub, so a symlink to it elsewhere
-# (on PATH) would read the link's folder. Managed by hub sync.
+# is the real call's. hub web runs with the sessions extra, every other command without it. Run
+# it by its real path: its folder is the hub, so a symlink to it elsewhere (on PATH) would read
+# the link's folder. Managed by hub sync.
 case $0 in
   */*) hub_dir=${0%/*} ;;
   *) hub_dir=. ;;
@@ -75,6 +76,13 @@ case $release in
     ;;
 esac
 version=${release##*@v}
+# hub web drives Claude Code sessions only with the sessions extra (ADR 0031): when web is the
+# command, uv installs the release with it. Every other command keeps the plain package,
+# so doctor, brief, sync and the pre-commit hook never download the SDK (about 240 MiB).
+extra=
+case ${1-} in
+  web) extra='agent-hub[sessions] @ ' ;;
+esac
 command -v uvx >/dev/null 2>&1 || {
   echo "hub: uv is not installed; see https://docs.astral.sh/uv/getting-started/installation/" >&2
   exit 127
@@ -127,9 +135,9 @@ if [ -n "$commit" ]; then
   fi
   AGENT_HUB_ROOT=$hub_dir
   export AGENT_HUB_ROOT
-  exec uvx --from "${release%@v*}@$commit#subdirectory=packages/agent-hub" hub "$@"
+  exec uvx --from "$extra${release%@v*}@$commit#subdirectory=packages/agent-hub" hub "$@"
 fi
-source="$release#subdirectory=packages/agent-hub"
+source="$extra$release#subdirectory=packages/agent-hub"
 # uv's reason is kept and shown first, then the shim's line, which tells a folder uv could not
 # write (the sandbox, not an access problem) and a missing Python from a real access failure.
 resolve_errors=$(uvx --from "$source" hub --version 2>&1 </dev/null >/dev/null) || {
