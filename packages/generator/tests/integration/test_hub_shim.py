@@ -865,3 +865,45 @@ def test_calls_no_tag_source_or_git_when_lock_has_commit(
     assert sources == [COMMIT_SOURCE]
     assert not any("@v" in source for source in sources)
     assert not network_log.exists()
+
+
+# AGH-863: `hub web` drives sessions only with the `sessions` extra (ADR 0031), so the shim asks
+# uv for it when web is the command, and only then: every other command keeps the plain package.
+WEB_SOURCE = f"agent-hub[sessions] @ {SOURCE}"
+WEB_COMMIT_SOURCE = f"agent-hub[sessions] @ {COMMIT_SOURCE}"
+
+
+@ALL_SHELLS
+def test_installs_sessions_extra_when_command_is_web(
+    hub: Path, run: Run, *, tools: None, log: Path
+) -> None:
+    completed = run(hub / "hub", "web", "--open")
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stderr == b""
+    assert [call["args"] for call in calls(log)] == [
+        ["--from", WEB_SOURCE, "hub", "--version"],
+        ["--from", WEB_SOURCE, "hub", "web", "--open"],
+    ]
+
+
+@ALL_SHELLS
+def test_installs_sessions_extra_from_lock_commit_when_command_is_web(
+    hub: Path, run: Run, *, tools: None, log: Path, demo_render: RenderedHub
+) -> None:
+    write_lock(hub, lock_document(demo_render))
+
+    completed = run(hub / "hub", "web")
+
+    assert completed.returncode == 0, completed.stderr
+    assert [call["args"] for call in calls(log)] == [["--from", WEB_COMMIT_SOURCE, "hub", "web"]]
+
+
+@pytest.mark.parametrize("arguments", [["brief", "web"], ["webhook"], ["--version"]])
+def test_keeps_plain_package_when_web_is_not_the_command(
+    hub: Path, run: Run, *, tools: None, log: Path, arguments: list[str]
+) -> None:
+    completed = run(hub / "hub", *arguments)
+
+    assert completed.returncode == 0, completed.stderr
+    assert {call["args"][1] for call in calls(log)} == {SOURCE}

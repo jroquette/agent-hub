@@ -708,7 +708,8 @@ in [design/agent-sessions.md](design/agent-sessions.md)):
   Claude Agent SDK, in the registered hub, one of its repos or one of their existing worktrees, picked by an opaque id
   (never a path from the browser), with the CLI's default setting sources: the workdir's CLAUDE.md, the hub's hooks
   (the guard still applies, before any prompt), skills and agents. The SDK is the optional extra
-  `agent-hub[sessions]`; without it, or without `claude`, the screen says why and every write answers 503.
+  `agent-hub[sessions]`, which a hub's `./hub web` installs on its own (AGH-863; every other `./hub` command runs
+  without it); without it, or without `claude`, the screen says why and every write answers 503.
 - **Control.** Send messages (also while a turn runs), interrupt, answer permission prompts (allow once, deny with a
   message, always allow one suggested rule; `AskUserQuestion` and plan approval too; unanswered in a day is a deny,
   [ADR 0059](adr/0059-auto-mode-offered-in-every-app.md)), change mode (`default`, `acceptEdits`, `plan`, and `auto`,
