@@ -11,6 +11,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+## [0.39.0] - 2026-11-16
+
 ### Changed
 
 - `./hub web` can drive sessions with no extra step (AGH-863): the shim installs the pinned release with the
@@ -1972,7 +1974,8 @@ Includes 0.3.0, which was never tagged.
 - The `hub.json` config model and schema, the generator templates, `hub init` and `hub sync`.
 - The release check on `v*` tags.
 
-[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.38.0...HEAD
+[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.39.0...HEAD
+[0.39.0]: https://github.com/jroquette/agent-hub/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/jroquette/agent-hub/releases/tag/v0.38.0
 [0.37.0]: https://github.com/jroquette/agent-hub/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/jroquette/agent-hub/compare/v0.35.1...v0.36.0
