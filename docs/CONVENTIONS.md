@@ -53,6 +53,7 @@ different policy. `tests/e2e/test_quality_gates.py` fails if the exact code is r
 | Full static typing: every function annotated, generic types parameterized. | enforced by mypy strict (`mypy.ini`: `strict = True`, e.g. `no-untyped-def`) for the package `src/` trees (the Alembic migrations in `agent_hub/storage/migrations/` included), `scripts/` and `conftest.py`; review-only for tests |
 | Domain models are frozen Pydantic models (`model_config = ConfigDict(frozen=True)`). | review-only |
 | No bare dicts across package boundaries: public functions and ports take and return models or typed values. | review-only (mypy strict makes `dict[str, Any]` visible) |
+| A request field the web may leave out is typed `X \| None = None`, with `None` read as the default in the use case: `gen-api.mjs` makes a field with a non-null default (`fork: bool = False`) required in the web's types. A response field with a non-null default is required there too, so the web builders gain it in the same commit as `make openapi`. | review-only |
 
 ## Errors
 

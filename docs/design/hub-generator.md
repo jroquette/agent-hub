@@ -396,6 +396,15 @@ an edit exits 3, adopt lists differences, a `hub.lock` snapshot. A hub built by 
 
 - No operation silently overwrites or deletes a project edit or an unknown path; seeded files are written once; same
   inputs, same bytes; re-runs are safe; hooks need no CLI; agent-hub holds no project-owned material.
+- The rendered hub `AGENTS.md` worst case (`a_stacked_conventions_config` in `test_render_hub.py`: 20 repos, two
+  teams, longest patterns) is already at the 100-line cap, though the goldens show room. Before a change adds text
+  to `templates/AGENTS.md.tmpl`, render that config, count its lines and plan the room in the same change.
+- Adding a base-plugin skill or agent touches the same sorted lists and counts in every PR (`registry.py`,
+  `test_registry.py`, `test_render_hub.py`, `RENDERED_LINKS` in `test_adopt_command.py`, this file, README,
+  CHANGELOG, `NOTICE`, `demo.hub.lock`, `llms-full.txt`; a new agent also `model_tiers.py`). Parallel PRs always
+  conflict: stack them or ship them together, and after a merge regenerate the lock and `llms-full.txt`
+  (`GOLDEN_UPDATE=1`, `make llms-txt`) instead of merging them by hand. Every `.md` in a skill folder, `references/`
+  included, needs `name` and `description` frontmatter; only `test_synthetic_demo.py` catches a missing one.
 
 ## Implementers change files with Edit or Write (AGH-378)
 
