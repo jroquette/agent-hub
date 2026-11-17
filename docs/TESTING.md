@@ -559,3 +559,12 @@ Notes:
   fresh `demo` hub exits 0 and lists only the seeded workflows' `workflows.shadow` warnings (AGH-699).
 - Redirect gate output to a file and check the exit code: `make check > check.log 2>&1; echo $?`. `make check | tail`
   hides a failure.
+- Pass pytest only test paths or node ids, never a file under `src/` (filter them out of id lists built from
+  `features.json`). pytest imports and assert-rewrites any file on its command line, even with `--collect-only`, and
+  caches a `*-pytest-*.pyc` beside it; in a built-in workflow pack that file fails
+  `test_seeds_every_builtin_pack_file_when_registry_read`, and so every gate. Clean up with
+  `find packages/*/src -name '*-pytest-*.pyc'` and delete those `__pycache__` folders (gitignored).
+- A visible change to a screen with a web visual baseline can fail `make check` late, after `check-fast` was green.
+  Plan the re-capture in the same PR: commit, run `scripts/playground_export.py`'s `capture_screens` for the
+  `<area>/<route>` (it renders the committed HEAD on `seed_demo` data), copy the PNG over every baseline that shares
+  it, and ask the owner to look at it in the PR.

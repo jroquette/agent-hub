@@ -294,7 +294,9 @@ Each status has a `-soft` ground for badges. The only animation that loops is th
 
 **Motion.** 120–200 ms ease-out (`dur-fast`, `dur-base`, `dur-slow`, `ease-out`). Streaming insertions fade and slide 4px in 150 ms. Everything is off under `prefers-reduced-motion`.
 
-**Focus and accessibility.** WCAG 2.2 AA. Every interactive element shows a 2px solid `focus-ring` with a 2px offset (3:1 or more on every surface). Full keyboard: `g p` portfolio, `g l` live, `g s` sessions, `j/k` in lists and timelines, `/` filter, `f` follow live tail, `?` shortcut sheet, `Esc` closes. Streaming regions are polite ARIA live regions with rate-limited announcements. Nothing is conveyed by color or motion alone.
+**Focus and accessibility.** WCAG 2.2 AA. Every interactive element shows a 2px solid `focus-ring` with a 2px offset (3:1 or more on every surface). Full keyboard: `g p` portfolio, `g l` live, `g s` sessions, `j/k` in lists and timelines, `/` filter, `f` follow live tail, `?` shortcut sheet, `Esc` closes. Streaming regions are polite ARIA live regions with rate-limited announcements. Nothing is conveyed by color or motion alone. When an async action replaces a control, plan where focus goes and a `role="status"` line for every in-between state (sending, sent, recorded) on every path, and test focus at each stage, not only at the end (AGH-405).
+
+**Actions the server may refuse.** A screen shows or hides such an action from the server's own rule (a typed state on the read model, such as `owner_wait.state`), never from a copy of the rule in the client or a parsed string. For each button, list the server's refusals and check that each one hides it, with the reason in text. One wait gets one prompt (AGH-384, AGH-330).
 
 ## Iconography
 

@@ -92,3 +92,5 @@ Redirect the output to a file and check the exit code: `make check > check.log 2
 - uv older than 0.9.0 may only offer a Python 3.14 release candidate, and an already-installed 3.14 rc can satisfy
   `.python-version = 3.14`. Run `uv self update` and `uv python install 3.14`, and check that `uv python find 3.14` points to
   a final build (no `rc`).
+- `docs/USING.md` is at its 300-line cap, checked only by an e2e test that `make check-changed` skips. A feature's
+  release note goes in `CHANGELOG.md` and its behaviour in `docs/SPEC.md`; grow the guide only in a PR of its own.
